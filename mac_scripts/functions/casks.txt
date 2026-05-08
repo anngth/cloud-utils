@@ -1,5 +1,4 @@
 adguard
-android-file-transfer
 another-redis-desktop-manager
 antigravity
 antigravity-tools
@@ -24,8 +23,8 @@ kiro
 lapce
 microsoft-edge
 mongodb-compass
-navicat-premium
 onyx
+openmtp
 orbstack
 pearcleaner
 postman
@@ -34,7 +33,6 @@ raycast
 rustdesk
 slack
 spotify
-tableplus
 tablepro
 telegram
 the-unarchiver
@@ -43,5 +41,6 @@ visual-studio-code
 warp
 windsurf
 xcodes-app
+xkey
 zed
 zulu@17
