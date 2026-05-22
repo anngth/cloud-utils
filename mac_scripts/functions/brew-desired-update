@@ -1,5 +1,5 @@
 
-brew_upgrade_casks() {
+bud() {
   emulate -L zsh
   
   # Ensure Homebrew
@@ -41,7 +41,7 @@ brew_upgrade_casks() {
   fi
   # =========================================
 
-  _buc_print_formulas() {
+  _bud_print_formulas() {
     local col_width="${1:-0}"
     (( ${#desired_formulas[@]} )) || return 0
 
@@ -61,6 +61,12 @@ brew_upgrade_casks() {
       fi
     done
 
+    if (( ! ${#current_desired[@]} && ! ${#missing[@]} )); then
+      return 0
+    fi
+
+    echo ""
+
     if (( ${#current_desired[@]} )); then
       echo "✅ Desired formulae (installed):"
       if (( col_width > 0 )); then
@@ -70,10 +76,10 @@ brew_upgrade_casks() {
       else
         for f in "${current_desired[@]}"; do print -P "%F{cyan}$f%f"; done
       fi
-      echo
     fi
 
     if (( ${#missing[@]} )); then
+      echo ""
       echo "📥 Desired formulae NOT installed:"
       if (( col_width > 0 )); then
         printf "%s\n" "${missing[@]}" | column -c "$col_width" | expand | while IFS= read -r line; do
@@ -82,20 +88,20 @@ brew_upgrade_casks() {
       else
         for f in "${missing[@]}"; do print -P "%F{green}$f%f"; done
       fi
-      echo
     fi
   }
 
-  _buc_print_taps() {
+  _bud_print_taps() {
     local -a taps=($(brew tap 2>/dev/null))
     (( ${#taps[@]} )) || return 0
 
+    echo ""
     echo "📦 Installed taps:"
     for t in "${taps[@]}"; do print -P "%F{blue}  $t%f"; done
     echo
   }
 
-  _buc_detect_brew_type() {
+  _bud_detect_brew_type() {
     local name="$1"
     local is_cask=0 is_formula=0
 
@@ -104,7 +110,7 @@ brew_upgrade_casks() {
 
     if (( is_cask && is_formula )); then
       print -P "%F{yellow}⚠️  '$name' exists as both cask and formula%f"
-      print -P "%F{blue}💡 Use 'buc add --cask $name' or 'buc add --formula $name'%f"
+      print -P "%F{blue}💡 Use 'bud add --cask $name' or 'bud add --formula $name'%f"
       return 1
     elif (( is_cask )); then
       echo cask
@@ -117,15 +123,15 @@ brew_upgrade_casks() {
     fi
   }
 
-  _buc_list_file_for_type() {
+  _bud_list_file_for_type() {
     [[ "$1" == cask ]] && echo "$casks_file" || echo "$formulas_file"
   }
 
-  _buc_label_for_type() {
+  _bud_label_for_type() {
     [[ "$1" == cask ]] && echo cask || echo formula
   }
 
-  _buc_git_sync() {
+  _bud_git_sync() {
     local action="$1"
     shift
     local -a names=("$@")
@@ -141,7 +147,7 @@ brew_upgrade_casks() {
     fi
 
     local name_list="${(j:,:)names}"
-    local commit_msg="chore(buc): ${action} ${name_list}"
+    local commit_msg="chore(bud): ${action} ${name_list}"
     local commit_out first_line
 
     if ! commit_out=$(git -C "$git_root" commit -m "$commit_msg" 2>&1); then
@@ -195,8 +201,7 @@ brew_upgrade_casks() {
         shift
         ;;
       -h|--help)
-        echo "Usage: buc [COMMAND] [OPTIONS]"
-        echo "       brew_upgrade_casks [COMMAND] [OPTIONS]"
+        echo "Usage: bud [COMMAND] [OPTIONS]"
         echo ""
         echo "Commands:"
         echo "  add <name...>      Add one or more casks/formulae (auto-detected)"
@@ -273,21 +278,23 @@ brew_upgrade_casks() {
         fi
 
         if (( ${#missing[@]} )); then
-          echo "\n📥 In desired but NOT installed:"
+          echo ""
+          echo "📥 In desired but NOT installed:"
           printf "%s\n" "${missing[@]}" | column -c "$col_width" | expand | while IFS= read -r line; do
             print -P "%F{yellow}  $line%f"
           done
         fi
 
         if (( ${#extras[@]} )); then
-          echo "\nℹ️  Installed but NOT in desired:"
+          echo ""
+          echo "ℹ️  Installed but NOT in desired:"
           printf "%s\n" "${extras[@]}" | column -c "$col_width" | expand | while IFS= read -r line; do
             print -P "%F{magenta}  $line%f"
           done
         fi
 
-        _buc_print_formulas "$col_width"
-        _buc_print_taps
+        _bud_print_formulas "$col_width"
+        _bud_print_taps
         
         return 0
         ;;
@@ -318,21 +325,21 @@ brew_upgrade_casks() {
             sed -i '' "/^$pkg_name$/d" "$remove_file"
             sort -o "$remove_file" "$remove_file"
             succeeded+=("$pkg_name")
-            print -P "%F{green}✅ Removed%f %F{cyan}'$pkg_name'%F{green} from $(_buc_label_for_type "$remove_type")s list%f"
+            print -P "%F{green}✅ Removed%f %F{cyan}'$pkg_name'%F{green} from $(_bud_label_for_type "$remove_type")s list%f"
             continue
           fi
 
           local pkg_type="$force_type"
           if [[ -z "$pkg_type" ]]; then
-            pkg_type=$(_buc_detect_brew_type "$pkg_name") || { failed=1; continue; }
+            pkg_type=$(_bud_detect_brew_type "$pkg_name") || { failed=1; continue; }
           elif ! brew info --${pkg_type} "$pkg_name" >/dev/null 2>&1; then
-            print -P "%F{yellow}⚠️  '$pkg_name' not found as a Homebrew $(_buc_label_for_type "$pkg_type")%f"
+            print -P "%F{yellow}⚠️  '$pkg_name' not found as a Homebrew $(_bud_label_for_type "$pkg_type")%f"
             failed=1
             continue
           fi
 
-          local target_file="$(_buc_list_file_for_type "$pkg_type")"
-          local label="$(_buc_label_for_type "$pkg_type")"
+          local target_file="$(_bud_list_file_for_type "$pkg_type")"
+          local label="$(_bud_label_for_type "$pkg_type")"
 
           if grep -q "^$pkg_name$" "$target_file" 2>/dev/null; then
             print -P "%F{yellow}⚠️  '$pkg_name' already exists in ${label}s list%f"
@@ -364,7 +371,7 @@ brew_upgrade_casks() {
         if (( ${#succeeded[@]} )); then
           echo "💡 Changes take effect immediately"
           echo ""
-          _buc_git_sync "$action" "${succeeded[@]}" || failed=1
+          _bud_git_sync "$action" "${succeeded[@]}" || failed=1
         fi
         return $failed
         ;;
@@ -421,8 +428,8 @@ brew_upgrade_casks() {
     echo
   fi
 
-  _buc_print_formulas
-  _buc_print_taps
+  _bud_print_formulas
+  _bud_print_taps
 
   # Upgrade only already-installed desired casks (single command)
   if (( ${#to_upgrade[@]} )); then

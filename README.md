@@ -56,7 +56,7 @@ After restarting the shell, verify the repo scripts are on `PATH`:
 
 ```bash
 gt fetch
-buc list
+bud list
 dbt --help
 2fa
 ```
@@ -122,10 +122,10 @@ zsh ~/Documents/cloud-utils/mac_scripts/create_link_zshrc
 ```
 
 ```bash
-buc
-buc list
-buc add <cask>
-buc remove <cask>
+bud
+bud list
+bud add <name>
+bud remove <name>
 ```
 
 ```bash
