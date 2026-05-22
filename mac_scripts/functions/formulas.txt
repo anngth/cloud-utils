@@ -4,6 +4,7 @@ eza
 fastfetch
 fnm
 gh
+libpq
 mistral-vibe
 mole
 mongodb-database-tools
