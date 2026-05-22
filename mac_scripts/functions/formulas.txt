@@ -1,2 +1,19 @@
 # Desired Homebrew formulae (one per line)
+bat
 eza
+fastfetch
+fnm
+gh
+mistral-vibe
+mole
+mongodb-database-tools
+mongosh
+node
+npm-check-updates
+postgresql@18
+qwen-code
+rbenv
+rtk
+uv
+watchman
+zoxide
