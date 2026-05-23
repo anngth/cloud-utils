@@ -251,6 +251,7 @@ connect_db() {
         
         # Check each port and connect if not already connected
         typeset -A vps_groups
+        typeset -A vps_already_groups
         typeset -A ports_to_connect
         
         for config in "${configs_to_process[@]}"; do
@@ -278,7 +279,12 @@ connect_db() {
         
         if is_port_in_use "${local_port}"; then
             if is_our_ssh_tunnel "${local_port}"; then
-                echo "⏭️  ${service_name} (port ${local_port}): Already connected, skipping..."
+                local vps_key="${vps_name}|${user}|${ip}"
+                if [[ -z "${vps_already_groups[$vps_key]}" ]]; then
+                    vps_already_groups[$vps_key]="$config"
+                else
+                    vps_already_groups[$vps_key]+=";$config"
+                fi
                 ((already_connected++))
             else
                 local process_info=$(get_port_process_info "${local_port}")
@@ -306,14 +312,30 @@ connect_db() {
             ports_to_connect[$local_port]=1
         fi
     done
+
+    # Show existing tunnels grouped by VPS for compact output
+    if [[ ${#vps_already_groups[@]} -gt 0 ]]; then
+        for vps_key in ${(k)vps_already_groups}; do
+            IFS='|' read -r vps_name user ip <<< "$vps_key"
+            echo "${vps_name} ${ip}:"
+            echo "  Already on:"
+
+            IFS=';' read -rA configs <<< "${vps_already_groups[$vps_key]}"
+            for config in "${configs[@]}"; do
+                local _vps_name _user _ip service_name local_port target_host target_port
+                if parse_config "$config" _vps_name _user _ip service_name local_port target_host target_port 2>/dev/null; then
+                    echo "    - ${service_name}: local :${local_port} -> remote :${target_port}"
+                fi
+            done
+            echo ""
+        done
+    fi
     
     # Establish SSH tunnels for ports that need connection
     if [[ ${#vps_groups[@]} -gt 0 ]]; then
         for vps_key in ${(k)vps_groups}; do
             IFS='|' read -r vps_name user ip <<< "$vps_key"
             local vps_host="${user}@${ip}"
-            
-            echo "Via ${vps_name}:"
             
             # Test SSH connection first (optional, skip if test fails but still try to connect)
             # SSH will fail on its own if connection is not possible
@@ -330,7 +352,7 @@ connect_db() {
                 local _vps_name _user _ip service_name local_port target_host target_port
                 if parse_config "$config" _vps_name _user _ip service_name local_port target_host target_port 2>/dev/null; then
                     ssh_args+=("-L" "${local_port}:${target_host}:${target_port}")
-                    services+=("   ${service_name}: localhost:${local_port}")
+                    services+=("${service_name}: local :${local_port} -> remote :${target_port}")
                 fi
             done
             
@@ -342,9 +364,10 @@ connect_db() {
             local ssh_exit_code=$?
             
             if [[ $ssh_exit_code -eq 0 ]]; then
+                echo "${vps_name} ${ip}:"
                 echo "  Opened:"
                 for service_info in "${services[@]}"; do
-                    echo "    - ${service_info## }"
+                    echo "    - ${service_info}"
                     ((newly_connected++))
                 done
                 echo ""
@@ -423,6 +446,9 @@ disconnect_db() {
         # (multiple ports can be forwarded by the same SSH command)
         typeset -A pid_to_ports
         typeset -A port_to_service
+        typeset -A port_to_endpoint
+        typeset -A port_to_vps_label
+        typeset -A vps_off_groups
         
         # First pass: collect all ports and their PIDs
         for config in "${configs_to_process[@]}"; do
@@ -449,24 +475,49 @@ disconnect_db() {
                     pid_to_ports[$pid]+=" ${local_port}"
                 fi
                 port_to_service[$local_port]="${service_name}"
+                port_to_endpoint[$local_port]="local :${local_port} -> remote :${target_port}"
+                port_to_vps_label[$local_port]="${vps_name} ${ip}"
             else
-                echo "⚠️  ${service_name} (port ${local_port}): Port in use by non-SSH process"
+                echo "⚠️  ${vps_name} ${ip}: ${service_name}: local :${local_port} -> remote :${target_port} port in use by non-SSH process"
                 ((not_connected++))
             fi
         else
-                echo "ℹ️  ${service_name} (port ${local_port}): Already off"
+            local vps_key="${vps_name}|${user}|${ip}"
+            local service_info="${service_name}: local :${local_port} -> remote :${target_port}"
+            if [[ -z "${vps_off_groups[$vps_key]}" ]]; then
+                vps_off_groups[$vps_key]="$service_info"
+            else
+                vps_off_groups[$vps_key]+=";$service_info"
+            fi
             ((not_connected++))
         fi
     done
+
+    # Show already-off tunnels grouped by VPS for compact output
+    if [[ ${#vps_off_groups[@]} -gt 0 ]]; then
+        for vps_key in ${(k)vps_off_groups}; do
+            IFS='|' read -r vps_name user ip <<< "$vps_key"
+            echo "${vps_name} ${ip}:"
+            echo "  Already off:"
+
+            IFS=';' read -rA services_info <<< "${vps_off_groups[$vps_key]}"
+            for service_info in "${services_info[@]}"; do
+                echo "    - ${service_info}"
+            done
+            echo ""
+        done
+    fi
     
     # Second pass: kill PIDs (each PID may handle multiple ports)
     for pid in ${(k)pid_to_ports}; do
         local ports=(${=pid_to_ports[$pid]})
         local services_info=()
+        local first_port="${ports[1]}"
+        local vps_label="${port_to_vps_label[$first_port]}"
         
         for port in "${ports[@]}"; do
             local service_name="${port_to_service[$port]}"
-            services_info+=("${service_name} (port ${port})")
+            services_info+=("${service_name}: ${port_to_endpoint[$port]}")
         done
         
         # Kill the process
@@ -474,24 +525,25 @@ disconnect_db() {
             # Wait a bit and verify it's actually killed
             sleep 0.5
             if ! kill -0 "$pid" 2>/dev/null; then
-                echo "Closed:"
+                echo "${vps_label}:"
+                echo "  Closed:"
                 for service_info in "${services_info[@]}"; do
-                    echo "  - ${service_info}"
+                    echo "    - ${service_info}"
                     ((disconnected++))
                 done
-                log "INFO" "Closed SSH process PID $pid (ports: ${ports[@]})"
             else
                 echo "⚠️  Process still running, trying force kill..."
                 kill -9 "$pid" 2>/dev/null
                 sleep 0.5
                 if ! kill -0 "$pid" 2>/dev/null; then
-                    echo "Closed (forced):"
+                    echo "${vps_label}:"
+                    echo "  Closed (forced):"
                     for service_info in "${services_info[@]}"; do
-                        echo "  - ${service_info}"
+                        echo "    - ${service_info}"
                         ((disconnected++))
                     done
                 else
-                    echo "❌ Failed to disconnect ${#ports[@]} service(s):"
+                    echo "❌ Failed to disconnect ${#ports[@]} service(s) on ${vps_label}:"
                     for service_info in "${services_info[@]}"; do
                         echo "  - ${service_info}"
                         ((failed_disconnect++))
@@ -499,7 +551,7 @@ disconnect_db() {
                 fi
             fi
         else
-            echo "❌ Failed to disconnect ${#ports[@]} service(s) (permission denied?):"
+            echo "❌ Failed to disconnect ${#ports[@]} service(s) on ${vps_label} (permission denied?):"
             for service_info in "${services_info[@]}"; do
                 echo "  - ${service_info}"
                 ((failed_disconnect++))
