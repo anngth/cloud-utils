@@ -22,6 +22,7 @@ iina
 kiro
 kiro-cli
 lapce
+lulu
 microsoft-edge
 mongodb-compass
 onyx
