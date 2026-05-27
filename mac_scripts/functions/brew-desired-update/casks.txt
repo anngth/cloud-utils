@@ -2,6 +2,7 @@ adguard
 another-redis-desktop-manager
 antigravity
 antigravity-cli
+antigravity-ide
 antigravity-tools
 beekeeper-studio
 brave-browser
