@@ -129,6 +129,28 @@ bud remove <name>
 ```
 
 ```bash
+skm
+skm ls
+skm list
+skm add vercel-labs/agent-skills
+skm add vercel-labs/agent-skills ./my-local-skills
+skm show
+skm show vercel-labs/agent-skills
+skm remove vercel-labs/agent-skills
+skm remove vercel-labs/agent-skills ./my-local-skills
+```
+
+`skm` opens an interactive UI to select and install skills from saved sources in `mac_scripts/functions/skills-manager/list.json`. Press Space to toggle selection, Enter to install selected sources, or `q` to cancel.
+
+`skm list` or `skm ls` displays all saved sources.
+
+`skm add <source...>` adds one or more sources to the saved list. If a source already exists, it is skipped.
+
+`skm remove <source...>` removes one or more sources from the saved list. If a source is not found, it is skipped.
+
+`skm show` opens a selector for saved sources and lists available skills for the selected source. `skm show <source>` lists available skills for a source directly.
+
+```bash
 gt fetch
 gt push
 ```

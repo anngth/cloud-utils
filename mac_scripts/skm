@@ -1,0 +1,6 @@
+#!/bin/zsh
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+
+source "$SCRIPT_DIR/functions/skills-manager/main.zsh"
+skm "$@"
