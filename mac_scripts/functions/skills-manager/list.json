@@ -18,6 +18,9 @@
     "source": "shadcn/ui"
   },
   {
+    "source": "test-source"
+  },
+  {
     "source": "vercel-labs/agent-skills"
   },
   {
