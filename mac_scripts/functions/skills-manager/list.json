@@ -1,0 +1,26 @@
+[
+  {
+    "source": "anthropics/skills"
+  },
+  {
+    "source": "EvanBacon/serve-sim"
+  },
+  {
+    "source": "juliusbrussee/caveman"
+  },
+  {
+    "source": "nextlevelbuilder/ui-ux-pro-max-skill"
+  },
+  {
+    "source": "obra/superpowers"
+  },
+  {
+    "source": "shadcn/ui"
+  },
+  {
+    "source": "vercel-labs/agent-skills"
+  },
+  {
+    "source": "wshobson/agents"
+  }
+]
