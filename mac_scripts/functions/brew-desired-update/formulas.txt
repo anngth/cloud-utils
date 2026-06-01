@@ -4,6 +4,7 @@ eza
 fastfetch
 fnm
 gh
+glab
 libpq
 mistral-vibe
 mole
