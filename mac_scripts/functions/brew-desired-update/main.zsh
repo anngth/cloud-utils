@@ -244,6 +244,89 @@ bud() {
     rm -f "$f_formulae" "$f_casks" "$f_taps"
   }
 
+  # Shared status grid for `bud list` and default `bud` (set after show: _bud_c_to_upgrade).
+  _bud_show_desired_status() {
+    local do_load="${1:-1}"
+    local -a f_installed=() f_missing=() f_extra=()
+    local -a t_installed=() t_missing=() t_extra=()
+    local -a c_installed=() c_missing=() c_extra=()
+    local -A want has seen want_formula has_formula seen_formula want_tap has_tap seen_tap
+    local col_width
+
+    if (( do_load )); then
+      if [[ -t 2 ]]; then
+        print -nu2 "Loading Homebrew state..."
+      fi
+      _bud_load_brew_state
+      [[ -t 2 ]] && print -nu2 $'\r\033[K'
+    fi
+
+    if (( ${#desired_taps[@]} )); then
+      for t in "${desired_taps[@]}"; do want_tap[$t]=1; done
+      for t in "${_bud_brew_taps[@]}"; do has_tap[$t]=1; done
+      for t in "${desired_taps[@]}"; do
+        if [[ -n ${has_tap[$t]} ]]; then
+          t_installed+=("$t")
+        else
+          t_missing+=("$t")
+        fi
+      done
+      for t in "${_bud_brew_taps[@]}"; do
+        [[ -n ${seen_tap[$t]} ]] && continue
+        seen_tap[$t]=1
+        [[ -z ${want_tap[$t]} ]] && t_extra+=("$t")
+      done
+    fi
+
+    for f in "${desired_formulas[@]}"; do want_formula[$f]=1; done
+    for f in "${_bud_brew_formulas[@]}"; do has_formula[$f]=1; done
+    for f in "${desired_formulas[@]}"; do
+      if [[ -n ${has_formula[$f]} ]]; then
+        f_installed+=("$f")
+      else
+        f_missing+=("$f")
+      fi
+    done
+    for f in "${_bud_brew_formulas[@]}"; do
+      [[ -n ${seen_formula[$f]} ]] && continue
+      seen_formula[$f]=1
+      [[ -z ${want_formula[$f]} ]] && f_extra+=("$f")
+    done
+
+    for c in "${desired[@]}"; do want[$c]=1; done
+    for c in "${_bud_brew_casks[@]}"; do has[$c]=1; done
+    for c in "${desired[@]}"; do
+      if [[ -n ${has[$c]} ]]; then
+        c_installed+=("$c")
+      else
+        c_missing+=("$c")
+      fi
+    done
+    for c in "${_bud_brew_casks[@]}"; do
+      [[ -n ${seen[$c]} ]] && continue
+      seen[$c]=1
+      [[ -z ${want[$c]} ]] && c_extra+=("$c")
+    done
+
+    typeset -g _bud_c_to_upgrade=("${c_installed[@]}")
+
+    col_width=$(_bud_list_col_width)
+    _bud_init_grid_layout "$col_width" \
+      "${f_installed[@]}" "${f_missing[@]}" "${f_extra[@]}" \
+      "${t_installed[@]}" "${t_missing[@]}" "${t_extra[@]}" \
+      "${c_installed[@]}" "${c_missing[@]}" "${c_extra[@]}"
+
+    _bud_print_section "Formulae · in list, installed" green "$col_width" "${f_installed[@]}"
+    _bud_print_section "Formulae · in list, not installed" yellow "$col_width" "${f_missing[@]}"
+    _bud_print_section "Formulae · installed, not in list" blue "$col_width" "${f_extra[@]}"
+    _bud_print_section "Taps · in list, tapped" green "$col_width" "${t_installed[@]}"
+    _bud_print_section "Taps · in list, not tapped" yellow "$col_width" "${t_missing[@]}"
+    _bud_print_section "Taps · tapped, not in list" blue "$col_width" "${t_extra[@]}"
+    _bud_print_section "Casks · in list, installed" green "$col_width" "${c_installed[@]}"
+    _bud_print_section "Casks · in list, not installed" yellow "$col_width" "${c_missing[@]}"
+    _bud_print_section "Casks · installed, not in list" blue "$col_width" "${c_extra[@]}"
+  }
+
   # First line of `brew info` is "==> <token>: ..." — token must match $name (not an old cask alias).
   _bud_brew_token() {
     local brew_type="$1" pkg="$2"
@@ -354,80 +437,7 @@ bud() {
   if [[ -n "$action" ]]; then
     case "$action" in
       list)
-        local col_width=$(_bud_list_col_width)
-        local -a _bud_brew_formulas _bud_brew_casks _bud_brew_taps
-        local -a f_installed=() f_missing=() f_extra=() t_installed=() t_missing=() t_extra=()
-        local -a c_installed=() c_missing=() c_extra=()
-        local -A want has seen want_formula has_formula seen_formula want_tap has_tap seen_tap
-
-        if [[ -t 2 ]]; then
-          print -nu2 "Loading Homebrew state..."
-        fi
-        _bud_load_brew_state
-        [[ -t 2 ]] && print -nu2 $'\r\033[K'
-
-        if (( ${#desired_taps[@]} )); then
-          for t in "${desired_taps[@]}"; do want_tap[$t]=1; done
-          for t in "${_bud_brew_taps[@]}"; do has_tap[$t]=1; done
-          for t in "${desired_taps[@]}"; do
-            if [[ -n ${has_tap[$t]} ]]; then
-              t_installed+=("$t")
-            else
-              t_missing+=("$t")
-            fi
-          done
-          for t in "${_bud_brew_taps[@]}"; do
-            [[ -n ${seen_tap[$t]} ]] && continue
-            seen_tap[$t]=1
-            [[ -z ${want_tap[$t]} ]] && t_extra+=("$t")
-          done
-        fi
-
-        for f in "${desired_formulas[@]}"; do want_formula[$f]=1; done
-        for f in "${_bud_brew_formulas[@]}"; do has_formula[$f]=1; done
-        for f in "${desired_formulas[@]}"; do
-          if [[ -n ${has_formula[$f]} ]]; then
-            f_installed+=("$f")
-          else
-            f_missing+=("$f")
-          fi
-        done
-        for f in "${_bud_brew_formulas[@]}"; do
-          [[ -n ${seen_formula[$f]} ]] && continue
-          seen_formula[$f]=1
-          [[ -z ${want_formula[$f]} ]] && f_extra+=("$f")
-        done
-
-        for c in "${desired[@]}"; do want[$c]=1; done
-        for c in "${_bud_brew_casks[@]}"; do has[$c]=1; done
-        for c in "${desired[@]}"; do
-          if [[ -n ${has[$c]} ]]; then
-            c_installed+=("$c")
-          else
-            c_missing+=("$c")
-          fi
-        done
-        for c in "${_bud_brew_casks[@]}"; do
-          [[ -n ${seen[$c]} ]] && continue
-          seen[$c]=1
-          [[ -z ${want[$c]} ]] && c_extra+=("$c")
-        done
-
-        _bud_init_grid_layout "$col_width" \
-          "${f_installed[@]}" "${f_missing[@]}" "${f_extra[@]}" \
-          "${t_installed[@]}" "${t_missing[@]}" "${t_extra[@]}" \
-          "${c_installed[@]}" "${c_missing[@]}" "${c_extra[@]}"
-
-        _bud_print_section "Formulae · in list, installed" green "$col_width" "${f_installed[@]}"
-        _bud_print_section "Formulae · in list, not installed" yellow "$col_width" "${f_missing[@]}"
-        _bud_print_section "Formulae · installed, not in list" blue "$col_width" "${f_extra[@]}"
-        _bud_print_section "Taps · in list, tapped" green "$col_width" "${t_installed[@]}"
-        _bud_print_section "Taps · in list, not tapped" yellow "$col_width" "${t_missing[@]}"
-        _bud_print_section "Taps · tapped, not in list" blue "$col_width" "${t_extra[@]}"
-        _bud_print_section "Casks · in list, installed" green "$col_width" "${c_installed[@]}"
-        _bud_print_section "Casks · in list, not installed" yellow "$col_width" "${c_missing[@]}"
-        _bud_print_section "Casks · installed, not in list" blue "$col_width" "${c_extra[@]}"
-
+        _bud_show_desired_status 1
         echo ""
         return 0
         ;;
@@ -522,7 +532,6 @@ bud() {
     esac
   fi
 
-  local -a _bud_brew_formulas _bud_brew_casks _bud_brew_taps
   _bud_load_brew_state
   _bud_ensure_desired_taps || return 1
 
@@ -531,83 +540,14 @@ bud() {
   brew tap --repair
 
   _bud_load_brew_state
+  _bud_show_desired_status 0
 
-  local -A want has
-  for c in "${desired[@]}"; do want[$c]=1; done
-  for c in "${_bud_brew_casks[@]}"; do has[$c]=1; done
-
-  # Compute:
-  # - missing: in desired but NOT installed
-  # - extras:  installed but NOT in desired
-  # - to_upgrade: desired ∩ installed
-  local -a missing=() extras=() to_upgrade=()
-  local -A seen
-
-  for c in "${desired[@]}"; do
-    if [[ -n ${has[$c]} ]]; then
-      to_upgrade+=("$c")
-    else
-      missing+=("$c")
-    fi
-  done
-
-  for c in "${_bud_brew_casks[@]}"; do
-    [[ -n ${seen[$c]} ]] && continue
-    seen[$c]=1
-    [[ -z ${want[$c]} ]] && extras+=("$c")
-  done
-
-  local -a t_installed=() t_missing=() t_extra=()
-  if (( ${#desired_taps[@]} )); then
-    local -A want_tap has_tap seen_tap
-    for t in "${desired_taps[@]}"; do want_tap[$t]=1; done
-    for t in "${_bud_brew_taps[@]}"; do has_tap[$t]=1; done
-    for t in "${desired_taps[@]}"; do
-      [[ -n ${has_tap[$t]} ]] && t_installed+=("$t") || t_missing+=("$t")
-    done
-    for t in "${_bud_brew_taps[@]}"; do
-      [[ -n ${seen_tap[$t]} ]] && continue
-      seen_tap[$t]=1
-      [[ -z ${want_tap[$t]} ]] && t_extra+=("$t")
-    done
-  fi
-
-  if (( ${#desired_formulas[@]} + ${#desired_taps[@]} + ${#t_extra[@]} )); then
-    _bud_init_grid_layout "$(_bud_list_col_width)" \
-      "${desired_formulas[@]}" \
-      "${t_installed[@]}" "${t_missing[@]}" "${t_extra[@]}"
-  fi
-  if (( ${#desired_formulas[@]} )); then
-    local -A has_formula
-    local -a f_installed=() f_missing=()
-    for f in "${_bud_brew_formulas[@]}"; do has_formula[$f]=1; done
-    for f in "${desired_formulas[@]}"; do
-      [[ -n ${has_formula[$f]} ]] && f_installed+=("$f") || f_missing+=("$f")
-    done
-    _bud_print_section "Formulae · in list, installed" cyan 0 "${f_installed[@]}"
-    _bud_print_section "Formulae · in list, not installed" yellow 0 "${f_missing[@]}"
-  fi
-  _bud_print_section "Taps · in list, tapped" cyan 0 "${t_installed[@]}"
-  _bud_print_section "Taps · in list, not tapped" yellow 0 "${t_missing[@]}"
-  _bud_print_section "Taps · tapped, not in list" magenta 0 "${t_extra[@]}"
-
-  if (( ${#missing[@]} )); then
+  if (( ${#_bud_c_to_upgrade[@]} )); then
     echo ""
-    print -P "%F{yellow}Casks · in list, not installed:%f"
-    for c in "${missing[@]}"; do print -P "%F{yellow}  $c%f"; done
-    echo
-  fi
-
-  if (( ${#extras[@]} )); then
-    print -P "%F{magenta}Casks · installed, not in list:%f"
-    for c in "${extras[@]}"; do print -P "%F{magenta}  $c%f"; done
-    echo
-  fi
-
-  if (( ${#to_upgrade[@]} )); then
     echo "🔧 Upgrading casks · in list, installed:"
-    brew upgrade --cask "${to_upgrade[@]}"
+    brew upgrade --cask "${_bud_c_to_upgrade[@]}"
   else
+    echo ""
     echo "ℹ️  No casks in list are installed; skipping cask upgrade."
   fi
 
