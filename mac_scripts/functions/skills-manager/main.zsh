@@ -2,7 +2,18 @@ skm() {
   emulate -L zsh
 
   local func_dir="$(cd "$(dirname "${(%):-%x}")" && pwd)"
-  local skills_file="$func_dir/list.json"
+  local mac_scripts_dir="${func_dir:h:h}"
+  source "${mac_scripts_dir}/lib/cloud-utils-config.zsh"
+
+  local config_dir
+  config_dir="$(cloud_utils_config_dir)" || {
+    _skm_error "Could not create config directory."
+    return 1
+  }
+
+  local skills_file="$config_dir/skm/list.json"
+  cloud_utils_bootstrap_file "$skills_file" "$func_dir/list.json.example" "$func_dir/list.json" || true
+  [[ -f "$skills_file" ]] || cloud_utils_bootstrap_file "$skills_file" "$func_dir/list.json.example" "$config_dir/skills/list.json" || true
 
   _skm_usage() {
     _skm_ui_title "SKILLS MANAGER"
@@ -10,7 +21,7 @@ skm() {
     _skm_ui_active_step "Available commands"
     echo ""
     print -P "%F{cyan}│%f  %F{green}ls%f, %F{green}list%f"
-    print -P "%F{cyan}│%f      Show saved sources from list.json"
+    print -P "%F{cyan}│%f      Show saved sources from skm/list.json"
     print -P "%F{cyan}│%f"
     print -P "%F{cyan}│%f  %F{green}show%f [source]"
     print -P "%F{cyan}│%f      Show available skills; opens a single-select UI without source"
@@ -76,47 +87,6 @@ skm() {
   _skm_normalize_file() {
     if [[ ! -f "$skills_file" ]]; then
       echo "[]" > "$skills_file"
-    fi
-  }
-
-  _skm_git_sync() {
-    local action="$1"
-    shift
-    local -a names=("$@")
-
-    local git_root
-    git_root=$(git -C "$func_dir" rev-parse --show-toplevel 2>/dev/null) || return 0
-    git -C "$git_root" rev-parse --git-dir >/dev/null 2>&1 || return 0
-
-    git -C "$git_root" add -- "$skills_file"
-
-    if git -C "$git_root" diff --cached --quiet -- "$skills_file"; then
-      return 0
-    fi
-
-    local name_list="${(j:,:)names}"
-    local commit_msg="chore(skm): ${action} ${name_list}"
-    local commit_out first_line
-
-    if ! commit_out=$(git -C "$git_root" commit -m "$commit_msg" 2>&1); then
-      print -P "%F{cyan}│%f"
-      print -P "%F{cyan}└%f  %F{yellow}⚠️  Git commit failed%f"
-      return 1
-    fi
-
-    first_line="${commit_out%%$'\n'*}"
-    print -P "%F{cyan}│%f"
-    print -P "%F{cyan}│%f  %F{green}■%f ${first_line}"
-
-    if [[ -n "$(git -C "$git_root" remote 2>/dev/null)" ]]; then
-      if git -C "$git_root" push --quiet; then
-        print -P "%F{cyan}└%f  %F{green}✅ Pushed to remote%f"
-      else
-        print -P "%F{cyan}└%f  %F{yellow}⚠️  Git push failed%f"
-        return 1
-      fi
-    else
-      print -P "%F{cyan}└%f"
     fi
   }
 
@@ -387,9 +357,6 @@ skm() {
         added_sources+=("$source")
       done
 
-      if (( ${#added_sources[@]} > 0 )); then
-        _skm_git_sync "add" "${added_sources[@]}"
-      fi
     fi
   }
 
@@ -472,9 +439,6 @@ skm() {
         removed_sources+=("$source")
       done
 
-      if (( ${#removed_sources[@]} > 0 )); then
-        _skm_git_sync "remove" "${removed_sources[@]}"
-      fi
     fi
   }
 

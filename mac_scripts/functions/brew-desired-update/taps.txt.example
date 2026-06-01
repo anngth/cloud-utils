@@ -1,0 +1,4 @@
+# Desired Homebrew taps (one per line, user/repo)
+# Copy to $CLOUD_UTILS_CONFIG_DIR/bud/taps.txt or run `bud` once to bootstrap.
+
+mongodb/brew

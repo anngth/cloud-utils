@@ -1,0 +1,4 @@
+# Desired Homebrew casks (one per line)
+# Copy to $CLOUD_UTILS_CONFIG_DIR/bud/casks.txt or run `bud` once to bootstrap.
+
+cursor
