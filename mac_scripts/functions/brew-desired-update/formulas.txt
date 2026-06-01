@@ -1,4 +1,5 @@
 # Desired Homebrew formulae (one per line)
+bash
 bat
 eza
 fastfetch
