@@ -94,6 +94,12 @@ bud() {
   fi
   # =====================================
 
+  _bud_trust_tap() {
+    local tap="$1"
+    brew trust --help >/dev/null 2>&1 || return 0
+    brew trust --tap "$tap" || return 1
+  }
+
   _bud_ensure_desired_taps() {
     local tap
     local -A has_tap
@@ -102,6 +108,7 @@ bud() {
     for tap in "${desired_taps[@]}"; do
       if [[ -z ${has_tap[$tap]} ]]; then
         echo "🔧 Tapping $tap"
+        _bud_trust_tap "$tap" || return 1
         brew tap "$tap" || return 1
       fi
     done
@@ -511,7 +518,8 @@ bud() {
               if [[ -n "$tap_name" && "$tap_name" != "homebrew/cask" && "$tap_name" != "homebrew/cask-fonts" ]]; then
                 if ! brew tap | grep -q "^$tap_name$"; then
                   echo "🔧 Adding required tap: $tap_name"
-                  brew tap "$tap_name"
+                  _bud_trust_tap "$tap_name" || { failed=1; continue; }
+                  brew tap "$tap_name" || { failed=1; continue; }
                 fi
               fi
             fi
