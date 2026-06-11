@@ -475,7 +475,9 @@ bud() {
               continue
             fi
 
-            sed -i '' "/^$pkg_name$/d" "$remove_file"
+            local tmp="${remove_file}.budtmp"
+            grep -vxF "$pkg_name" "$remove_file" > "$tmp" || true
+            mv "$tmp" "$remove_file"
             sort -o "$remove_file" "$remove_file"
             succeeded+=("$pkg_name")
             print -P "%F{green}✅ Removed%f %F{cyan}'$pkg_name'%F{green} from $(_bud_label_for_type "$remove_type")s list%f"
@@ -543,8 +545,8 @@ bud() {
   _bud_load_brew_state
   _bud_ensure_desired_taps || return 1
 
-  brew update
-  brew upgrade
+  brew update -y
+  brew upgrade -y
   brew tap --repair
 
   _bud_load_brew_state
