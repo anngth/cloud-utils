@@ -382,13 +382,35 @@ bud() {
     esac
   }
 
+  _bud_filter_casks_to_upgrade() {
+    local -a input=("$@")
+    local -a filtered=()
+    local -A exclude
+    local c
+
+    for c in "${_bud_exclude_casks[@]}"; do exclude[$c]=1; done
+    for c in "${input[@]}"; do
+      [[ -z ${exclude[$c]} ]] && filtered+=("$c")
+    done
+
+    typeset -g _bud_c_to_upgrade=("${filtered[@]}")
+  }
+
   # Parse arguments
   local action=""
   local -a pkg_names=()
+  local -a exclude_casks_cli=()
   local force_type=""
   
   while [[ $# -gt 0 ]]; do
     case $1 in
+      -e|--exclude)
+        shift
+        while [[ $# -gt 0 && "$1" != --* && "$1" != -e && "$1" != add && "$1" != remove && "$1" != list && "$1" != ls && "$1" != -h && "$1" != --help ]]; do
+          exclude_casks_cli+=("$1")
+          shift
+        done
+        ;;
       add|remove)
         action="$1"
         shift
@@ -426,6 +448,7 @@ bud() {
         echo "  ls, list           Show desired vs installed"
         echo ""
         echo "Options:"
+        echo "  -e, --exclude <name...>  Exclude casks from upgrade this run"
         echo "  --cask             Force cask type (for add)"
         echo "  --formula          Force formula type (for add)"
         echo "  --tap              Force tap type (for add)"
@@ -542,23 +565,36 @@ bud() {
     esac
   fi
 
+  typeset -gUa _bud_exclude_casks=("${exclude_casks_cli[@]}")
+
   _bud_load_brew_state
   _bud_ensure_desired_taps || return 1
 
-  brew update -y
-  brew upgrade -y
+  brew update
+  brew upgrade --formula -y
   brew tap --repair
 
   _bud_load_brew_state
   _bud_show_desired_status 0
+  local -i c_eligible=${#_bud_c_to_upgrade[@]}
+  _bud_filter_casks_to_upgrade "${_bud_c_to_upgrade[@]}"
+
+  if (( ${#_bud_exclude_casks[@]} )); then
+    echo ""
+    echo "⏭️  Excluding casks from upgrade this run: ${_bud_exclude_casks[*]}"
+  fi
 
   if (( ${#_bud_c_to_upgrade[@]} )); then
     echo ""
     echo "🔧 Upgrading casks · in list, installed:"
-    brew upgrade --cask "${_bud_c_to_upgrade[@]}"
+    brew upgrade --cask -y "${_bud_c_to_upgrade[@]}"
   else
     echo ""
-    echo "ℹ️  No casks in list are installed; skipping cask upgrade."
+    if (( c_eligible && ${#_bud_exclude_casks[@]} )); then
+      echo "ℹ️  All eligible casks were excluded; no cask upgrade."
+    else
+      echo "ℹ️  No casks in list are installed; skipping cask upgrade."
+    fi
   fi
 
   # Cleanup

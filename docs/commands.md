@@ -8,6 +8,8 @@ Homebrew desired lists — `$CLOUD_UTILS_CONFIG_DIR/bud/`. File changes are loca
 
 ```bash
 bud              # brew update/upgrade + sync desired casks
+bud --exclude postman        # exclude cask(s) from upgrade this run
+bud -e postman spotify       # short form
 bud list         # desired vs installed (alias: bud ls)
 bud add <name>   # auto-detect cask or formula
 bud remove <name>
