@@ -27,17 +27,41 @@ test("runNpx preserves opaque arguments and inherited stdio", async () => {
   }]);
 });
 
-test("runNpx maps spawn and signal-only failures to one", async () => {
-  const spawnError = () => {
+async function assertSettlesOnceWithOne(promise) {
+  const settlements = [];
+  promise.then((status) => settlements.push(status));
+  assert.equal(await promise, 1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(settlements, [1]);
+}
+
+test("runNpx maps a synchronous spawn throw to one exactly once", async () => {
+  let spawnCalls = 0;
+  const spawnThrow = () => {
+    spawnCalls += 1;
+    throw new Error("ENOENT");
+  };
+  await assertSettlesOnceWithOne(runNpx([], { spawnImpl: spawnThrow }));
+  assert.equal(spawnCalls, 1);
+});
+
+test("runNpx settles asynchronous error followed by close as one exactly once", async () => {
+  const errorThenClose = () => {
     const child = new EventEmitter();
-    queueMicrotask(() => child.emit("error", new Error("ENOENT")));
+    queueMicrotask(() => {
+      child.emit("error", new Error("ENOENT"));
+      child.emit("close", 0, null);
+    });
     return child;
   };
+  await assertSettlesOnceWithOne(runNpx([], { spawnImpl: errorThenClose }));
+});
+
+test("runNpx maps signal-only failures to one", async () => {
   const signalOnly = () => {
     const child = new EventEmitter();
     queueMicrotask(() => child.emit("close", null, "SIGTERM"));
     return child;
   };
-  assert.equal(await runNpx([], { spawnImpl: spawnError }), 1);
   assert.equal(await runNpx([], { spawnImpl: signalOnly }), 1);
 });

@@ -64,8 +64,12 @@ skm ls
 skm list
 skm add <source...>
 skm remove <source...>
+skm rm <source...>
 skm show
 skm show <source>
+skm help
+skm -h
+skm --help
 ```
 
 | Command | Description |
@@ -73,8 +77,9 @@ skm show <source>
 | `skm` | Interactive: Space toggle, Enter install, `q` cancel |
 | `skm ls` / `list` | Saved sources |
 | `skm add` | Add sources (skips duplicates) |
-| `skm remove` | Remove sources |
+| `skm remove` / `rm` | Remove sources |
 | `skm show` | Pick source or pass name directly |
+| `skm help` / `-h` / `--help` | Show command help |
 
 ## gt
 

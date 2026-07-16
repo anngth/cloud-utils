@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
@@ -67,6 +67,108 @@ set timeout -1
 log_user 1
 spawn -noecho {*}$argv
 interact
+catch wait result
+exit [lindex $result 3]
+`;
+
+const FOREGROUND_JOB_EXPECT_SOURCE = String.raw`
+set timeout 8
+log_user 1
+
+proc fail {phase} {
+  puts stderr "__SKM_EXPECT_FAILURE__:$phase"
+  catch {close}
+  catch {wait}
+  exit 1
+}
+
+proc expect_exact {pattern phase} {
+  expect {
+    -exact $pattern { return }
+    timeout { fail "$phase:timeout" }
+    eof { fail "$phase:eof" }
+  }
+}
+
+proc require_flag {detail flag phase} {
+  set pattern [format {(^|[[:space:]])%s([[:space:]]|$)} $flag]
+  if {![regexp -- $pattern $detail]} {
+    fail "$phase:missing-$flag"
+  }
+}
+
+spawn -noecho /bin/zsh -f
+send -- {unsetopt PROMPT_CR PROMPT_SP; PS1='__SKM_PROMPT__ '; print -r -- "__SKM_"SHELL_READY__}
+send -- "\r"
+expect_exact "__SKM_SHELL_READY__" "shell-ready"
+expect_exact "__SKM_PROMPT__ " "initial-prompt"
+
+send -- {stty -pendin; baseline=$(stty -g); print -r -- "__SKM_"BASELINE__:$baseline; "$SKM_TEST_NODE" "$SKM_TEST_CLI" show}
+send -- "\r"
+expect {
+  -re {__SKM_BASELINE__:([^\r\n]+)} { set baseline $expect_out(1,string) }
+  timeout { fail "baseline:timeout" }
+  eof { fail "baseline:eof" }
+}
+expect_exact "Select source to inspect" "initial-selector"
+
+send -raw -- "\032"
+expect {
+  -nocase -re {suspended[^\r\n]*} { puts "__SKM_SHELL_SUSPENDED__:$expect_out(0,string)" }
+  timeout { fail "suspend-report:timeout" }
+  eof { fail "suspend-report:eof" }
+}
+expect_exact "__SKM_PROMPT__ " "suspended-prompt"
+
+send -- {stopped=$(stty -g); print -r -- "__SKM_"STOPPED__:$stopped; print -r -- "__SKM_"STOPPED_DETAIL_BEGIN__; stty -a; print -r -- "__SKM_"STOPPED_DETAIL_END__}
+send -- "\r"
+expect {
+  -re {__SKM_STOPPED__:([^\r\n]+)} { set stopped $expect_out(1,string) }
+  timeout { fail "stopped-state:timeout" }
+  eof { fail "stopped-state:eof" }
+}
+expect_exact "__SKM_STOPPED_DETAIL_BEGIN__" "stopped-detail-begin"
+expect {
+  -exact "__SKM_STOPPED_DETAIL_END__" { set stopped_detail $expect_out(buffer) }
+  timeout { fail "stopped-detail:timeout" }
+  eof { fail "stopped-detail:eof" }
+}
+require_flag $stopped_detail "icanon" "stopped"
+require_flag $stopped_detail "echo" "stopped"
+expect_exact "__SKM_PROMPT__ " "stopped-state-prompt"
+
+send -- {fg; skm_status=$?; print -r -- "__SKM_"STATUS__:$skm_status}
+send -- "\r"
+expect_exact "Select source to inspect" "resumed-selector"
+puts "__SKM_RESUMED_SELECTOR__"
+
+# A bare q reaches the CLI without Enter only after raw mode is restored.
+send -raw -- "q"
+expect_exact "Select source to inspect cancelled" "cancelled"
+puts "__SKM_RESUMED_RAW_Q__"
+expect {
+  -re {__SKM_STATUS__:([0-9]+)} { set status $expect_out(1,string) }
+  timeout { fail "status:timeout" }
+  eof { fail "status:eof" }
+}
+if {$status ne "0"} { fail "status:$status" }
+expect_exact "__SKM_PROMPT__ " "final-prompt"
+
+send -- {stty -pendin; final=$(stty -g); print -r -- "__SKM_"FINAL__:$final}
+send -- "\r"
+expect {
+  -re {__SKM_FINAL__:([^\r\n]+)} { set final $expect_out(1,string) }
+  timeout { fail "final-state:timeout" }
+  eof { fail "final-state:eof" }
+}
+if {$final ne $baseline} { fail "final:not-baseline" }
+expect_exact "__SKM_PROMPT__ " "final-state-prompt"
+
+send -- "exit\r"
+expect {
+  eof {}
+  timeout { fail "shell-exit:timeout" }
+}
 catch wait result
 exit [lindex $result 3]
 `;
@@ -296,6 +398,36 @@ async function finishAndAssertRestored(session, before) {
     childExit: JSON.parse(markerValue(result.stdout, "__SKM_CHILD_EXIT__")),
   };
 }
+
+test("foreground shell Ctrl+Z, fg, and q preserve terminal job control", { skip: !hasMacOsPtyTools }, (t) => {
+  const sandbox = makeSandbox(t, { list: [{ source: "a/one" }] });
+  const expectScript = join(sandbox.root, "foreground-job.exp");
+  writeFileSync(expectScript, FOREGROUND_JOB_EXPECT_SOURCE, "utf8");
+  const result = spawnSync(EXPECT, [expectScript], {
+    env: {
+      ...sandbox.env,
+      SKM_TEST_NODE: process.execPath,
+      SKM_TEST_CLI: JS_ENTRY,
+    },
+    encoding: "utf8",
+    timeout: 45_000,
+    killSignal: "SIGKILL",
+    maxBuffer: 1024 * 1024,
+  });
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.equal(result.signal, null, result.stderr);
+  assert.equal(result.status, 0, `foreground job-control harness failed\n${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /__SKM_BASELINE__:[^\r\n]+/);
+  assert.match(result.stdout, /__SKM_SHELL_SUSPENDED__:[^\r\n]*suspended/i);
+  assert.match(result.stdout, /__SKM_STOPPED__:[^\r\n]+/);
+  assert.match(result.stdout, /__SKM_STOPPED_DETAIL_BEGIN__[\s\S]*\bicanon\b[\s\S]*__SKM_STOPPED_DETAIL_END__/);
+  assert.match(result.stdout, /__SKM_RESUMED_SELECTOR__/);
+  assert.match(result.stdout, /__SKM_RESUMED_RAW_Q__/);
+  assert.match(result.stdout, /Select source to inspect cancelled/);
+  assert.match(result.stdout, /__SKM_STATUS__:0/);
+  assert.match(result.stdout, /__SKM_FINAL__:[^\r\n]+/);
+  assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /unsettled top-level await/i);
+});
 
 test("q cancels install selector and restores terminal state", { skip: !hasMacOsPtyTools }, async (t) => {
   const sandbox = makeSandbox(t, { list: [{ source: "a/one" }] });

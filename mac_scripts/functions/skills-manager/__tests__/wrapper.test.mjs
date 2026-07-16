@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
@@ -20,6 +20,8 @@ test("wrapper forwards opaque argument boundaries and child status", (t) => {
 
 test("wrapper reports missing node after creating the config directory", (t) => {
   const sandbox = makeSandbox(t);
+  rmSync(sandbox.configDir, { recursive: true });
+  assert.equal(existsSync(sandbox.configDir), false);
   const noNodeBin = join(sandbox.root, "no-node-bin");
   mkdirSync(noNodeBin);
   symlinkSync("/usr/bin/dirname", join(noNodeBin, "dirname"));
@@ -30,4 +32,5 @@ test("wrapper reports missing node after creating the config directory", (t) => 
   });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /node is required to read and update/);
+  assert.equal(existsSync(sandbox.configDir), true);
 });
