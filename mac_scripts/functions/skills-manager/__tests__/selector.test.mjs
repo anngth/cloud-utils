@@ -16,6 +16,13 @@ test("createKeyDecoder preserves a split arrow sequence", () => {
   assert.deepEqual(decoder.push(Buffer.from("A")), ["up"]);
 });
 
+test("createKeyDecoder preserves one-byte escape fragments before mixed keys", () => {
+  const decoder = createKeyDecoder();
+  assert.deepEqual(decoder.push(Buffer.from("\u001b")), []);
+  assert.deepEqual(decoder.push(Buffer.from("[")), []);
+  assert.deepEqual(decoder.push(Buffer.from("Bj")), ["down", "down"]);
+});
+
 test("cursor movement clamps and multi-select returns display order", () => {
   let state = createSelectorState(["a", "b", "c"]);
   state = reduceSelector(state, "up", { multiple: true }).state;
@@ -49,6 +56,14 @@ class FakeInput extends EventEmitter {
   pause() {}
 }
 
+function assertSelectorListenersRemoved(input, processRef) {
+  assert.equal(input.listenerCount("data"), 0);
+  assert.equal(input.listenerCount("end"), 0);
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGTSTP", "SIGCONT"]) {
+    assert.equal(processRef.listenerCount(signal), 0);
+  }
+}
+
 test("runSelector restores raw mode and listeners on submit", async () => {
   const input = new FakeInput();
   const processRef = new EventEmitter();
@@ -65,11 +80,7 @@ test("runSelector restores raw mode and listeners on submit", async () => {
   const result = await promise;
   assert.deepEqual(result.selected, ["a"]);
   assert.deepEqual(input.rawCalls, [true, false]);
-  assert.equal(input.listenerCount("data"), 0);
-  assert.equal(input.listenerCount("end"), 0);
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGTSTP", "SIGCONT"]) {
-    assert.equal(processRef.listenerCount(signal), 0);
-  }
+  assertSelectorListenersRemoved(input, processRef);
 });
 
 test("cleanup restores an input that was already raw", async () => {
@@ -156,4 +167,75 @@ test("selector accepts input after SIGCONT", async () => {
   const result = await promise;
   assert.equal(result.type, "submit");
   assert.deepEqual(result.selected, ["b"]);
+});
+
+test("SIGCONT transition failures clean up and reject", async () => {
+  for (const failurePoint of ["setRawMode", "render"]) {
+    const input = new FakeInput();
+    const processRef = new EventEmitter();
+    processRef.pid = 123;
+    processRef.kill = () => {};
+    const expected = new Error(`${failurePoint} failed`);
+    let renders = 0;
+    const promise = runSelector({
+      sources: ["a"],
+      multiple: false,
+      input,
+      render() {
+        renders += 1;
+        if (failurePoint === "render" && renders === 2) {
+          assert.equal(input.listenerCount("data"), 1);
+          throw expected;
+        }
+      },
+      processRef,
+    });
+    if (failurePoint === "setRawMode") {
+      const setRawMode = input.setRawMode.bind(input);
+      input.setRawMode = (value) => {
+        setRawMode(value);
+        if (value) {
+          assert.equal(input.listenerCount("data"), 1);
+          throw expected;
+        }
+      };
+    }
+
+    processRef.emit("SIGTSTP");
+    processRef.emit("SIGCONT");
+
+    await assert.rejects(promise, expected);
+    assert.equal(input.isRaw, false);
+    assertSelectorListenersRemoved(input, processRef);
+    const rawCalls = [...input.rawCalls];
+    processRef.emit("SIGINT");
+    input.emit("end");
+    assert.deepEqual(input.rawCalls, rawCalls);
+  }
+});
+
+test("SIGTSTP kill failures clean up and reject", async () => {
+  const input = new FakeInput();
+  const processRef = new EventEmitter();
+  processRef.pid = 123;
+  const expected = new Error("kill failed");
+  processRef.kill = () => {
+    assert.equal(input.listenerCount("data"), 0);
+    assert.equal(processRef.listenerCount("SIGTSTP"), 0);
+    assert.equal(input.isRaw, false);
+    throw expected;
+  };
+  const promise = runSelector({
+    sources: ["a"],
+    multiple: false,
+    input,
+    render() {},
+    processRef,
+  });
+
+  processRef.emit("SIGTSTP");
+
+  await assert.rejects(promise, expected);
+  assert.equal(input.isRaw, false);
+  assertSelectorListenersRemoved(input, processRef);
 });

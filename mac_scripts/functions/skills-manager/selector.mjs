@@ -123,19 +123,29 @@ export function runSelector({
     };
     const suspend = () => {
       if (!active || suspended) return;
-      suspended = true;
-      input.off("data", onData);
-      setInputMode(false);
-      processRef.off("SIGTSTP", signalHandlers.SIGTSTP);
-      processRef.kill(processRef.pid, "SIGTSTP");
-      processRef.on("SIGTSTP", signalHandlers.SIGTSTP);
+      try {
+        suspended = true;
+        input.off("data", onData);
+        setInputMode(false);
+        processRef.off("SIGTSTP", signalHandlers.SIGTSTP);
+        processRef.kill(processRef.pid, "SIGTSTP");
+        processRef.on("SIGTSTP", signalHandlers.SIGTSTP);
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
     };
     const resume = () => {
       if (!active || !suspended) return;
-      suspended = false;
-      input.on("data", onData);
-      setInputMode(true);
-      render(state);
+      try {
+        suspended = false;
+        input.on("data", onData);
+        setInputMode(true);
+        render(state);
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
     };
     const signalHandlers = {
       SIGINT: cancel,
