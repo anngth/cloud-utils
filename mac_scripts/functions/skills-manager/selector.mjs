@@ -20,6 +20,7 @@ export function decodeKeys(buffer) {
       else if (value === " ") keys.push("toggle");
       else if (value === "\r" || value === "\n") keys.push("submit");
       else if (value === "q" || value === "\u0003") keys.push("cancel");
+      else if (value === "\u001a") keys.push("suspend");
     }
   }
   return keys;
@@ -102,6 +103,10 @@ export function runSelector({
     const onData = (chunk) => {
       try {
         for (const key of decoder.push(chunk)) {
+          if (key === "suspend") {
+            suspend();
+            return;
+          }
           const result = reduceSelector(state, key, { multiple });
           state = result.state;
           if (result.type !== "continue") {

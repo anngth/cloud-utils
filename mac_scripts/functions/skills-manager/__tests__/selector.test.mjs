@@ -10,6 +10,10 @@ test("decodeKeys recognizes arrows, vim keys, space, enter, q, and Ctrl+C", () =
   );
 });
 
+test("decodeKeys maps Ctrl+Z to suspend", () => {
+  assert.deepEqual(decodeKeys(Buffer.from([0x1a])), ["suspend"]);
+});
+
 test("createKeyDecoder preserves a split arrow sequence", () => {
   const decoder = createKeyDecoder();
   assert.deepEqual(decoder.push(Buffer.from("\u001b[")), []);
@@ -147,6 +151,36 @@ test("SIGTSTP restores mode and SIGCONT resumes and redraws", () => {
   assert.equal(input.isRaw, true);
   assert.equal(renders, 2);
   processRef.emit("SIGINT");
+});
+
+test("raw Ctrl+Z suspends and resumes an active cancellable selector", async () => {
+  const input = new FakeInput();
+  const processRef = new EventEmitter();
+  processRef.pid = 123;
+  const signals = [];
+  let renders = 0;
+  processRef.kill = (_pid, signal) => signals.push({ signal, raw: input.isRaw });
+  const promise = runSelector({
+    sources: ["a"],
+    multiple: false,
+    input,
+    render() { renders += 1; },
+    processRef,
+  });
+
+  input.emit("data", Buffer.from([0x1a]));
+  assert.deepEqual(signals, [{ signal: "SIGTSTP", raw: false }]);
+  assert.equal(input.listenerCount("data"), 0);
+
+  processRef.emit("SIGCONT");
+  assert.equal(input.isRaw, true);
+  assert.equal(renders, 2);
+  assert.equal(input.listenerCount("data"), 1);
+
+  input.emit("data", Buffer.from("q"));
+  assert.equal((await promise).type, "cancel");
+  assert.equal(input.isRaw, false);
+  assertSelectorListenersRemoved(input, processRef);
 });
 
 test("selector accepts input after SIGCONT", async () => {
