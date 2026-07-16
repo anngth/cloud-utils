@@ -1,3 +1,5 @@
+const SUSPEND_KEEPALIVE_DELAY = 2_147_483_647;
+
 export function createSelectorState(sources) {
   return { sources: [...sources], cursor: 0, selected: new Set() };
 }
@@ -65,11 +67,14 @@ export function runSelector({
   input = process.stdin,
   render,
   processRef = process,
+  setIntervalImpl = setInterval,
+  clearIntervalImpl = clearInterval,
 }) {
   return new Promise((resolve, reject) => {
     let state = createSelectorState(sources);
     let active = true;
     let suspended = false;
+    let suspensionKeepalive;
     const decoder = createKeyDecoder();
     const priorRaw = Boolean(input.isRaw);
 
@@ -87,10 +92,17 @@ export function runSelector({
       }
     };
 
+    const clearSuspensionKeepalive = () => {
+      if (suspensionKeepalive === undefined) return;
+      clearIntervalImpl(suspensionKeepalive);
+      suspensionKeepalive = undefined;
+    };
+
     const cleanup = () => {
       if (!active) return;
       active = false;
       suspended = false;
+      clearSuspensionKeepalive();
       removeListeners();
       setInputMode(false);
     };
@@ -133,6 +145,7 @@ export function runSelector({
         input.off("data", onData);
         setInputMode(false);
         processRef.off("SIGTSTP", signalHandlers.SIGTSTP);
+        suspensionKeepalive = setIntervalImpl(() => {}, SUSPEND_KEEPALIVE_DELAY);
         processRef.kill(processRef.pid, "SIGTSTP");
         processRef.on("SIGTSTP", signalHandlers.SIGTSTP);
       } catch (error) {
@@ -147,6 +160,7 @@ export function runSelector({
         input.on("data", onData);
         setInputMode(true);
         render(state);
+        clearSuspensionKeepalive();
       } catch (error) {
         cleanup();
         reject(error);

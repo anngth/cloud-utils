@@ -68,6 +68,27 @@ function assertSelectorListenersRemoved(input, processRef) {
   }
 }
 
+function makeFakeTimers() {
+  const intervals = [];
+  const cleared = [];
+  let unrefCalls = 0;
+  return {
+    intervals,
+    cleared,
+    get unrefCalls() { return unrefCalls; },
+    setIntervalImpl(callback, delay) {
+      const handle = {
+        callback,
+        delay,
+        unref() { unrefCalls += 1; },
+      };
+      intervals.push(handle);
+      return handle;
+    },
+    clearIntervalImpl(handle) { cleared.push(handle); },
+  };
+}
+
 test("runSelector restores raw mode and listeners on submit", async () => {
   const input = new FakeInput();
   const processRef = new EventEmitter();
@@ -156,31 +177,77 @@ test("SIGTSTP restores mode and SIGCONT resumes and redraws", () => {
 test("raw Ctrl+Z suspends and resumes an active cancellable selector", async () => {
   const input = new FakeInput();
   const processRef = new EventEmitter();
+  const timers = makeFakeTimers();
   processRef.pid = 123;
   const signals = [];
   let renders = 0;
-  processRef.kill = (_pid, signal) => signals.push({ signal, raw: input.isRaw });
+  let keepaliveSeenAtKill = false;
+  let clearedDuringResumeRender;
+  processRef.kill = (_pid, signal) => {
+    keepaliveSeenAtKill = timers.intervals.length === 1 && timers.cleared.length === 0;
+    signals.push({ signal, raw: input.isRaw });
+  };
   const promise = runSelector({
     sources: ["a"],
     multiple: false,
     input,
-    render() { renders += 1; },
+    render() {
+      renders += 1;
+      if (renders === 2) clearedDuringResumeRender = timers.cleared.length;
+    },
     processRef,
+    setIntervalImpl: timers.setIntervalImpl,
+    clearIntervalImpl: timers.clearIntervalImpl,
   });
 
   input.emit("data", Buffer.from([0x1a]));
-  assert.deepEqual(signals, [{ signal: "SIGTSTP", raw: false }]);
-  assert.equal(input.listenerCount("data"), 0);
+  const suspendedDataListeners = input.listenerCount("data");
+  processRef.emit("SIGTSTP");
 
   processRef.emit("SIGCONT");
-  assert.equal(input.isRaw, true);
-  assert.equal(renders, 2);
-  assert.equal(input.listenerCount("data"), 1);
+  const rawAfterResume = input.isRaw;
+  const resumedDataListeners = input.listenerCount("data");
 
   input.emit("data", Buffer.from("q"));
   assert.equal((await promise).type, "cancel");
+  assert.deepEqual(signals, [{ signal: "SIGTSTP", raw: false }]);
+  assert.equal(keepaliveSeenAtKill, true);
+  assert.equal(suspendedDataListeners, 0);
+  assert.equal(timers.intervals.length, 1);
+  assert.equal(timers.intervals[0].delay, 2_147_483_647);
+  assert.equal(timers.unrefCalls, 0);
+  assert.equal(rawAfterResume, true);
+  assert.equal(renders, 2);
+  assert.equal(clearedDuringResumeRender, 0);
+  assert.equal(resumedDataListeners, 1);
+  assert.deepEqual(timers.cleared, [timers.intervals[0]]);
   assert.equal(input.isRaw, false);
+  assert.equal(timers.cleared.length, 1);
   assertSelectorListenersRemoved(input, processRef);
+});
+
+test("cancelling while suspended clears the keepalive", async () => {
+  const input = new FakeInput();
+  const processRef = new EventEmitter();
+  const timers = makeFakeTimers();
+  processRef.pid = 123;
+  processRef.kill = () => {};
+  const promise = runSelector({
+    sources: ["a"],
+    multiple: false,
+    input,
+    render() {},
+    processRef,
+    setIntervalImpl: timers.setIntervalImpl,
+    clearIntervalImpl: timers.clearIntervalImpl,
+  });
+
+  input.emit("data", Buffer.from([0x1a]));
+  processRef.emit("SIGINT");
+
+  assert.equal((await promise).type, "cancel");
+  assert.equal(timers.intervals.length, 1);
+  assert.deepEqual(timers.cleared, [timers.intervals[0]]);
 });
 
 test("selector accepts input after SIGCONT", async () => {
@@ -207,6 +274,7 @@ test("SIGCONT transition failures clean up and reject", async () => {
   for (const failurePoint of ["setRawMode", "render"]) {
     const input = new FakeInput();
     const processRef = new EventEmitter();
+    const timers = makeFakeTimers();
     processRef.pid = 123;
     processRef.kill = () => {};
     const expected = new Error(`${failurePoint} failed`);
@@ -223,6 +291,8 @@ test("SIGCONT transition failures clean up and reject", async () => {
         }
       },
       processRef,
+      setIntervalImpl: timers.setIntervalImpl,
+      clearIntervalImpl: timers.clearIntervalImpl,
     });
     if (failurePoint === "setRawMode") {
       const setRawMode = input.setRawMode.bind(input);
@@ -241,6 +311,8 @@ test("SIGCONT transition failures clean up and reject", async () => {
     await assert.rejects(promise, expected);
     assert.equal(input.isRaw, false);
     assertSelectorListenersRemoved(input, processRef);
+    assert.equal(timers.intervals.length, 1);
+    assert.deepEqual(timers.cleared, [timers.intervals[0]]);
     const rawCalls = [...input.rawCalls];
     processRef.emit("SIGINT");
     input.emit("end");
@@ -251,6 +323,7 @@ test("SIGCONT transition failures clean up and reject", async () => {
 test("SIGTSTP kill failures clean up and reject", async () => {
   const input = new FakeInput();
   const processRef = new EventEmitter();
+  const timers = makeFakeTimers();
   processRef.pid = 123;
   const expected = new Error("kill failed");
   processRef.kill = () => {
@@ -265,6 +338,8 @@ test("SIGTSTP kill failures clean up and reject", async () => {
     input,
     render() {},
     processRef,
+    setIntervalImpl: timers.setIntervalImpl,
+    clearIntervalImpl: timers.clearIntervalImpl,
   });
 
   processRef.emit("SIGTSTP");
@@ -272,4 +347,6 @@ test("SIGTSTP kill failures clean up and reject", async () => {
   await assert.rejects(promise, expected);
   assert.equal(input.isRaw, false);
   assertSelectorListenersRemoved(input, processRef);
+  assert.equal(timers.intervals.length, 1);
+  assert.deepEqual(timers.cleared, [timers.intervals[0]]);
 });
