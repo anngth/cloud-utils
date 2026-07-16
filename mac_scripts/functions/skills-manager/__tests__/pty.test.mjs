@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { JS_ENTRY, makeSandbox } from "./helpers.mjs";
@@ -71,6 +71,46 @@ catch wait result
 exit [lindex $result 3]
 `;
 
+const HELD_NPX_SOURCE = String.raw`
+import { spawnSync } from "node:child_process";
+import { existsSync, watch, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+
+function stty(args) {
+  const result = spawnSync("/bin/stty", args, {
+    encoding: "utf8",
+    stdio: [0, "pipe", 2],
+  });
+  if (result.status !== 0) throw new Error("could not inspect inherited TTY state");
+  return result.stdout;
+}
+
+function waitForRelease(filePath) {
+  if (existsSync(filePath)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let watcher;
+    const timer = setTimeout(() => finish(new Error("timed out waiting for npx release")), 8_000);
+    const finish = (error) => {
+      clearTimeout(timer);
+      watcher?.close();
+      if (error) reject(error);
+      else resolve();
+    };
+    watcher = watch(dirname(filePath), () => {
+      if (existsSync(filePath)) finish();
+    });
+    watcher.once("error", finish);
+    if (existsSync(filePath)) finish();
+  });
+}
+
+writeFileSync(process.env.SKM_NPX_TTY_STATE, stty(["-g"]).trim() + "\n", "utf8");
+writeFileSync(process.env.SKM_NPX_TTY_DETAIL, stty(["-a"]), "utf8");
+writeFileSync(process.env.SKM_ARGV_LOG, JSON.stringify(process.argv.slice(2)) + "\n", "utf8");
+process.stdout.write("__SKM_NPX_READY__\n");
+await waitForRelease(process.env.SKM_NPX_RELEASE);
+`;
+
 function decodeSnapshot(encoded) {
   return JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
 }
@@ -84,6 +124,26 @@ function markerValue(output, name) {
 function assertEcho(snapshot, enabled) {
   const flag = enabled ? "echo" : "-echo";
   assert.match(snapshot.detail, new RegExp(`(?:^|\\s)${flag}(?:\\s|$)`, "m"));
+}
+
+function installHeldNpx(sandbox) {
+  const stub = join(sandbox.root, "held-npx.mjs");
+  const readyState = join(sandbox.root, "npx-stty-g.txt");
+  const readyDetail = join(sandbox.root, "npx-stty-a.txt");
+  const release = join(sandbox.root, "npx-release");
+  writeFileSync(stub, HELD_NPX_SOURCE, "utf8");
+  writeFileSync(
+    join(sandbox.binDir, "npx"),
+    `#!/bin/zsh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(stub)} "$@"\n`,
+    "utf8",
+  );
+  chmodSync(join(sandbox.binDir, "npx"), 0o755);
+  Object.assign(sandbox.env, {
+    SKM_NPX_TTY_STATE: readyState,
+    SKM_NPX_TTY_DETAIL: readyDetail,
+    SKM_NPX_RELEASE: release,
+  });
+  return { readyState, readyDetail, release };
 }
 
 function startInPty(t, args, sandbox) {
@@ -259,8 +319,26 @@ test("raw Ctrl+C cancels show selector and restores terminal state", { skip: !ha
 
 test("Enter restores terminal input before the child inherits stdio", { skip: !hasMacOsPtyTools }, async (t) => {
   const sandbox = makeSandbox(t, { list: [{ source: "a/one" }] });
+  const heldNpx = installHeldNpx(sandbox);
   const { session, before } = await readySession(t, ["show"], sandbox, "Select source to inspect");
-  session.input("\r");
+  const beforeEnter = session.stdout.length;
+  try {
+    session.input("\r");
+    await session.waitForText("__SKM_NPX_READY__", { from: beforeEnter });
+    const inherited = {
+      state: readFileSync(heldNpx.readyState, "utf8").trim(),
+      detail: readFileSync(heldNpx.readyDetail, "utf8"),
+    };
+    assert.equal(
+      inherited.state,
+      before.state,
+      "inherited-stdio child must start with the exact pre-selector TTY state",
+    );
+    assertEcho(inherited, true);
+    assert.match(inherited.detail, /(?:^|\s)icanon(?:\s|$)/m);
+  } finally {
+    writeFileSync(heldNpx.release, "release\n", "utf8");
+  }
   const result = await finishAndAssertRestored(session, before);
   assert.deepEqual(result.childExit, { status: 0, signal: null });
   assert.equal(result.status, 0);
