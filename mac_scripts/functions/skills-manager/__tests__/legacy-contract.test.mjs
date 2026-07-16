@@ -1,40 +1,31 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { makeSandbox, normalizeCapture, runLegacy } from "./helpers.mjs";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import test from "node:test";
 
-const GOLDEN_FILE = join(dirname(fileURLToPath(import.meta.url)), "fixtures/golden.json");
-const GOLDENS = JSON.parse(readFileSync(GOLDEN_FILE, "utf8"));
+const TEST_DIR = dirname(fileURLToPath(import.meta.url));
+const fixture = JSON.parse(
+  readFileSync(join(TEST_DIR, "fixtures/golden.json"), "utf8"),
+);
 
-test("legacy help capture has stable streams and status", (t) => {
-  const sandbox = makeSandbox(t);
-  const result = normalizeCapture(runLegacy(["--help"], sandbox), sandbox);
-
-  assert.equal(result.status, 0);
-  assert.equal(result.stderr, "");
-  assert.match(result.stdout, /SKILLS MANAGER/);
-  assert.match(result.stdout, /Usage: skm <command> \[args\]/);
-});
-
-for (const entry of GOLDENS) {
-  test(`legacy golden: ${entry.name}`, (t) => {
-    const sandbox = makeSandbox(t, { list: entry.list });
-    const actual = normalizeCapture(runLegacy(entry.args, sandbox), sandbox);
-    assert.deepEqual(actual, entry.capture);
-    if (entry.fileAfter !== undefined) {
-      assert.equal(readFileSync(sandbox.skillsFile, "utf8"), entry.fileAfter);
-    }
-  });
-}
-
-test("legacy harness preserves a source argument containing spaces", (t) => {
-  const sandbox = makeSandbox(t);
-  const result = runLegacy(["show", "owner/repo with space"], sandbox);
-  assert.equal(result.status, 0);
-  assert.equal(
-    readFileSync(sandbox.argvLog, "utf8"),
-    '["skills","add","owner/repo with space","--list"]\n',
+test("legacy golden fixture retains the required named cases", () => {
+  assert.deepEqual(
+    fixture.map((entry) => entry.name),
+    [
+      "help",
+      "unknown",
+      "list-empty",
+      "list-values",
+      "add-new-and-duplicate",
+      "remove-repeated-and-missing",
+      "show-too-many",
+      "add-missing-argument",
+    ],
   );
+  for (const entry of fixture) {
+    assert.equal(typeof entry.capture.stdout, "string");
+    assert.equal(typeof entry.capture.stderr, "string");
+    assert.equal(Number.isInteger(entry.capture.status), true);
+  }
 });

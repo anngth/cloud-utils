@@ -2,5 +2,16 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
-source "$SCRIPT_DIR/functions/skills-manager/main.zsh"
-skm "$@"
+CONFIG_DIR="${CLOUD_UTILS_CONFIG_DIR:-${HOME}/Library/Mobile Documents/com~apple~CloudDocs/Backups/cloud-utils}"
+if ! mkdir -p "$CONFIG_DIR"; then
+  print -P "%F{red}❌ Could not create config directory.%f" >&2
+  exit 1
+fi
+
+SKILLS_FILE="$CONFIG_DIR/skm/list.json"
+if ! command -v node >/dev/null 2>&1; then
+  print -P "%F{red}❌ node is required to read and update ${SKILLS_FILE}%f" >&2
+  exit 1
+fi
+
+exec node "$SCRIPT_DIR/functions/skills-manager/cli.mjs" "$@"

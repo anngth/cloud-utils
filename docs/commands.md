@@ -56,7 +56,7 @@ Secrets: `VPS_CONFIGS`, `POSTGRES_SOURCES`, `POSTGRES_TARGETS`, `MONGO_SOURCES`,
 
 ## skm
 
-Skills manager — `$CLOUD_UTILS_CONFIG_DIR/skm/list.json`.
+Skills manager implemented as a Node.js CLI, invoked through the `mac_scripts/skm` compatibility wrapper. It stores sources in `$CLOUD_UTILS_CONFIG_DIR/skm/list.json`.
 
 ```bash
 skm

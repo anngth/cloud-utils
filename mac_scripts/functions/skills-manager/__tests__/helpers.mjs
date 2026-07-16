@@ -7,7 +7,6 @@ import { spawnSync } from "node:child_process";
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 export const MANAGER_DIR = resolve(TEST_DIR, "..");
 export const REPO_ROOT = resolve(MANAGER_DIR, "../../..");
-export const LEGACY_MAIN = join(MANAGER_DIR, "main.zsh");
 export const JS_ENTRY = join(MANAGER_DIR, "cli.mjs");
 export const WRAPPER = join(REPO_ROOT, "mac_scripts/skm");
 
@@ -72,11 +71,6 @@ function capture(command, args, sandbox, options = {}) {
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
   };
-}
-
-export function runLegacy(args, sandbox, options = {}) {
-  const script = 'source "$1"; shift; skm "$@"';
-  return capture("zsh", ["-c", script, "skm-test", LEGACY_MAIN, ...args], sandbox, options);
 }
 
 export function runJavaScript(args, sandbox, options = {}) {
