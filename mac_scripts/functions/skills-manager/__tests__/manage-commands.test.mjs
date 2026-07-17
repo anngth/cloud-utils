@@ -159,6 +159,21 @@ test("source add --no-skills never contacts upstream", async (t) => {
   assert.deepEqual(harness.writtenProfiles, profileWithSource("default", "acme/skills", []));
 });
 
+test("source add rejects unsafe GitHub shorthand before persistence", async (t) => {
+  for (const source of [
+    "owner/repo?ToKeN=query-secret",
+    "owner/repo#fragment-secret",
+    "git@github.com:owner/repo@ACCESS_TOKEN=query-secret",
+  ]) {
+    const harness = makeManagementHarness(t);
+    assert.equal(await runSourceCommand([
+      "add", source, "-p", "default", "--no-skills",
+    ], harness.context), 1);
+    assert.equal(harness.writtenProfiles, undefined);
+    assert.doesNotMatch(harness.stderr(), /token|secret|fragment|query/i);
+  }
+});
+
 test("source add --all snapshots every discovered name without a wildcard", async (t) => {
   const harness = makeManagementHarness(t, {
     discover: [

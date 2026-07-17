@@ -18,6 +18,47 @@ test("canonicalizes equivalent GitHub repository roots", () => {
   }
 });
 
+test("preserves safe GitHub shorthand component characters", () => {
+  assert.equal(
+    canonicalizeSource("owner-name/repo_name.v2.git"),
+    "owner-name/repo_name.v2",
+  );
+});
+
+test("rejects query tokens and fragments appended to GitHub shorthand", () => {
+  for (const value of [
+    "owner/repo?TOKEN=query-secret",
+    "owner/repo?Access_Token=query-secret",
+    "owner/repo#fragment-secret",
+  ]) {
+    assert.throws(() => canonicalizeSource(value), SourceIdentityError);
+    assert.doesNotMatch(redactSource(value), /token|secret|fragment/i);
+  }
+});
+
+test("rejects unsafe GitHub SSH query fragment and credential-like suffixes", () => {
+  for (const value of [
+    "git@github.com:owner/repo?ToKeN=query-secret",
+    "ssh://git@github.com/owner/repo#fragment-secret",
+    "git@github.com:owner/repo@ACCESS_TOKEN=query-secret",
+    "ssh://git@github.com/owner/repo.git?KeY=query-secret",
+  ]) {
+    assert.throws(() => canonicalizeSource(value), SourceIdentityError);
+    assert.doesNotMatch(redactSource(value), /token|secret|fragment|query/i);
+  }
+});
+
+test("rejects delimiters and credential syntax embedded in shorthand components", () => {
+  for (const value of [
+    "owner/repo@secret",
+    "owner/repo=secret",
+    "owner:token/repo",
+  ]) {
+    assert.throws(() => canonicalizeSource(value), SourceIdentityError);
+    assert.doesNotMatch(redactSource(value), /secret|token/i);
+  }
+});
+
 test("preserves a GitHub ref and subpath", () => {
   assert.equal(
     canonicalizeSource("https://github.com/acme/skills/tree/v2/skills/review"),

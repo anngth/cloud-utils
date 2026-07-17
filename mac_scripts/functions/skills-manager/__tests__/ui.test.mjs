@@ -107,6 +107,19 @@ test("source renderers never display URL queries, fragments, or credentials", ()
   assert.doesNotMatch(rendered, /user|secret|token|fragment/i);
 });
 
+test("source renderers fail closed for unsafe GitHub SSH suffixes", () => {
+  const { stdout, ui } = makeUi();
+  ui.sourceChanged({
+    action: "shown",
+    profile: null,
+    source: "git@github.com:owner/repo@ACCESS_TOKEN=query-secret",
+    skills: [],
+  });
+  const rendered = stdout.read();
+  assert.match(rendered, /unsafe source redacted/i);
+  assert.doesNotMatch(rendered, /access_token|query-secret/i);
+});
+
 test("project renderers show linked profiles and mark stale roots", () => {
   const current = makeUi();
   current.ui.projectShow({ root: "/repo/current", profiles: ["frontend", "review"] });
