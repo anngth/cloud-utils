@@ -94,11 +94,11 @@ export function classifyStatus(mergeResult, installedState) {
 
 export function createInstallPlan(statusResult, { force = false, selectedKeys } = {}) {
   const selected = (item) => selectedKeys === undefined || selectedKeys.has(item.key);
-  const blocked = [...statusResult.mismatches, ...statusResult.untracked].filter(selected);
+  const blocked = [...statusResult.mismatches, ...statusResult.untracked];
 
   return {
     install: statusResult.missing.filter(selected),
-    replace: force ? blocked : [],
+    replace: force ? blocked.filter(selected) : [],
     skip: [...statusResult.installed],
     conflicts: force ? [] : blocked,
     extras: [...statusResult.extras],

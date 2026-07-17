@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runInstallCommand, runStatusCommand } from "../lifecycle-commands.mjs";
+import { executeInstallPlan } from "../operations.mjs";
 
 const FRONTEND_PROFILES = {
   version: 1,
@@ -73,7 +74,7 @@ function lifecycleHarness({
     executeInstallPlan: async (value) => {
       executionCalls += 1;
       capturedPlan = value;
-      return execution;
+      return typeof execution === "function" ? execution(value) : execution;
     },
     writeProjects: (_paths, _profiles, document) => { writtenProjects = document; },
   };
@@ -173,6 +174,34 @@ test("partial install failure never writes newly selected links", async () => {
     execution: { ok: false, succeeded: [], failed: [{ action: "install", status: 2 }] },
   });
   assert.equal(await runInstallCommand([], harness.context), 1);
+  assert.equal(harness.writtenProjects, undefined);
+});
+
+test("temporary selection keeps unresolved conflicts and prevents a new link", async () => {
+  const upstreamCalls = [];
+  const safeKey = JSON.stringify(["a/repo", "safe"]);
+  const harness = lifecycleHarness({
+    profiles: {
+      version: 1,
+      profiles: [{
+        name: "frontend",
+        sources: [{ source: "a/repo", skills: ["safe", "blocked"] }],
+      }],
+    },
+    linkedProfiles: [],
+    selectedProfiles: ["frontend"],
+    selectedSkills: [safeKey],
+    saveLinks: true,
+    installed: new Map([["blocked", actualSkill("blocked", "wrong/repo")]]),
+    execution: (plan) => executeInstallPlan(plan, {
+      runMutation: async (args) => { upstreamCalls.push(args); return 0; },
+    }),
+  });
+
+  assert.equal(await runInstallCommand([], harness.context), 1);
+  assert.deepEqual(upstreamCalls, [["skills", "add", "a/repo", "--skill", "safe"]]);
+  assert.deepEqual(harness.capturedPlan.conflicts.map((item) => item.skill), ["blocked"]);
+  assert.equal(harness.uiCalls.at(-1)[1].ok, false);
   assert.equal(harness.writtenProjects, undefined);
 });
 

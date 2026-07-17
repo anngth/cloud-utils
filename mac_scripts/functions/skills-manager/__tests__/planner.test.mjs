@@ -119,14 +119,31 @@ test("install force moves mismatch and untracked entries into replacement", () =
   assert.deepEqual(plan.conflicts, []);
 });
 
-test("temporary selected keys filter install candidates without changing status", () => {
+test("temporary selected keys filter installs without removing non-force conflicts", () => {
   const missing = STATUS.missing[0];
-  const plan = createInstallPlan(STATUS, {
+  const desiredConflicts = [{
+    skill: "ambiguous",
+    sources: ["a/repo", "b/repo"],
+    profiles: ["p", "q"],
+  }];
+  const plan = createInstallPlan({ ...STATUS, desiredConflicts }, {
     force: false,
     selectedKeys: new Set([missing.key]),
   });
   assert.deepEqual(plan.install.map(name), ["missing"]);
+  assert.deepEqual(plan.conflicts.map(name), ["wrong", "unknown"]);
+  assert.equal(plan.desiredConflicts, desiredConflicts);
   assert.equal(STATUS.missing.length, 1);
+});
+
+test("temporary selected keys filter forced replacements", () => {
+  const wrong = STATUS.mismatches[0];
+  const plan = createInstallPlan(STATUS, {
+    force: true,
+    selectedKeys: new Set([wrong.key]),
+  });
+  assert.deepEqual(plan.replace.map(name), ["wrong"]);
+  assert.deepEqual(plan.conflicts, []);
 });
 
 test("desired-source conflicts block their mutation while safe installs continue", () => {
