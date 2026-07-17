@@ -56,40 +56,71 @@ Secrets: `VPS_CONFIGS`, `POSTGRES_SOURCES`, `POSTGRES_TARGETS`, `MONGO_SOURCES`,
 
 ## skm
 
-Profile-based project skill manager. Configuration lives in
-`$CLOUD_UTILS_CONFIG_DIR/skm/profiles.json` and `projects.json`.
+Profile-based skill manager for the current project. SKM does not manage global
+skills. Current state lives in `$CLOUD_UTILS_CONFIG_DIR/skm/profiles.json` and
+`projects.json`; an existing `list.json` is one-time migration input only and is
+retained unchanged. See [setup.md — Local config](setup.md#local-config).
 
 ```bash
 skm
 skm profile list
 skm profile create frontend-project
+skm profile create code-review
 skm source add vercel-labs/agent-skills --profile frontend-project
+skm skill add code-review --source vercel-labs/agent-skills --profile frontend-project
 skm project link frontend-project code-review
 skm status
 skm install
-skm install frontend-project --yes
+skm install frontend-project code-review --yes
 skm uninstall frontend-project
 skm uninstall frontend-project --keep-link
 ```
+
+With no arguments, `skm` opens the project-aware dashboard. Its actions install
+linked profiles, link or unlink profiles, install other profiles once, show
+status, manage profiles, or exit.
+
+Profile, source, skill, and project commands only read or change saved
+configuration; they never install or uninstall project skills. Use the
+lifecycle commands for project files.
 
 | Family | Supported commands |
 | --- | --- |
 | Profile | `profile list`, `show`, `create`, `rename`, `remove [--force]` |
 | Source | `source add`, `edit`, `remove`, `show` |
-| Skill | `skill add`, `remove` |
+| Skill | `skill add <skill...> --source <source> --profile <profile>`, `skill remove <skill...> --source <source> --profile <profile>` |
 | Project | `project link`, `unlink`, `show`, `list`, `remove` |
 | Lifecycle | `status`, `install`, `uninstall` |
 
 | Flag | Meaning |
 | --- | --- |
 | `-p`, `--profile` | Select the profile changed by a source or skill command |
-| `--skill` | Select an explicit source skill; repeat for multiple skills |
+| `--source` | Select the saved profile source changed by `skill add` or `skill remove` |
+| `--skill` | Select an explicit skill for `source add`; repeat for multiple skills |
 | `--all` | Snapshot every currently discovered skill into one profile source |
 | `--no-skills` | Save a source with an empty skill selection |
 | `--yes` | Skip SKM and upstream confirmation prompts |
-| `--force` | Permit explicit mismatch or untracked replacement/removal |
+| `--force` | Permit linked-profile removal or lifecycle mismatch/untracked replacement/removal |
 | `--dry-run` | Render a lifecycle plan without mutation |
 | `--keep-link` | Uninstall files without unlinking the selected profile |
+
+`status`, `install`, and `uninstall` accept one or multiple explicit profile
+names. Without profile names they use the current project's linked profiles;
+there is no all-profiles mode or `--all-profiles` flag. If an interactive
+install has no links, SKM can instead select profiles for a one-time install
+and optionally save links after success.
+
+Lifecycle safety rules:
+
+- Correctly installed skills are skipped. Source-mismatch or untracked
+  same-name skills require `--force` before replacement or removal.
+- Uninstall retains the exact source-and-skill requirements still contributed
+  by remaining linked profiles.
+- Links offered by the interactive install flow are saved only after the whole
+  external install succeeds; uninstall removes links only after all required
+  external removals succeed.
+- `uninstall --keep-link` removes eligible files but preserves the selected
+  links, so a later status reports their required skills as missing.
 
 ## gt
 
