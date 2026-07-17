@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import test from "node:test";
 import { makeSandbox } from "./helpers.mjs";
 import {
@@ -64,6 +64,27 @@ test("migrates legacy presets and canonicalizes duplicate source identities", (t
   ]);
 });
 
+test("only migrates an existing config legacy file", (t) => {
+  const sandbox = makeSandbox(t, { createProfiles: false, createProjects: false });
+  const managerDir = `${sandbox.root}/manager`;
+  mkdirSync(managerDir);
+  writeFileSync(`${managerDir}/list.json`, '[{"source":"outside/repo"}]\n', "utf8");
+  initializeConfig({ env: sandbox.env, managerDir });
+  assert.deepEqual(readConfig(initializeConfig({ env: sandbox.env })).profiles, EMPTY_PROFILES);
+  assert.equal(existsSync(sandbox.legacyFile), false);
+});
+
+test("bootstrap never overwrites existing profile and project document bytes", (t) => {
+  const sandbox = makeSandbox(t);
+  const profiles = '{\n  "profiles": [{"sources": [], "name": "default"}],\n  "version": 1\n}\n';
+  const projects = '{\n  "projects": [],\n  "version": 1\n}\n';
+  writeFileSync(sandbox.profilesFile, profiles, "utf8");
+  writeFileSync(sandbox.projectsFile, projects, "utf8");
+  initializeConfig({ env: sandbox.env });
+  assert.equal(readFileSync(sandbox.profilesFile, "utf8"), profiles);
+  assert.equal(readFileSync(sandbox.projectsFile, "utf8"), projects);
+});
+
 test("refuses projects.json without profiles.json", (t) => {
   const sandbox = makeSandbox(t, { createProfiles: false });
   assert.throws(() => initializeConfig({ env: sandbox.env }), /profiles\.json.*missing/i);
@@ -92,13 +113,22 @@ test("returns the legacy file only as a compatibility alias", (t) => {
   assert.equal(paths.transactionFile, sandbox.transactionFile);
 });
 
-test("refuses to proceed while a transaction file requires recovery", (t) => {
+test("recoverConfigTransaction rejects a pending transaction directly", (t) => {
   const sandbox = makeSandbox(t);
   writeFileSync(sandbox.transactionFile, "{}\n", "utf8");
+  const paths = {
+    transactionFile: sandbox.transactionFile,
+  };
   assert.throws(
-    () => recoverConfigTransaction(initializeConfig({ env: sandbox.env })),
+    () => recoverConfigTransaction(paths),
     ConfigFileError,
   );
+});
+
+test("initialization rejects a pending transaction", (t) => {
+  const sandbox = makeSandbox(t);
+  writeFileSync(sandbox.transactionFile, "{}\n", "utf8");
+  assert.throws(() => initializeConfig({ env: sandbox.env }), ConfigFileError);
 });
 
 test("writes a JSON document atomically and cleans up its temporary file after a failure", (t) => {

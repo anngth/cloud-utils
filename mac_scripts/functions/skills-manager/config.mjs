@@ -1,5 +1,4 @@
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -13,7 +12,6 @@ import { validateProjectsDocument } from "./projects.mjs";
 import { canonicalizeSource } from "./source-id.mjs";
 
 const defaultFs = {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -93,14 +91,6 @@ function bootstrapDocuments(paths, { fs, pid }) {
   if (!projectsExists) writeJsonAtomic(paths.projectsFile, EMPTY_PROJECTS, { fs, pid });
 }
 
-function bootstrapLegacyCompatibility(paths, { fs, managerDir }) {
-  if (!managerDir || fs.existsSync(paths.legacyFile)) return;
-  const legacy = join(managerDir, "list.json");
-  const example = join(managerDir, "list.json.example");
-  if (fs.existsSync(legacy)) fs.copyFileSync(legacy, paths.legacyFile);
-  else if (fs.existsSync(example)) fs.copyFileSync(example, paths.legacyFile);
-}
-
 export function recoverConfigTransaction(paths, { fs = defaultFs } = {}) {
   if (fs.existsSync(paths.transactionFile)) {
     throw new ConfigFileError(`Pending SKM transaction requires recovery: ${paths.transactionFile}`, {
@@ -113,7 +103,6 @@ export function initializeConfig({
   env = process.env,
   fs = defaultFs,
   pid = process.pid,
-  managerDir,
 } = {}) {
   const configDir = env.CLOUD_UTILS_CONFIG_DIR || defaultConfigDir(env);
   const skmDir = join(configDir, "skm");
@@ -128,7 +117,6 @@ export function initializeConfig({
   fs.mkdirSync(skmDir, { recursive: true });
   recoverConfigTransaction(paths, { fs, pid });
   bootstrapDocuments(paths, { fs, pid });
-  bootstrapLegacyCompatibility(paths, { fs, managerDir });
   return { ...paths, skillsFile: paths.legacyFile };
 }
 

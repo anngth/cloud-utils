@@ -19,7 +19,7 @@ export function makeSandbox(t, {
   profiles = { version: 1, profiles: [{ name: "default", sources: [] }] },
   projects = { version: 1, projects: [] },
   legacyList,
-  list = [],
+  list,
   createProfiles = true,
   createProjects = true,
 } = {}) {
