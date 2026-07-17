@@ -27,6 +27,7 @@ test("management UI exposes the complete renderer surface", () => {
     "projectChanged",
     "status",
     "installPlan",
+    "uninstallPlan",
     "executionSummary",
     "confirm",
     "selector",
@@ -189,6 +190,52 @@ test("install plan labels dry runs and all operation classes", () => {
   ]) assert.match(rendered, new RegExp(text, "i"));
 });
 
+test("uninstall plan renders removal, retention, absence, conflict, and unlink sections", () => {
+  const { stdout, ui } = makeUi();
+  ui.uninstallPlan({
+    projectRoot: "/repo/app",
+    profileNames: ["frontend"],
+    dryRun: true,
+    force: true,
+    keepLink: false,
+    plan: {
+      remove: [requirement("a/repo", "remove-me")],
+      retain: [requirement("a/repo", "shared", ["quality"])],
+      absent: [requirement("a/repo", "gone")],
+      conflicts: [requirement("a/repo", "blocked")],
+      unlinkProfiles: ["frontend"],
+      desiredConflicts: [],
+    },
+  });
+  const rendered = stdout.read();
+  for (const text of [
+    "DRY RUN",
+    "Remove",
+    "Keep",
+    "required by quality",
+    "Already absent",
+    "Conflict",
+    "Unlink",
+    "frontend",
+  ]) assert.match(rendered, new RegExp(text, "i"));
+  assert.match(rendered, /force/i);
+});
+
+test("uninstall keep-link plan omits the unlink section", () => {
+  const { stdout, ui } = makeUi();
+  ui.uninstallPlan({
+    projectRoot: "/repo/app",
+    profileNames: ["frontend"],
+    keepLink: true,
+    plan: {
+      remove: [requirement("a/repo", "remove-me")],
+      retain: [], absent: [], conflicts: [],
+      unlinkProfiles: ["frontend"], desiredConflicts: [],
+    },
+  });
+  assert.doesNotMatch(stdout.read(), /Unlink/i);
+});
+
 test("execution summary renders aggregate results and exact retry batches", () => {
   const { stdout, ui } = makeUi();
   ui.executionSummary({
@@ -204,6 +251,19 @@ test("execution summary renders aggregate results and exact retry batches", () =
   assert.match(rendered, /2 failed/i);
   assert.match(rendered, /npx skills add a\/repo --skill one --skill two/);
   assert.match(rendered, /npx skills remove blocked --yes/);
+});
+
+test("uninstall execution summary renders the exact safe retry command", () => {
+  const { stdout, ui } = makeUi();
+  ui.executionSummary({
+    ok: false,
+    succeeded: [],
+    failed: [{ action: "uninstall", source: null, skills: ["one", "two"], status: 4 }],
+  }, { operation: "uninstall" });
+  const rendered = stdout.read();
+  assert.match(rendered, /Uninstall incomplete/i);
+  assert.match(rendered, /npx skills remove one two/);
+  assert.doesNotMatch(rendered, /skills add/);
 });
 
 test("confirm renders the injected prompt message without reading input", () => {

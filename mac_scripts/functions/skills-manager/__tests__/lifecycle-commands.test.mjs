@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runInstallCommand, runStatusCommand } from "../lifecycle-commands.mjs";
+import {
+  runInstallCommand,
+  runStatusCommand,
+  runUninstallCommand,
+} from "../lifecycle-commands.mjs";
 import { executeInstallPlan } from "../operations.mjs";
 
 const FRONTEND_PROFILES = {
@@ -18,6 +22,88 @@ const actualSkill = (name, source) => ({
   source,
   provenance: source ? "tracked" : "untracked",
 });
+
+const UNINSTALL_PROFILES = {
+  version: 1,
+  profiles: [
+    {
+      name: "frontend",
+      sources: [{ source: "a/repo", skills: ["frontend-design", "code-review"] }],
+    },
+    {
+      name: "quality",
+      sources: [{ source: "a/repo", skills: ["code-review"] }],
+    },
+    { name: "empty", sources: [{ source: "a/repo", skills: [] }] },
+  ],
+};
+
+function makeUninstallHarness({
+  profiles = UNINSTALL_PROFILES,
+  linkedProfiles = ["frontend", "quality"],
+  installed = new Map([
+    ["frontend-design", actualSkill("frontend-design", "a/repo")],
+    ["code-review", actualSkill("code-review", "a/repo")],
+  ]),
+  executionOk = true,
+  confirmed = true,
+} = {}) {
+  const root = "/repo";
+  const mutationCalls = [];
+  let capturedPlan;
+  let writtenProjects;
+  let projectWrites = 0;
+  let stateCalls = 0;
+  let confirmations = 0;
+  let output = "";
+  let errors = "";
+  const uiCalls = [];
+  const context = {
+    paths: { projectsFile: "/config/projects.json" },
+    config: {
+      profiles,
+      projects: linkedProfiles.length
+        ? { version: 1, projects: [{ root, profiles: linkedProfiles }] }
+        : { version: 1, projects: [] },
+    },
+    stdin: { isTTY: true },
+    stdout: { isTTY: true, write: (value) => { output += value; } },
+    stderr: { write: (value) => { errors += value; } },
+    ui: {
+      error: (message) => { errors += `${message}\n`; },
+      warn: (message) => { errors += `${message}\n`; },
+      uninstallPlan: (value) => { capturedPlan = value.plan; uiCalls.push(["uninstallPlan", value]); },
+      executionSummary: (value, options) => uiCalls.push(["executionSummary", value, options]),
+    },
+    resolveProjectRoot: () => root,
+    loadInstalledState: async () => { stateCalls += 1; return installed; },
+    confirm: async () => { confirmations += 1; return confirmed; },
+    executeUninstallPlan: async (plan) => {
+      capturedPlan = plan;
+      mutationCalls.push(plan.remove.map((item) => item.skill));
+      return executionOk
+        ? { ok: true, succeeded: [], failed: [] }
+        : { ok: false, succeeded: [], failed: [{ action: "uninstall", status: 4 }] };
+    },
+    writeProjects: (_paths, _profiles, document) => {
+      projectWrites += 1;
+      writtenProjects = document;
+    },
+  };
+  return {
+    context,
+    mutationCalls,
+    stdout: () => output,
+    stderr: () => errors,
+    uiCalls,
+    get capturedPlan() { return capturedPlan; },
+    get writtenProjects() { return writtenProjects; },
+    get projectWrites() { return projectWrites; },
+    get stateCalls() { return stateCalls; },
+    get confirmations() { return confirmations; },
+    get removedNames() { return capturedPlan?.remove.map((item) => item.skill) ?? []; },
+  };
+}
 
 function lifecycleHarness({
   profiles = FRONTEND_PROFILES,
@@ -303,4 +389,108 @@ test("empty profile install fails before state discovery", async () => {
   assert.equal(await runInstallCommand([], harness.context), 1);
   assert.equal(harness.stateCalls, 0);
   assert.match(harness.stderr(), /no selected skills|empty/i);
+});
+
+test("retains a skill required by a remaining linked profile", async () => {
+  const harness = makeUninstallHarness({ linkedProfiles: ["frontend", "quality"] });
+  await runUninstallCommand(["frontend", "--yes"], harness.context);
+  assert.deepEqual(harness.removedNames, ["frontend-design"]);
+  assert.deepEqual(harness.writtenProjects.projects[0].profiles, ["quality"]);
+  assert.deepEqual(harness.capturedPlan.retain[0].profiles, ["quality"]);
+});
+
+test("empty linked profile unlinks without upstream removal", async () => {
+  const harness = makeUninstallHarness({ linkedProfiles: ["empty"] });
+  assert.equal(await runUninstallCommand(["empty", "--yes"], harness.context), 0);
+  assert.deepEqual(harness.mutationCalls, [[]]);
+  assert.deepEqual(harness.writtenProjects.projects, []);
+});
+
+test("keep-link removes files but leaves the selected profile linked", async () => {
+  const harness = makeUninstallHarness({ linkedProfiles: ["frontend"] });
+  assert.equal(await runUninstallCommand(["frontend", "--yes", "--keep-link"], harness.context), 0);
+  assert.deepEqual(harness.removedNames, ["code-review", "frontend-design"]);
+  assert.equal(harness.projectWrites, 0);
+  assert.equal(harness.uiCalls[0][1].keepLink, true);
+});
+
+test("uninstall failure prevents link removal", async () => {
+  const harness = makeUninstallHarness({ executionOk: false, linkedProfiles: ["frontend"] });
+  assert.equal(await runUninstallCommand(["frontend", "--yes"], harness.context), 1);
+  assert.equal(harness.projectWrites, 0);
+  assert.deepEqual(harness.uiCalls.at(-1)[2], { operation: "uninstall" });
+});
+
+test("uninstall with no explicit profiles selects and unlinks all linked profiles", async () => {
+  const harness = makeUninstallHarness();
+  assert.equal(await runUninstallCommand(["--yes"], harness.context), 0);
+  assert.deepEqual(harness.removedNames, ["code-review", "frontend-design"]);
+  assert.deepEqual(harness.capturedPlan.unlinkProfiles, ["frontend", "quality"]);
+  assert.deepEqual(harness.writtenProjects.projects, []);
+});
+
+test("explicit unlinked profile uninstalls without changing links", async () => {
+  const harness = makeUninstallHarness({ linkedProfiles: ["quality"] });
+  assert.equal(await runUninstallCommand(["frontend", "--yes"], harness.context), 0);
+  assert.deepEqual(harness.removedNames, ["frontend-design"]);
+  assert.deepEqual(harness.capturedPlan.unlinkProfiles, []);
+  assert.equal(harness.projectWrites, 0);
+});
+
+test("uninstall mismatches and untracked skills require force", async () => {
+  const installed = new Map([
+    ["frontend-design", actualSkill("frontend-design", "wrong/repo")],
+    ["code-review", actualSkill("code-review", null)],
+  ]);
+  const blocked = makeUninstallHarness({ linkedProfiles: ["frontend"], installed, executionOk: false });
+  assert.equal(await runUninstallCommand(["frontend", "--yes"], blocked.context), 1);
+  assert.deepEqual(blocked.capturedPlan.remove, []);
+  assert.deepEqual(blocked.capturedPlan.conflicts.map((item) => item.skill), ["code-review", "frontend-design"]);
+  assert.equal(blocked.projectWrites, 0);
+
+  const forced = makeUninstallHarness({ linkedProfiles: ["frontend"], installed });
+  assert.equal(await runUninstallCommand(["frontend", "--yes", "--force"], forced.context), 0);
+  assert.deepEqual(forced.removedNames, ["code-review", "frontend-design"]);
+  assert.match(forced.stderr(), /force|mismatch|untracked/i);
+});
+
+test("uninstall desired-source conflict blocks discovery and every mutation", async () => {
+  const harness = makeUninstallHarness({
+    profiles: {
+      version: 1,
+      profiles: [
+        { name: "a", sources: [{ source: "a/repo", skills: ["review", "safe"] }] },
+        { name: "b", sources: [{ source: "b/repo", skills: ["review"] }] },
+      ],
+    },
+    linkedProfiles: ["a", "b"],
+  });
+  assert.equal(await runUninstallCommand(["--yes", "--force"], harness.context), 1);
+  assert.equal(harness.stateCalls, 0);
+  assert.deepEqual(harness.mutationCalls, []);
+  assert.equal(harness.projectWrites, 0);
+});
+
+test("uninstall dry-run renders without confirmation, execution, or link changes", async () => {
+  const harness = makeUninstallHarness({ linkedProfiles: ["frontend"] });
+  assert.equal(await runUninstallCommand(["frontend", "--dry-run"], harness.context), 0);
+  assert.deepEqual(harness.mutationCalls, []);
+  assert.equal(harness.confirmations, 0);
+  assert.equal(harness.projectWrites, 0);
+  assert.equal(harness.uiCalls[0][1].dryRun, true);
+});
+
+test("uninstall confirmation cancellation is a successful no-op", async () => {
+  const harness = makeUninstallHarness({ linkedProfiles: ["frontend"], confirmed: false });
+  assert.equal(await runUninstallCommand(["frontend"], harness.context), 0);
+  assert.equal(harness.confirmations, 1);
+  assert.deepEqual(harness.mutationCalls, []);
+  assert.equal(harness.projectWrites, 0);
+});
+
+test("uninstall requires linked or explicitly named profiles", async () => {
+  const harness = makeUninstallHarness({ linkedProfiles: [] });
+  assert.equal(await runUninstallCommand(["--yes"], harness.context), 1);
+  assert.equal(harness.stateCalls, 0);
+  assert.match(harness.stderr(), /project link|name profiles/i);
 });

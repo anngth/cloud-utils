@@ -222,6 +222,31 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     listEnd();
   }
 
+  function uninstallPlan({
+    projectRoot,
+    profileNames,
+    plan,
+    dryRun = false,
+    force = false,
+    keepLink = false,
+  }) {
+    title();
+    step(`${dryRun ? "DRY RUN — " : ""}Uninstall plan: ${projectRoot}`);
+    step(`Profiles: ${profileNames.join(", ")}`);
+    if (force) step("Force enabled — mismatched or untracked skills may be removed");
+    requirementSection("Remove", plan.remove, C.yellow);
+    requirementSection("Keep", plan.retain, C.gray);
+    requirementSection("Already absent", plan.absent, C.gray);
+    requirementSection("Conflict", plan.conflicts, C.red);
+    if (!keepLink) {
+      active("Unlink");
+      if (plan.unlinkProfiles.length === 0) item("None", C.gray);
+      for (const name of plan.unlinkProfiles) item(name, C.yellow);
+      out(pipe);
+    }
+    listEnd();
+  }
+
   const shellArg = (value) => {
     const text = String(value);
     return /^[A-Za-z0-9_./:@%+=,-]+$/.test(text)
@@ -233,13 +258,17 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     if (record.action === "replace") {
       return `npx skills remove ${record.skills.map(shellArg).join(" ")} --yes`;
     }
+    if (record.action === "uninstall") {
+      return `npx skills remove ${record.skills.map(shellArg).join(" ")}`;
+    }
     const skills = record.skills.map((skill) => `--skill ${shellArg(skill)}`).join(" ");
     return `npx skills add ${shellArg(record.source)} ${skills}`;
   }
 
-  function executionSummary(result) {
+  function executionSummary(result, { operation = "install" } = {}) {
     title();
-    step(result.ok ? "Install complete" : "Install incomplete");
+    const label = operation === "uninstall" ? "Uninstall" : "Install";
+    step(result.ok ? `${label} complete` : `${label} incomplete`);
     step(`${result.succeeded.length} succeeded; ${result.failed.length} failed`);
     if (result.succeeded.length > 0) {
       active("Succeeded");
@@ -303,6 +332,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     projectChanged,
     status,
     installPlan,
+    uninstallPlan,
     executionSummary,
     confirm,
     selector,

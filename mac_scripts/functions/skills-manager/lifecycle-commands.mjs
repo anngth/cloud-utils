@@ -1,22 +1,28 @@
 import {
   classifyStatus,
   createInstallPlan,
+  createUninstallPlan,
   mergeProfileRequirements,
 } from "./planner.mjs";
-import { linkProjectProfiles } from "./projects.mjs";
+import { linkProjectProfiles, unlinkProjectProfiles } from "./projects.mjs";
 
 class LifecycleCommandError extends Error {}
 
-function parseLifecycleOptions(args, { install = false } = {}) {
+function parseLifecycleOptions(args, { install = false, uninstall = false } = {}) {
   const parsed = {
     profileNames: [],
     yes: false,
     force: false,
     dryRun: false,
+    keepLink: false,
   };
-  const flags = install
-    ? new Map([["--yes", "yes"], ["--force", "force"], ["--dry-run", "dryRun"]])
-    : new Map();
+  const flags = new Map();
+  if (install || uninstall) {
+    flags.set("--yes", "yes");
+    flags.set("--force", "force");
+    flags.set("--dry-run", "dryRun");
+  }
+  if (uninstall) flags.set("--keep-link", "keepLink");
 
   for (const arg of args) {
     const key = flags.get(arg);
@@ -178,6 +184,90 @@ export async function runInstallCommand(args, context) {
       context.writeProjects(context.paths, context.config.profiles, projects);
     }
     context.ui.executionSummary(result);
+    return result.ok ? 0 : 1;
+  } catch (error) {
+    return reportError(context, error);
+  }
+}
+
+function retainedByRemainingProfile(plan, remaining) {
+  const byKey = new Map(remaining.requirements.map((item) => [item.key, item]));
+  return {
+    ...plan,
+    retain: plan.retain.map((item) => byKey.get(item.key) ?? item),
+  };
+}
+
+function forcedUninstallNames(plan, installedState) {
+  return plan.remove
+    .filter((requirement) => {
+      const actual = installedState.get(requirement.skill);
+      return actual && (
+        actual.source == null
+        || actual.provenance === "untracked"
+        || actual.source !== requirement.source
+      );
+    })
+    .map((item) => item.skill);
+}
+
+export async function runUninstallCommand(args, context) {
+  try {
+    const parsed = parseLifecycleOptions(args, { uninstall: true });
+    const projectRoot = context.resolveProjectRoot({ cwd: context.cwd });
+    const resolved = await resolveLifecycleProfiles(parsed, context, { projectRoot });
+    if (resolved.type !== "submit") return 0;
+
+    const currentLinks = linkedProfiles(context.config.projects, projectRoot);
+    const selectedNames = resolved.profileNames;
+    const selectedLinks = currentLinks.filter((name) => selectedNames.includes(name));
+    const remainingNames = currentLinks.filter((name) => !selectedLinks.includes(name));
+    const selected = mergeProfileRequirements(context.config.profiles, selectedNames);
+    const remaining = mergeProfileRequirements(context.config.profiles, remainingNames);
+    const desiredConflicts = [...selected.desiredConflicts, ...remaining.desiredConflicts];
+    if (desiredConflicts.length > 0) {
+      throw new LifecycleCommandError(desiredConflictMessage(desiredConflicts));
+    }
+
+    const installedState = await context.loadInstalledState({ projectRoot });
+    let plan = createUninstallPlan({
+      selected,
+      remaining,
+      installedState,
+      force: parsed.force,
+      linkedSelected: selectedLinks,
+    });
+    plan = retainedByRemainingProfile(plan, remaining);
+
+    const forcedNames = parsed.force ? forcedUninstallNames(plan, installedState) : [];
+    if (forcedNames.length > 0) {
+      context.ui.warn(`--force will remove mismatched or untracked skills: ${forcedNames.join(", ")}`);
+    }
+    context.ui.uninstallPlan({
+      projectRoot,
+      profileNames: selectedNames,
+      plan,
+      dryRun: parsed.dryRun,
+      force: parsed.force,
+      keepLink: parsed.keepLink,
+    });
+    if (parsed.dryRun) return plan.conflicts.length === 0 ? 0 : 1;
+
+    if (!parsed.yes) {
+      const confirmed = await context.confirm("Apply this uninstall plan?");
+      if (!confirmed) return 0;
+    }
+
+    const result = await context.executeUninstallPlan(plan, { yes: parsed.yes });
+    if (result.ok && !parsed.keepLink && plan.unlinkProfiles.length > 0) {
+      const projects = unlinkProjectProfiles(
+        context.config.projects,
+        projectRoot,
+        plan.unlinkProfiles,
+      );
+      context.writeProjects(context.paths, context.config.profiles, projects);
+    }
+    context.ui.executionSummary(result, { operation: "uninstall" });
     return result.ok ? 0 : 1;
   } catch (error) {
     return reportError(context, error);

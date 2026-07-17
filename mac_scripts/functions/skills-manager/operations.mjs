@@ -58,3 +58,29 @@ export async function executeInstallPlan(plan, {
     failed,
   };
 }
+
+export async function executeUninstallPlan(plan, {
+  yes = false,
+  runMutation = (args) => runSkillsMutation(args),
+  onEvent = () => {},
+} = {}) {
+  if (plan.desiredConflicts.length > 0) {
+    return { ok: false, succeeded: [], failed: [] };
+  }
+
+  const names = plan.remove.map((item) => item.skill);
+  if (names.length === 0) {
+    return { ok: plan.conflicts.length === 0, succeeded: [], failed: [] };
+  }
+
+  const args = ["skills", "remove", ...names];
+  if (yes) args.push("--yes");
+  const status = await runMutation(args);
+  const record = { action: "uninstall", source: null, skills: names, status };
+  onEvent(record);
+  return {
+    ok: status === 0 && plan.conflicts.length === 0,
+    succeeded: status === 0 ? [record] : [],
+    failed: status === 0 ? [] : [record],
+  };
+}
