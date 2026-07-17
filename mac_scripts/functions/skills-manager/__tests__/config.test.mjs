@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import * as realFs from "node:fs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import test from "node:test";
 import { makeSandbox } from "./helpers.mjs";
+import { createProfile } from "../profiles.mjs";
+import { linkProjectProfiles } from "../projects.mjs";
 import {
   ConfigFileError,
   EMPTY_PROFILES,
@@ -10,10 +14,389 @@ import {
   initializeConfig,
   readConfig,
   recoverConfigTransaction,
+  writeConfigTransaction,
   writeJsonAtomic,
   writeProfiles,
   writeProjects,
 } from "../config.mjs";
+
+test("recovers the old pair when the second target rename fails", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  const before = readConfig(paths);
+  const profiles = createProfile(before.profiles, "frontend");
+  const projects = linkProjectProfiles(
+    before.projects,
+    sandbox.root,
+    ["frontend"],
+    new Set(["default", "frontend"]),
+  );
+  let targetRenames = 0;
+  const fs = {
+    ...realFs,
+    renameSync(from, to) {
+      if ([paths.profilesFile, paths.projectsFile].includes(to) && ++targetRenames === 2) {
+        throw new Error("second rename failed");
+      }
+      realFs.renameSync(from, to);
+    },
+  };
+  assert.throws(
+    () => writeConfigTransaction(paths, { profiles, projects }, { fs, pid: 4242 }),
+    /second rename failed/,
+  );
+  recoverConfigTransaction(paths);
+  assert.deepEqual(readConfig(paths), before);
+  assert.equal(existsSync(paths.transactionFile), false);
+});
+
+test("completes a verified next pair after both targets were renamed", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  const beforeProfiles = readFileSync(paths.profilesFile, "utf8");
+  const beforeProjects = readFileSync(paths.projectsFile, "utf8");
+  const nextProfiles = `${JSON.stringify({
+    version: 1,
+    profiles: [
+      { name: "default", sources: [] },
+      { name: "frontend", sources: [] },
+    ],
+  }, null, 2)}\n`;
+  const nextProjects = `${JSON.stringify({
+    version: 1,
+    projects: [{ root: sandbox.root, profiles: ["frontend"] }],
+  }, null, 2)}\n`;
+  const hash = (value) => createHash("sha256").update(value).digest("hex");
+  const files = [
+    {
+      target: paths.profilesFile,
+      backup: `${paths.profilesFile}.777.bak`,
+      next: `${paths.profilesFile}.777.next`,
+      beforeHash: hash(beforeProfiles),
+      nextHash: hash(nextProfiles),
+      before: beforeProfiles,
+      after: nextProfiles,
+    },
+    {
+      target: paths.projectsFile,
+      backup: `${paths.projectsFile}.777.bak`,
+      next: `${paths.projectsFile}.777.next`,
+      beforeHash: hash(beforeProjects),
+      nextHash: hash(nextProjects),
+      before: beforeProjects,
+      after: nextProjects,
+    },
+  ];
+  for (const item of files) {
+    writeFileSync(item.backup, item.before, "utf8");
+    writeFileSync(item.next, item.after, "utf8");
+    writeFileSync(item.target, item.after, "utf8");
+  }
+  writeFileSync(paths.transactionFile, `${JSON.stringify({
+    version: 1,
+    phase: "targets-written",
+    files: files.map(({ target, backup, next, beforeHash, nextHash }) => ({
+      target, backup, next, beforeHash, nextHash,
+    })),
+  }, null, 2)}\n`, "utf8");
+
+  recoverConfigTransaction(paths);
+
+  assert.deepEqual(readConfig(paths), {
+    profiles: JSON.parse(nextProfiles),
+    projects: JSON.parse(nextProjects),
+  });
+  assert.equal(existsSync(paths.transactionFile), false);
+  for (const item of files) {
+    assert.equal(existsSync(item.backup), false);
+    assert.equal(existsSync(item.next), false);
+  }
+});
+
+test("writes and cleans up a complete cross-file transaction", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  const before = readConfig(paths);
+  const profiles = createProfile(before.profiles, "frontend");
+  const projects = linkProjectProfiles(
+    before.projects,
+    sandbox.root,
+    ["frontend"],
+    new Set(["default", "frontend"]),
+  );
+
+  writeConfigTransaction(paths, { profiles, projects }, { pid: 5150 });
+
+  assert.deepEqual(readConfig(paths), { profiles, projects });
+  assert.equal(existsSync(paths.transactionFile), false);
+  for (const target of [paths.profilesFile, paths.projectsFile]) {
+    assert.equal(existsSync(`${target}.5150.bak`), false);
+    assert.equal(existsSync(`${target}.5150.next`), false);
+  }
+});
+
+test("rolls back when saving the profiles-written phase fails", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  const before = readConfig(paths);
+  const profiles = createProfile(before.profiles, "frontend");
+  const projects = linkProjectProfiles(
+    before.projects,
+    sandbox.root,
+    ["frontend"],
+    new Set(["default", "frontend"]),
+  );
+  let journalRenames = 0;
+  const fs = {
+    ...realFs,
+    renameSync(from, to) {
+      if (to === paths.transactionFile && ++journalRenames === 2) {
+        throw new Error("phase journal failed");
+      }
+      realFs.renameSync(from, to);
+    },
+  };
+
+  assert.throws(
+    () => writeConfigTransaction(paths, { profiles, projects }, { fs, pid: 6161 }),
+    /phase journal failed/,
+  );
+  assert.deepEqual(readConfig(paths), before);
+  assert.equal(existsSync(paths.transactionFile), false);
+});
+
+test("rolls back when saving the targets-written phase fails", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  const before = readConfig(paths);
+  const profiles = createProfile(before.profiles, "frontend");
+  const projects = linkProjectProfiles(
+    before.projects,
+    sandbox.root,
+    ["frontend"],
+    new Set(["default", "frontend"]),
+  );
+  let journalRenames = 0;
+  const fs = {
+    ...realFs,
+    renameSync(from, to) {
+      if (to === paths.transactionFile && ++journalRenames === 3) {
+        throw new Error("final phase journal failed");
+      }
+      realFs.renameSync(from, to);
+    },
+  };
+
+  assert.throws(
+    () => writeConfigTransaction(paths, { profiles, projects }, { fs, pid: 7171 }),
+    /final phase journal failed/,
+  );
+  assert.deepEqual(readConfig(paths), before);
+  assert.equal(existsSync(paths.transactionFile), false);
+});
+
+test("retries cleanup once and rethrows the original cleanup error", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  const before = readConfig(paths);
+  const profiles = createProfile(before.profiles, "frontend");
+  const projects = linkProjectProfiles(
+    before.projects,
+    sandbox.root,
+    ["frontend"],
+    new Set(["default", "frontend"]),
+  );
+  let backupRemovals = 0;
+  const fs = {
+    ...realFs,
+    rmSync(path, options) {
+      if (path.endsWith(".bak") && ++backupRemovals === 1) {
+        throw new Error("cleanup failed");
+      }
+      realFs.rmSync(path, options);
+    },
+  };
+
+  assert.throws(
+    () => writeConfigTransaction(paths, { profiles, projects }, { fs, pid: 8181 }),
+    /cleanup failed/,
+  );
+  assert.deepEqual(readConfig(paths), { profiles, projects });
+  assert.equal(existsSync(paths.transactionFile), false);
+});
+
+test("leaves a verified committed journal recoverable after persistent cleanup errors", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  const before = readConfig(paths);
+  const profiles = createProfile(before.profiles, "frontend");
+  const projects = linkProjectProfiles(
+    before.projects,
+    sandbox.root,
+    ["frontend"],
+    new Set(["default", "frontend"]),
+  );
+  const fs = {
+    ...realFs,
+    rmSync(path, options) {
+      if (path.endsWith(".bak")) throw new Error("persistent cleanup failure");
+      realFs.rmSync(path, options);
+    },
+  };
+
+  assert.throws(
+    () => writeConfigTransaction(paths, { profiles, projects }, { fs, pid: 9191 }),
+    /persistent cleanup failure/,
+  );
+  assert.deepEqual(readConfig(paths), { profiles, projects });
+  assert.equal(existsSync(paths.transactionFile), true);
+
+  recoverConfigTransaction(paths);
+
+  assert.deepEqual(readConfig(paths), { profiles, projects });
+  assert.equal(existsSync(paths.transactionFile), false);
+});
+
+test("restores both backups for an incomplete profiles-written transaction", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  const beforeProfiles = readFileSync(paths.profilesFile, "utf8");
+  const beforeProjects = readFileSync(paths.projectsFile, "utf8");
+  const nextProfiles = `${JSON.stringify({
+    version: 1,
+    profiles: [
+      { name: "default", sources: [] },
+      { name: "frontend", sources: [] },
+    ],
+  }, null, 2)}\n`;
+  const nextProjects = `${JSON.stringify({
+    version: 1,
+    projects: [{ root: sandbox.root, profiles: ["frontend"] }],
+  }, null, 2)}\n`;
+  const hash = (value) => createHash("sha256").update(value).digest("hex");
+  const files = [
+    [paths.profilesFile, beforeProfiles, nextProfiles],
+    [paths.projectsFile, beforeProjects, nextProjects],
+  ].map(([target, before, after]) => ({
+    target,
+    backup: `${target}.2020.bak`,
+    next: `${target}.2020.next`,
+    beforeHash: hash(before),
+    nextHash: hash(after),
+    before,
+    after,
+  }));
+  for (const item of files) {
+    writeFileSync(item.backup, item.before, "utf8");
+    writeFileSync(item.next, item.after, "utf8");
+  }
+  writeFileSync(files[0].target, files[0].after, "utf8");
+  writeFileSync(paths.transactionFile, `${JSON.stringify({
+    version: 1,
+    phase: "profiles-written",
+    files: files.map(({ target, backup, next, beforeHash, nextHash }) => ({
+      target, backup, next, beforeHash, nextHash,
+    })),
+  }, null, 2)}\n`, "utf8");
+
+  recoverConfigTransaction(paths);
+
+  assert.equal(readFileSync(paths.profilesFile, "utf8"), beforeProfiles);
+  assert.equal(readFileSync(paths.projectsFile, "utf8"), beforeProjects);
+  assert.equal(existsSync(paths.transactionFile), false);
+});
+
+test("restores backups when targets-written hashes do not verify", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  const beforeProfiles = readFileSync(paths.profilesFile, "utf8");
+  const beforeProjects = readFileSync(paths.projectsFile, "utf8");
+  const hash = (value) => createHash("sha256").update(value).digest("hex");
+  const files = [
+    [paths.profilesFile, beforeProfiles],
+    [paths.projectsFile, beforeProjects],
+  ].map(([target, before]) => ({
+    target,
+    backup: `${target}.3030.bak`,
+    next: `${target}.3030.next`,
+    beforeHash: hash(before),
+    nextHash: hash("expected next bytes"),
+  }));
+  for (const item of files) {
+    writeFileSync(item.backup, readFileSync(item.target));
+    writeFileSync(item.next, "expected next bytes");
+  }
+  writeFileSync(paths.profilesFile, "unexpected target bytes");
+  writeFileSync(paths.projectsFile, "unexpected target bytes");
+  writeFileSync(paths.transactionFile, `${JSON.stringify({
+    version: 1,
+    phase: "targets-written",
+    files,
+  }, null, 2)}\n`, "utf8");
+
+  recoverConfigTransaction(paths);
+
+  assert.equal(readFileSync(paths.profilesFile, "utf8"), beforeProfiles);
+  assert.equal(readFileSync(paths.projectsFile, "utf8"), beforeProjects);
+  assert.equal(existsSync(paths.transactionFile), false);
+});
+
+test("refuses recovery when a backup checksum does not match", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  const hash = (value) => createHash("sha256").update(value).digest("hex");
+  const files = [paths.profilesFile, paths.projectsFile].map((target) => ({
+    target,
+    backup: `${target}.4040.bak`,
+    next: `${target}.4040.next`,
+    beforeHash: hash(readFileSync(target)),
+    nextHash: hash("next"),
+  }));
+  for (const item of files) {
+    writeFileSync(item.backup, "corrupted backup");
+    writeFileSync(item.next, "next");
+  }
+  writeFileSync(paths.transactionFile, `${JSON.stringify({
+    version: 1,
+    phase: "prepared",
+    files,
+  }, null, 2)}\n`, "utf8");
+
+  assert.throws(
+    () => recoverConfigTransaction(paths),
+    new RegExp(`Cannot recover transaction: ${paths.profilesFile}`),
+  );
+  assert.equal(existsSync(paths.transactionFile), true);
+  for (const item of files) {
+    assert.equal(existsSync(item.backup), true);
+    assert.equal(existsSync(item.next), true);
+  }
+});
+
+test("validates transaction journal schema and fields before cleanup", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  const sentinel = `${sandbox.root}/keep-me`;
+  writeFileSync(sentinel, "keep", "utf8");
+  const invalidJournals = [
+    "{broken",
+    JSON.stringify({ version: 2, phase: "prepared", files: [] }),
+    JSON.stringify({
+      version: 1,
+      phase: "prepared",
+      files: [
+        { target: sentinel, backup: sentinel, next: sentinel, beforeHash: "", nextHash: "hash" },
+        { target: sentinel, backup: sentinel, next: sentinel, beforeHash: "hash", nextHash: "hash" },
+      ],
+    }),
+  ];
+
+  for (const journal of invalidJournals) {
+    writeFileSync(paths.transactionFile, `${journal}\n`, "utf8");
+    assert.throws(() => recoverConfigTransaction(paths), ConfigFileError);
+    assert.equal(readFileSync(sentinel, "utf8"), "keep");
+  }
+});
 
 test("defaultConfigDir uses HOME without os.homedir fallback", () => {
   assert.equal(

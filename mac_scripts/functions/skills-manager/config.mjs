@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -12,6 +14,7 @@ import { validateProjectsDocument } from "./projects.mjs";
 import { canonicalizeSource } from "./source-id.mjs";
 
 const defaultFs = {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -19,6 +22,18 @@ const defaultFs = {
   rmSync,
   writeFileSync,
 };
+
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+
+function transactionEntry(target, pid) {
+  return {
+    target,
+    backup: `${target}.${pid}.bak`,
+    next: `${target}.${pid}.next`,
+    beforeHash: "",
+    nextHash: "",
+  };
+}
 
 export const EMPTY_PROFILES = Object.freeze({
   version: 1,
@@ -91,12 +106,58 @@ function bootstrapDocuments(paths, { fs, pid }) {
   if (!projectsExists) writeJsonAtomic(paths.projectsFile, EMPTY_PROJECTS, { fs, pid });
 }
 
-export function recoverConfigTransaction(paths, { fs = defaultFs } = {}) {
-  if (fs.existsSync(paths.transactionFile)) {
-    throw new ConfigFileError(`Pending SKM transaction requires recovery: ${paths.transactionFile}`, {
-      filePath: paths.transactionFile,
-    });
+function hashFile(filePath, fs) {
+  return sha256(fs.readFileSync(filePath));
+}
+
+function readAndValidateJournal(filePath, fs) {
+  let value;
+  try {
+    value = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (error) {
+    throw new ConfigFileError(`Could not read transaction journal: ${filePath}`, { cause: error });
   }
+  if (
+    value?.version !== 1 ||
+    !["prepared", "profiles-written", "targets-written"].includes(value.phase) ||
+    !Array.isArray(value.files) ||
+    value.files.length !== 2
+  ) {
+    throw new ConfigFileError(`Invalid transaction journal: ${filePath}`);
+  }
+  for (const item of value.files) {
+    for (const key of ["target", "backup", "next", "beforeHash", "nextHash"]) {
+      if (typeof item[key] !== "string" || item[key] === "") {
+        throw new ConfigFileError(`Invalid transaction journal field: ${key}`);
+      }
+    }
+  }
+  return value;
+}
+
+function cleanupTransaction(journal, journalPath, fs) {
+  for (const item of journal.files) {
+    fs.rmSync(item.backup, { force: true });
+    fs.rmSync(item.next, { force: true });
+  }
+  fs.rmSync(journalPath, { force: true });
+}
+
+export function recoverConfigTransaction(paths, { fs = defaultFs } = {}) {
+  if (!fs.existsSync(paths.transactionFile)) return;
+  const journal = readAndValidateJournal(paths.transactionFile, fs);
+  const bothNext = journal.files.every((item) => hashFile(item.target, fs) === item.nextHash);
+  if (journal.phase === "targets-written" && bothNext) {
+    cleanupTransaction(journal, paths.transactionFile, fs);
+    return;
+  }
+  for (const item of journal.files) {
+    if (!fs.existsSync(item.backup) || hashFile(item.backup, fs) !== item.beforeHash) {
+      throw new ConfigFileError(`Cannot recover transaction: ${item.target}`);
+    }
+  }
+  for (const item of journal.files) fs.copyFileSync(item.backup, item.target);
+  cleanupTransaction(journal, paths.transactionFile, fs);
 }
 
 export function initializeConfig({
@@ -143,6 +204,46 @@ export function writeJsonAtomic(filePath, value, {
   } catch (error) {
     try {
       fs.rmSync(tempPath, { force: true });
+    } catch {}
+    throw error;
+  }
+}
+
+export function writeConfigTransaction(paths, { profiles, projects }, {
+  fs = defaultFs,
+  pid = process.pid,
+} = {}) {
+  const validProfiles = validateProfilesDocument(profiles);
+  const profileNames = new Set(validProfiles.profiles.map((item) => item.name));
+  const validProjects = validateProjectsDocument(projects, profileNames);
+  const documents = [
+    [paths.profilesFile, validProfiles],
+    [paths.projectsFile, validProjects],
+  ];
+  const files = documents.map(([target, document]) => {
+    const entry = transactionEntry(target, pid);
+    const before = fs.readFileSync(target);
+    const next = Buffer.from(`${JSON.stringify(document, null, 2)}\n`);
+    fs.writeFileSync(entry.backup, before);
+    fs.writeFileSync(entry.next, next);
+    entry.beforeHash = sha256(before);
+    entry.nextHash = sha256(next);
+    return entry;
+  });
+  const journal = { version: 1, phase: "prepared", files };
+  const saveJournal = () => writeJsonAtomic(paths.transactionFile, journal, { fs, pid });
+  saveJournal();
+  try {
+    fs.renameSync(files[0].next, files[0].target);
+    journal.phase = "profiles-written";
+    saveJournal();
+    fs.renameSync(files[1].next, files[1].target);
+    journal.phase = "targets-written";
+    saveJournal();
+    cleanupTransaction(journal, paths.transactionFile, fs);
+  } catch (error) {
+    try {
+      recoverConfigTransaction(paths, { fs });
     } catch {}
     throw error;
   }
