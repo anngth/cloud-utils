@@ -471,6 +471,24 @@ test("uninstall desired-source conflict blocks discovery and every mutation", as
   assert.equal(harness.projectWrites, 0);
 });
 
+test("uninstall blocks desired-source conflicts across selected and remaining links", async () => {
+  const harness = makeUninstallHarness({
+    profiles: {
+      version: 1,
+      profiles: [
+        { name: "a", sources: [{ source: "a/repo", skills: ["review"] }] },
+        { name: "b", sources: [{ source: "b/repo", skills: ["review"] }] },
+      ],
+    },
+    linkedProfiles: ["a", "b"],
+  });
+  assert.equal(await runUninstallCommand(["a", "--yes", "--force"], harness.context), 1);
+  assert.equal(harness.stateCalls, 0);
+  assert.deepEqual(harness.mutationCalls, []);
+  assert.equal(harness.projectWrites, 0);
+  assert.match(harness.stderr(), /conflicting desired skill sources|review|a\/repo|b\/repo/i);
+});
+
 test("uninstall dry-run renders without confirmation, execution, or link changes", async () => {
   const harness = makeUninstallHarness({ linkedProfiles: ["frontend"] });
   assert.equal(await runUninstallCommand(["frontend", "--dry-run"], harness.context), 0);

@@ -224,7 +224,10 @@ export async function runUninstallCommand(args, context) {
     const remainingNames = currentLinks.filter((name) => !selectedLinks.includes(name));
     const selected = mergeProfileRequirements(context.config.profiles, selectedNames);
     const remaining = mergeProfileRequirements(context.config.profiles, remainingNames);
-    const desiredConflicts = [...selected.desiredConflicts, ...remaining.desiredConflicts];
+    const desiredConflicts = mergeProfileRequirements(
+      context.config.profiles,
+      [...new Set([...selectedNames, ...remainingNames])],
+    ).desiredConflicts;
     if (desiredConflicts.length > 0) {
       throw new LifecycleCommandError(desiredConflictMessage(desiredConflicts));
     }
