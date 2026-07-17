@@ -120,6 +120,19 @@ test("source renderers fail closed for unsafe GitHub SSH suffixes", () => {
   assert.doesNotMatch(rendered, /access_token|query-secret/i);
 });
 
+test("source renderers preserve safe generic SCP provider identity", () => {
+  const { stdout, ui } = makeUi();
+  ui.sourceChanged({
+    action: "shown",
+    profile: null,
+    source: "git@gitlab.com:owner/repo.git",
+    skills: [],
+  });
+  const rendered = stdout.read();
+  assert.match(rendered, /git@gitlab\.com:owner\/repo\.git/);
+  assert.doesNotMatch(rendered, /unsafe source redacted/i);
+});
+
 test("project renderers show linked profiles and mark stale roots", () => {
   const current = makeUi();
   current.ui.projectShow({ root: "/repo/current", profiles: ["frontend", "review"] });

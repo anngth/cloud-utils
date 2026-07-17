@@ -6,6 +6,11 @@ export class SourceIdentityError extends Error {}
 const GITHUB_COMPONENT = "[A-Za-z0-9._-]+";
 const SHORTHAND = new RegExp(`^(${GITHUB_COMPONENT})\/(${GITHUB_COMPONENT})(?:\\.git)?$`);
 const SHORTHAND_CANDIDATE = /^[^\s/]+\/[^\s/]+$/;
+const GENERIC_SCP_PREFIX = /^git@[^:/\s]+:/i;
+const GENERIC_SCP = new RegExp(
+  `^git@([A-Za-z0-9.-]+):(${GITHUB_COMPONENT})\/(${GITHUB_COMPONENT}?)(?:\\.git)?$`,
+  "i",
+);
 const GITHUB_SSH_PREFIX = /^(?:git@github\.com:|ssh:\/\/git@github\.com\/)/i;
 const GITHUB_SSH = new RegExp(
   `^(?:git@github\\.com:|ssh:\\/\\/git@github\\.com\\/)(${GITHUB_COMPONENT})\/(${GITHUB_COMPONENT}?)(?:\\.git)?$`,
@@ -35,9 +40,18 @@ function safeGitHubProviderSource(value) {
   return GITHUB_SSH.test(value) || SHORTHAND.test(value);
 }
 
+function safeGenericScpSource(value) {
+  return GENERIC_SCP.test(value);
+}
+
 export function redactSource(source) {
   const value = String(source);
   const providerBase = stripQueryAndFragment(value);
+  if (GENERIC_SCP_PREFIX.test(value)) {
+    return safeGenericScpSource(providerBase)
+      ? providerBase
+      : "[unsafe source redacted]";
+  }
   if (isGitHubProviderCandidate(value)) {
     return safeGitHubProviderSource(providerBase)
       ? providerBase
@@ -77,6 +91,15 @@ export function canonicalizeSource(source, {
     const ssh = value.match(GITHUB_SSH);
     if (!ssh) throw new SourceIdentityError("Invalid GitHub SSH source");
     return `${ssh[1]}/${ssh[2].replace(/\.git$/, "")}`;
+  }
+
+  if (GENERIC_SCP_PREFIX.test(value)) {
+    if (hasGitHubProviderCredentialRisk(value)) {
+      throw new SourceIdentityError("Unsafe source credentials");
+    }
+    const scp = value.match(GENERIC_SCP);
+    if (!scp) throw new SourceIdentityError("Invalid generic SCP source");
+    return `git@${scp[1].toLowerCase()}:${scp[2]}/${scp[3].replace(/\.git$/, "")}`;
   }
 
   if (SHORTHAND_CANDIDATE.test(value)) {

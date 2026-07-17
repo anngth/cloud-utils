@@ -174,6 +174,22 @@ test("source add rejects unsafe GitHub shorthand before persistence", async (t) 
   }
 });
 
+test("source add persists generic SCP identity without GitHub reclassification", async (t) => {
+  for (const [source, canonical] of [
+    ["git@gitlab.com:owner/repo.git", "git@gitlab.com:owner/repo"],
+    ["git@bitbucket.org:workspace/repo.git", "git@bitbucket.org:workspace/repo"],
+  ]) {
+    const harness = makeManagementHarness(t);
+    assert.equal(await runSourceCommand([
+      "add", source, "-p", "default", "--no-skills",
+    ], harness.context), 0);
+    assert.deepEqual(harness.writtenProfiles.profiles[0].sources, [{
+      source: canonical,
+      skills: [],
+    }]);
+  }
+});
+
 test("source add --all snapshots every discovered name without a wildcard", async (t) => {
   const harness = makeManagementHarness(t, {
     discover: [

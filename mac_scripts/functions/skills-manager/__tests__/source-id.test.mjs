@@ -59,6 +59,28 @@ test("rejects delimiters and credential syntax embedded in shorthand components"
   }
 });
 
+test("preserves safe generic GitLab and Bitbucket SCP identities", () => {
+  for (const [value, canonical] of [
+    ["git@gitlab.com:owner/repo.git", "git@gitlab.com:owner/repo"],
+    ["git@bitbucket.org:workspace/repo_name.git", "git@bitbucket.org:workspace/repo_name"],
+  ]) {
+    assert.equal(canonicalizeSource(value), canonical);
+    assert.equal(redactSource(value), value);
+    assert.notEqual(canonical, canonical.split(":").at(-1));
+  }
+});
+
+test("rejects unsafe suffixes on generic SCP identities", () => {
+  for (const value of [
+    "git@gitlab.com:owner/repo.git?ToKeN=query-secret",
+    "git@bitbucket.org:workspace/repo#fragment-secret",
+    "git@gitlab.com:owner/repo@ACCESS_TOKEN=query-secret",
+  ]) {
+    assert.throws(() => canonicalizeSource(value), SourceIdentityError);
+    assert.doesNotMatch(redactSource(value), /token|secret|fragment|query/i);
+  }
+});
+
 test("preserves a GitHub ref and subpath", () => {
   assert.equal(
     canonicalizeSource("https://github.com/acme/skills/tree/v2/skills/review"),
