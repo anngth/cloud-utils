@@ -93,6 +93,7 @@ test("marks actual skills untracked when lock data is absent or invalid", async 
 
   const state = await loadInstalledState({
     projectRoot: root,
+    env: {},
     listInstalled: async () => [actual(root)],
   });
 
@@ -109,6 +110,7 @@ test("ignores entries without a usable explicit source", async (t) => {
 
   const state = await loadInstalledState({
     projectRoot: root,
+    env: {},
     listInstalled: async () => [actual(root)],
   });
 
