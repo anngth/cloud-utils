@@ -164,6 +164,103 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     listEnd();
   }
 
+  const requirementText = ({ skill, source, profiles = [] }) => (
+    `${skill} — ${source}${profiles.length > 0 ? ` — required by ${profiles.join(", ")}` : ""}`
+  );
+
+  function requirementSection(label, values, color = C.green) {
+    active(label);
+    if (values.length === 0) item("None", C.gray);
+    for (const value of values) item(requirementText(value), color);
+    out(pipe);
+  }
+
+  function status({ projectRoot, profileNames, status: result }) {
+    title();
+    step(`Status: ${projectRoot}`);
+    step(`Profiles: ${profileNames.join(", ")}`);
+    requirementSection("Installed", result.installed);
+    requirementSection("Missing", result.missing, C.yellow);
+    requirementSection("Source mismatch", result.mismatches, C.red);
+    requirementSection("Untracked", result.untracked, C.red);
+    active("Extra");
+    if (result.extras.length === 0) item("None", C.gray);
+    for (const extra of result.extras) {
+      item(`${extra.name}${extra.source ? ` — ${extra.source}` : ""}`, C.yellow);
+    }
+    out(pipe);
+    active("Desired-source conflict");
+    if (result.desiredConflicts.length === 0) item("None", C.gray);
+    for (const conflict of result.desiredConflicts) {
+      item(
+        `${conflict.skill} — ${conflict.sources.join(" vs ")} — required by ${conflict.profiles.join(", ")}`,
+        C.red,
+      );
+    }
+    listEnd();
+  }
+
+  function installPlan({ projectRoot, profileNames, plan, dryRun = false }) {
+    title();
+    step(`${dryRun ? "DRY RUN — " : ""}Install plan: ${projectRoot}`);
+    step(`Profiles: ${profileNames.join(", ")}`);
+    requirementSection("Install", plan.install);
+    requirementSection("Replace", plan.replace, C.yellow);
+    requirementSection("Already installed", plan.skip, C.gray);
+    requirementSection("Conflict", plan.conflicts, C.red);
+    active("Extra");
+    if (plan.extras.length === 0) item("None", C.gray);
+    for (const extra of plan.extras) {
+      item(`${extra.name}${extra.source ? ` — ${extra.source}` : ""}`, C.gray);
+    }
+    out(pipe);
+    active("Desired-source conflict");
+    if (plan.desiredConflicts.length === 0) item("None", C.gray);
+    for (const conflict of plan.desiredConflicts) {
+      item(`${conflict.skill} — ${conflict.sources.join(" vs ")}`, C.red);
+    }
+    listEnd();
+  }
+
+  const shellArg = (value) => {
+    const text = String(value);
+    return /^[A-Za-z0-9_./:@%+=,-]+$/.test(text)
+      ? text
+      : `'${text.replaceAll("'", `'\\''`)}'`;
+  };
+
+  function retryCommand(record) {
+    if (record.action === "replace") {
+      return `npx skills remove ${record.skills.map(shellArg).join(" ")} --yes`;
+    }
+    const skills = record.skills.map((skill) => `--skill ${shellArg(skill)}`).join(" ");
+    return `npx skills add ${shellArg(record.source)} ${skills}`;
+  }
+
+  function executionSummary(result) {
+    title();
+    step(result.ok ? "Install complete" : "Install incomplete");
+    step(`${result.succeeded.length} succeeded; ${result.failed.length} failed`);
+    if (result.succeeded.length > 0) {
+      active("Succeeded");
+      for (const record of result.succeeded) {
+        item(`${record.action}: ${record.skills.join(", ")}`);
+      }
+      out(pipe);
+    }
+    if (result.failed.length > 0) {
+      active("Failed — retry these commands");
+      for (const record of result.failed) {
+        item(`${retryCommand(record)} (status ${record.status})`, C.red);
+      }
+    }
+    listEnd();
+  }
+
+  function confirm(message) {
+    active(message);
+  }
+
   function selector(heading, state, { mode } = {}) {
     renderSelector(heading, state, { mode, cancelled: false });
   }
@@ -204,6 +301,10 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     projectShow,
     projectList,
     projectChanged,
+    status,
+    installPlan,
+    executionSummary,
+    confirm,
     selector,
     cancelledSelector,
     error(message) { err(fg(C.red, `❌ ${message}`)); },

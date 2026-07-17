@@ -25,6 +25,10 @@ test("management UI exposes the complete renderer surface", () => {
     "projectShow",
     "projectList",
     "projectChanged",
+    "status",
+    "installPlan",
+    "executionSummary",
+    "confirm",
     "selector",
     "cancelledSelector",
     "error",
@@ -109,6 +113,103 @@ test("project renderers show linked profiles and mark stale roots", () => {
   const rendered = list.stdout.read();
   assert.match(rendered, /\/repo\/current/);
   assert.match(rendered, /\/repo\/gone.*stale/i);
+});
+
+const requirement = (source, skill, profiles = ["frontend"]) => ({
+  key: JSON.stringify([source, skill]),
+  source,
+  skill,
+  profiles,
+});
+
+test("status renders every classification and contributing profiles", () => {
+  const { stdout, ui } = makeUi();
+  ui.status({
+    projectRoot: "/repo/app",
+    profileNames: ["frontend", "quality"],
+    status: {
+      installed: [requirement("a/repo", "ready")],
+      missing: [requirement("a/repo", "missing", ["quality"])],
+      mismatches: [requirement("a/repo", "wrong-source", ["frontend", "quality"])],
+      untracked: [requirement("a/repo", "unknown", ["quality"])],
+      extras: [{ name: "other", source: "x/repo", provenance: "tracked" }],
+      desiredConflicts: [{
+        skill: "ambiguous",
+        sources: ["a/repo", "b/repo"],
+        profiles: ["frontend", "quality"],
+      }],
+    },
+  });
+  const rendered = stdout.read();
+  for (const text of [
+    "/repo/app",
+    "frontend, quality",
+    "Installed",
+    "Missing",
+    "Source mismatch",
+    "Untracked",
+    "Extra",
+    "Desired-source conflict",
+    "wrong-source",
+    "a/repo",
+    "required by frontend, quality",
+    "other",
+    "ambiguous",
+  ]) assert.match(rendered, new RegExp(text.replace("/", "\\/"), "i"));
+});
+
+test("install plan labels dry runs and all operation classes", () => {
+  const { stdout, ui } = makeUi();
+  ui.installPlan({
+    projectRoot: "/repo/app",
+    profileNames: ["frontend"],
+    dryRun: true,
+    plan: {
+      install: [requirement("a/repo", "missing")],
+      replace: [requirement("a/repo", "replace-me")],
+      skip: [requirement("a/repo", "ready")],
+      conflicts: [requirement("a/repo", "blocked")],
+      extras: [{ name: "other", source: "x/repo" }],
+      desiredConflicts: [],
+    },
+  });
+  const rendered = stdout.read();
+  for (const text of [
+    "DRY RUN",
+    "Install",
+    "Replace",
+    "Already installed",
+    "Conflict",
+    "Extra",
+    "missing",
+    "replace-me",
+    "ready",
+    "blocked",
+    "other",
+  ]) assert.match(rendered, new RegExp(text, "i"));
+});
+
+test("execution summary renders aggregate results and exact retry batches", () => {
+  const { stdout, ui } = makeUi();
+  ui.executionSummary({
+    ok: false,
+    succeeded: [{ action: "install", source: "b/repo", skills: ["three"], status: 0 }],
+    failed: [
+      { action: "install", source: "a/repo", skills: ["one", "two"], status: 2 },
+      { action: "replace", source: "c/repo", skills: ["blocked"], status: 5 },
+    ],
+  });
+  const rendered = stdout.read();
+  assert.match(rendered, /1 succeeded/i);
+  assert.match(rendered, /2 failed/i);
+  assert.match(rendered, /npx skills add a\/repo --skill one --skill two/);
+  assert.match(rendered, /npx skills remove blocked --yes/);
+});
+
+test("confirm renders the injected prompt message without reading input", () => {
+  const { stdout, ui } = makeUi();
+  assert.equal(ui.confirm("Apply this plan?"), undefined);
+  assert.match(stdout.read(), /Apply this plan\?/);
 });
 
 test("errors and warnings use stderr while info uses stdout", () => {
