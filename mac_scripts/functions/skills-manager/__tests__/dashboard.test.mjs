@@ -10,6 +10,7 @@ function dashboardHarness({
   profilesCancelled = false,
   saveLinks = false,
   installStatus = 0,
+  installOutcome = { type: "completed", ok: installStatus === 0 },
   npxAvailable = true,
 } = {}) {
   const root = "/repo";
@@ -54,7 +55,11 @@ function dashboardHarness({
       return saveLinks;
     },
     requireNpx: () => npxAvailable,
-    runInstallCommand: async (args) => { calls.push(["install", args]); return installStatus; },
+    runInstallCommand: async (args, _context, { onOutcome } = {}) => {
+      calls.push(["install", args]);
+      onOutcome?.(installOutcome);
+      return installStatus;
+    },
     runStatusCommand: async (args) => { calls.push(["status", args]); return 0; },
     runProjectCommand: async (args) => { calls.push(["project", args]); return 0; },
     runProfileCommand: async (args) => { calls.push(["profile", args]); return 0; },
@@ -102,6 +107,34 @@ test("failed install never saves links or asks to save them", async () => {
     installStatus: 1,
   });
   assert.equal(await runDashboard(harness.context), 1);
+  assert.equal(harness.writtenProjects, undefined);
+  assert.equal(harness.calls.some(([name]) => name === "confirmSaveLinks"), false);
+});
+
+test("nested install selector cancellation cannot write dashboard links", async () => {
+  const harness = dashboardHarness({
+    linkedProfiles: [],
+    selectedAction: "install-linked",
+    selectedProfiles: ["frontend"],
+    saveLinks: true,
+    installStatus: 0,
+    installOutcome: { type: "cancelled", stage: "skill-selection" },
+  });
+  assert.equal(await runDashboard(harness.context), 0);
+  assert.equal(harness.writtenProjects, undefined);
+  assert.equal(harness.calls.some(([name]) => name === "confirmSaveLinks"), false);
+});
+
+test("nested install confirmation cancellation cannot write dashboard links", async () => {
+  const harness = dashboardHarness({
+    linkedProfiles: [],
+    selectedAction: "install-linked",
+    selectedProfiles: ["frontend"],
+    saveLinks: true,
+    installStatus: 0,
+    installOutcome: { type: "cancelled", stage: "confirmation" },
+  });
+  assert.equal(await runDashboard(harness.context), 0);
   assert.equal(harness.writtenProjects, undefined);
   assert.equal(harness.calls.some(([name]) => name === "confirmSaveLinks"), false);
 });

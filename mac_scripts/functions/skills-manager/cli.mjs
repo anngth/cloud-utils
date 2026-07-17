@@ -15,12 +15,14 @@ import {
   runInstallCommand as runInstallCommandDefault,
   runStatusCommand as runStatusCommandDefault,
   runUninstallCommand as runUninstallCommandDefault,
+  validateLifecycleCommandGrammar,
 } from "./lifecycle-commands.mjs";
 import {
   runProfileCommand as runProfileCommandDefault,
   runProjectCommand as runProjectCommandDefault,
   runSkillCommand as runSkillCommandDefault,
   runSourceCommand as runSourceCommandDefault,
+  validateManagementCommandGrammar,
 } from "./manage-commands.mjs";
 import {
   executeInstallPlan as executeInstallPlanDefault,
@@ -104,6 +106,16 @@ export async function runCli(argv, dependencies = {}) {
   }
   if (action === undefined && (!stdin.isTTY || !stdout.isTTY)) {
     ui.error("skm requires an interactive terminal");
+    return 1;
+  }
+  try {
+    if (["profile", "source", "skill", "project"].includes(action)) {
+      validateManagementCommandGrammar(action, args);
+    } else if (["status", "install", "uninstall"].includes(action)) {
+      validateLifecycleCommandGrammar(action, args);
+    }
+  } catch (error) {
+    ui.error(error instanceof Error ? error.message : String(error));
     return 1;
   }
   if (requiresNpx(action, args) && !requireNpx()) return 1;

@@ -101,6 +101,16 @@ function bootstrapDocuments(paths, { fs, pid }) {
       profiles: [{ name: "default", sources: sources.map((source) => ({ source, skills: [] })) }],
     });
     writeJsonAtomic(paths.profilesFile, profiles, { fs, pid });
+  } else if (!projectsExists) {
+    try {
+      validateProfilesDocument(readJson(paths.profilesFile, fs));
+    } catch (cause) {
+      if (cause instanceof ConfigFileError) throw cause;
+      throw new ConfigFileError(`Invalid profiles file: ${paths.profilesFile}`, {
+        cause,
+        filePath: paths.profilesFile,
+      });
+    }
   }
 
   if (!projectsExists) writeJsonAtomic(paths.projectsFile, EMPTY_PROJECTS, { fs, pid });

@@ -43,6 +43,21 @@ test("runNpx preserves opaque arguments and inherited stdio", async () => {
   }]);
 });
 
+test("runNpx anchors inherited-stdio mutations to the requested cwd", async () => {
+  const calls = [];
+  const spawnImpl = (command, args, options) => {
+    calls.push({ command, args, options });
+    const child = new EventEmitter();
+    queueMicrotask(() => child.emit("close", 0, null));
+    return child;
+  };
+  assert.equal(await runNpx(["skills", "remove", "review"], {
+    cwd: "/repo",
+    spawnImpl,
+  }), 0);
+  assert.deepEqual(calls[0].options, { cwd: "/repo", stdio: "inherit" });
+});
+
 test("runNpxCapture preserves opaque arguments and captures output", async () => {
   const calls = [];
   const spawnImpl = (command, args, options) => {
@@ -179,14 +194,18 @@ test("discovers available skills only from successful upstream output", async ()
   }));
 });
 
-test("runSkillsMutation delegates its opaque arguments to the runner", async () => {
+test("runSkillsMutation delegates opaque arguments and cwd to the runner", async () => {
   const calls = [];
   const status = await runSkillsMutation(["skills", "add", "owner/repo with | %"], {
+    cwd: "/repo",
     runner: async (...args) => {
       calls.push(args);
       return 9;
     },
   });
   assert.equal(status, 9);
-  assert.deepEqual(calls, [[["skills", "add", "owner/repo with | %"]]]);
+  assert.deepEqual(calls, [[
+    ["skills", "add", "owner/repo with | %"],
+    { cwd: "/repo" },
+  ]]);
 });

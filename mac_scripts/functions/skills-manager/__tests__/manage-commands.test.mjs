@@ -196,6 +196,33 @@ test("source edit retains an unavailable saved skill unless deselected", async (
   assert.deepEqual(harness.writtenProfiles.profiles[0].sources[0].skills, ["old", "current"]);
 });
 
+test("saved absolute local sources remain removable after the path disappears", async (t) => {
+  const source = "/definitely/missing/skm-source";
+  const harness = makeManagementHarness(t, {
+    profiles: profileWithSource("default", source, ["old"]),
+  });
+  assert.equal(await runSourceCommand([
+    "remove", source, "-p", "default",
+  ], harness.context), 0);
+  assert.deepEqual(harness.writtenProfiles.profiles[0].sources, []);
+});
+
+test("saved absolute local sources remain editable without re-canonicalizing the path", async (t) => {
+  const source = "/definitely/missing/skm-source";
+  const harness = makeManagementHarness(t, {
+    profiles: profileWithSource("default", source, ["old"]),
+    discover: [{ name: "current", description: "Current" }],
+    selected: ["old", "current"],
+  });
+  assert.equal(await runSourceCommand([
+    "edit", source, "-p", "default",
+  ], harness.context), 0);
+  assert.deepEqual(harness.writtenProfiles.profiles[0].sources[0], {
+    source,
+    skills: ["old", "current"],
+  });
+});
+
 test("discovery failure leaves the complete profile document unwritten", async (t) => {
   const harness = makeManagementHarness(t);
   harness.context.discoverAvailableSkills = async () => { throw new Error("unparseable output"); };
@@ -252,6 +279,21 @@ test("skill verification failure does not partially write", async (t) => {
   assert.equal(await runSkillCommand([
     "add", "a", "missing", "--source", "acme/skills", "--profile", "default",
   ], harness.context), 1);
+  assert.equal(harness.writtenProfiles, undefined);
+});
+
+test("invalid explicit source add --skill verification preserves input bytes and never writes", async (t) => {
+  const document = profiles("default");
+  const before = JSON.stringify(document);
+  const harness = makeManagementHarness(t, {
+    profiles: document,
+    discover: [{ name: "available", description: "Available" }],
+  });
+  assert.equal(await runSourceCommand([
+    "add", "acme/skills", "--profile", "default",
+    "--skill", "available", "--skill", "missing",
+  ], harness.context), 1);
+  assert.equal(JSON.stringify(document), before);
   assert.equal(harness.writtenProfiles, undefined);
 });
 

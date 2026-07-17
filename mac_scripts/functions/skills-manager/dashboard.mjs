@@ -90,8 +90,12 @@ export async function runDashboard(context) {
         context.ui.warn("No profiles selected");
         return 0;
       }
-      const status = await context.runInstallCommand(selected, context);
+      let outcome;
+      const status = await context.runInstallCommand(selected, context, {
+        onOutcome: (value) => { outcome = value; },
+      });
       if (status !== 0) return status;
+      if (outcome?.type !== "completed" || !outcome.ok) return 0;
       const saveLinks = await context.confirmSaveLinks({ projectRoot, profileNames: selected });
       if (saveLinks) saveProjectLinks(context, projectRoot, selected);
       return 0;

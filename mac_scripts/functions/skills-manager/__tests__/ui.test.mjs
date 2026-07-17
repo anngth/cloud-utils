@@ -98,6 +98,15 @@ test("source and skill result renderers include selected-skill counts", () => {
   assert.match(skill.stdout.read(), /does not change installed project skills/);
 });
 
+test("source renderers never display URL queries, fragments, or credentials", () => {
+  const { stdout, ui } = makeUi();
+  const unsafe = "https://user:secret@git.example.com/acme/skills?ToKeN=query-secret#fragment-secret";
+  ui.sourceChanged({ action: "shown", profile: null, source: unsafe, skills: [] });
+  const rendered = stdout.read();
+  assert.match(rendered, /https:\/\/git\.example\.com\/acme\/skills/);
+  assert.doesNotMatch(rendered, /user|secret|token|fragment/i);
+});
+
 test("project renderers show linked profiles and mark stale roots", () => {
   const current = makeUi();
   current.ui.projectShow({ root: "/repo/current", profiles: ["frontend", "review"] });
@@ -252,6 +261,39 @@ test("execution summary renders aggregate results and exact retry batches", () =
   assert.match(rendered, /2 failed/i);
   assert.match(rendered, /npx skills add a\/repo --skill one --skill two/);
   assert.match(rendered, /npx skills remove blocked --yes/);
+});
+
+test("execution summary warns when removal succeeded but replacement failed", () => {
+  const { stdout, ui } = makeUi();
+  ui.executionSummary({
+    ok: false,
+    succeeded: [],
+    failed: [{ action: "install", source: "a/repo", skills: ["review"], status: 7 }],
+    replacements: [{
+      source: "a/repo", skill: "review", removeStatus: 0, installStatus: 7,
+    }],
+  });
+  const rendered = stdout.read();
+  assert.match(rendered, /old skill review was removed/i);
+  assert.match(rendered, /replacement.*failed/i);
+  assert.match(rendered, /npx skills add a\/repo --skill review/);
+});
+
+test("execution retry guidance redacts unsafe persisted source text", () => {
+  const { stdout, ui } = makeUi();
+  ui.executionSummary({
+    ok: false,
+    succeeded: [],
+    failed: [{
+      action: "install",
+      source: "https://user:secret@git.example.com/acme/skills?ToKeN=query-secret#fragment-secret",
+      skills: ["review"],
+      status: 7,
+    }],
+  });
+  const rendered = stdout.read();
+  assert.match(rendered, /npx skills add https:\/\/git\.example\.com\/acme\/skills --skill review/);
+  assert.doesNotMatch(rendered, /user|secret|token|fragment/i);
 });
 
 test("uninstall execution summary renders the exact safe retry command", () => {

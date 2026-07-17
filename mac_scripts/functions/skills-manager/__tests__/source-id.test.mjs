@@ -41,6 +41,24 @@ test("removes credentials from stored and displayed URLs", () => {
   assert.equal(redactSource(input), "https://git.example.com/acme/skills.git");
 });
 
+test("strips every generic URL query and fragment case-insensitively", () => {
+  const input = "https://git.example.com/acme/skills.git?ToKeN=query-secret&mode=private#fragment-secret";
+  assert.equal(canonicalizeSource(input), "https://git.example.com/acme/skills");
+  assert.equal(redactSource(input), "https://git.example.com/acme/skills.git");
+});
+
+test("rejects unsafe opaque sources while redacting them for display", () => {
+  const input = "opaque source?ACCESS_TOKEN=query-secret#fragment-secret";
+  assert.throws(() => canonicalizeSource(input), SourceIdentityError);
+  assert.equal(redactSource(input), "opaque source");
+});
+
+test("redacts opaque credential assignments even when URL parsing succeeds", () => {
+  const input = "opaque:ACCESS_TOKEN=query-secret";
+  assert.throws(() => canonicalizeSource(input), SourceIdentityError);
+  assert.equal(redactSource(input), "[unsafe source redacted]");
+});
+
 test("rejects empty source strings", () => {
   assert.throws(() => canonicalizeSource("   "), SourceIdentityError);
 });

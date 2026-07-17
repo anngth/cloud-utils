@@ -1,3 +1,5 @@
+import { redactSource } from "./source-id.mjs";
+
 const C = {
   cyan: "\u001b[36m",
   green: "\u001b[32m",
@@ -98,7 +100,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     active("Sources and selected skills");
     if (profile.sources.length === 0) item("No sources", C.yellow);
     for (const source of profile.sources) {
-      item(`${source.source} — ${plural(source.skills.length, "selected skill")}`);
+      item(`${redactSource(source.source)} — ${plural(source.skills.length, "selected skill")}`);
       for (const skill of source.skills) out(`${pipe}      ${fg(C.gray, "•")} ${skill}`);
     }
     out(pipe);
@@ -123,7 +125,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
       ? { action: value, profile, source, skills }
       : value;
     title();
-    step(`Source ${change.action}: ${change.source}`);
+    step(`Source ${change.action}: ${redactSource(change.source)}`);
     if (change.profile) step(`Profile: ${change.profile}`);
     step(`${plural(change.skills?.length ?? 0, "selected skill")}`);
     if (change.available?.length > 0) {
@@ -141,7 +143,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
       : value;
     title();
     step(`Skills ${change.action}: ${plural(change.skills?.length ?? 0, "skill")}`);
-    step(`Profile: ${change.profile}; source: ${change.source}`);
+    step(`Profile: ${change.profile}; source: ${redactSource(change.source)}`);
     for (const name of change.skills ?? []) item(name);
     if (change.missing?.length > 0) item(`Not selected: ${change.missing.join(", ")}`, C.yellow);
     out(pipe);
@@ -184,7 +186,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   }
 
   const requirementText = ({ skill, source, profiles = [] }) => (
-    `${skill} — ${source}${profiles.length > 0 ? ` — required by ${profiles.join(", ")}` : ""}`
+    `${skill} — ${redactSource(source)}${profiles.length > 0 ? ` — required by ${profiles.join(", ")}` : ""}`
   );
 
   function requirementSection(label, values, color = C.green) {
@@ -205,14 +207,14 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     active("Extra");
     if (result.extras.length === 0) item("None", C.gray);
     for (const extra of result.extras) {
-      item(`${extra.name}${extra.source ? ` — ${extra.source}` : ""}`, C.yellow);
+      item(`${extra.name}${extra.source ? ` — ${redactSource(extra.source)}` : ""}`, C.yellow);
     }
     out(pipe);
     active("Desired-source conflict");
     if (result.desiredConflicts.length === 0) item("None", C.gray);
     for (const conflict of result.desiredConflicts) {
       item(
-        `${conflict.skill} — ${conflict.sources.join(" vs ")} — required by ${conflict.profiles.join(", ")}`,
+        `${conflict.skill} — ${conflict.sources.map(redactSource).join(" vs ")} — required by ${conflict.profiles.join(", ")}`,
         C.red,
       );
     }
@@ -230,13 +232,13 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     active("Extra");
     if (plan.extras.length === 0) item("None", C.gray);
     for (const extra of plan.extras) {
-      item(`${extra.name}${extra.source ? ` — ${extra.source}` : ""}`, C.gray);
+      item(`${extra.name}${extra.source ? ` — ${redactSource(extra.source)}` : ""}`, C.gray);
     }
     out(pipe);
     active("Desired-source conflict");
     if (plan.desiredConflicts.length === 0) item("None", C.gray);
     for (const conflict of plan.desiredConflicts) {
-      item(`${conflict.skill} — ${conflict.sources.join(" vs ")}`, C.red);
+      item(`${conflict.skill} — ${conflict.sources.map(redactSource).join(" vs ")}`, C.red);
     }
     listEnd();
   }
@@ -281,7 +283,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
       return `npx skills remove ${record.skills.map(shellArg).join(" ")}`;
     }
     const skills = record.skills.map((skill) => `--skill ${shellArg(skill)}`).join(" ");
-    return `npx skills add ${shellArg(record.source)} ${skills}`;
+    return `npx skills add ${shellArg(redactSource(record.source))} ${skills}`;
   }
 
   function executionSummary(result, { operation = "install" } = {}) {
@@ -289,6 +291,24 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     const label = operation === "uninstall" ? "Uninstall" : "Install";
     step(result.ok ? `${label} complete` : `${label} incomplete`);
     step(`${result.succeeded.length} succeeded; ${result.failed.length} failed`);
+    const incompleteReplacements = (result.replacements ?? []).filter((record) => (
+      record.removeStatus === 0 && record.installStatus !== 0
+    ));
+    if (incompleteReplacements.length > 0) {
+      active("Replacement warning");
+      for (const record of incompleteReplacements) {
+        const retry = retryCommand({
+          action: "install",
+          source: record.source,
+          skills: [record.skill],
+        });
+        item(
+          `Old skill ${record.skill} was removed, but replacement from ${redactSource(record.source)} failed. Retry: ${retry} (status ${record.installStatus})`,
+          C.red,
+        );
+      }
+      out(pipe);
+    }
     if (result.succeeded.length > 0) {
       active("Succeeded");
       for (const record of result.succeeded) {

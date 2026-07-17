@@ -5,6 +5,7 @@ import {
   mergeProfileRequirements,
 } from "./planner.mjs";
 import { linkProjectProfiles, unlinkProjectProfiles } from "./projects.mjs";
+import { redactSource } from "./source-id.mjs";
 
 class LifecycleCommandError extends Error {}
 
@@ -35,6 +36,13 @@ function parseLifecycleOptions(args, { install = false, uninstall = false } = {}
     }
   }
   return parsed;
+}
+
+export function validateLifecycleCommandGrammar(action, args) {
+  parseLifecycleOptions(args, {
+    install: action === "install",
+    uninstall: action === "uninstall",
+  });
 }
 
 function linkedProfiles(projects, projectRoot) {
@@ -95,7 +103,7 @@ function statusOk(status) {
 
 function desiredConflictMessage(conflicts) {
   const details = conflicts.map(({ skill, sources, profiles }) => (
-    `${skill} (${sources.join(" vs ")}; profiles: ${profiles.join(", ")})`
+    `${skill} (${sources.map(redactSource).join(" vs ")}; profiles: ${profiles.join(", ")})`
   ));
   return `Conflicting desired skill sources: ${details.join("; ")}`;
 }
@@ -105,7 +113,7 @@ function selectableInstallItems(plan) {
     key: item.key,
     value: item.key,
     label: item.skill,
-    hint: `${item.source} — ${item.profiles.join(", ")}`,
+    hint: `${redactSource(item.source)} — ${item.profiles.join(", ")}`,
   }));
 }
 
@@ -125,7 +133,7 @@ export async function runStatusCommand(args, context) {
   }
 }
 
-export async function runInstallCommand(args, context) {
+export async function runInstallCommand(args, context, { onOutcome = () => {} } = {}) {
   try {
     const parsed = parseLifecycleOptions(args, { install: true });
     const projectRoot = context.resolveProjectRoot({ cwd: context.cwd });
@@ -133,7 +141,10 @@ export async function runInstallCommand(args, context) {
       projectRoot,
       interactiveInstall: true,
     });
-    if (resolved.type !== "submit") return 0;
+    if (resolved.type !== "submit") {
+      onOutcome({ type: "cancelled", stage: "profile-selection" });
+      return 0;
+    }
 
     const merged = mergeProfileRequirements(context.config.profiles, resolved.profileNames);
     if (merged.requirements.length === 0) {
@@ -151,7 +162,10 @@ export async function runInstallCommand(args, context) {
       const items = selectableInstallItems(plan);
       if (items.length > 0) {
         const selection = await context.selectSkills(items);
-        if (selection.type !== "submit") return 0;
+        if (selection.type !== "submit") {
+          onOutcome({ type: "cancelled", stage: "skill-selection" });
+          return 0;
+        }
         plan = createInstallPlan(status, {
           force: parsed.force,
           selectedKeys: new Set(selection.selected),
@@ -165,14 +179,21 @@ export async function runInstallCommand(args, context) {
       plan,
       dryRun: parsed.dryRun,
     });
-    if (parsed.dryRun) return plan.conflicts.length === 0 ? 0 : 1;
+    if (parsed.dryRun) {
+      const ok = plan.conflicts.length === 0;
+      onOutcome({ type: "dry-run", ok });
+      return ok ? 0 : 1;
+    }
 
     if (!parsed.yes) {
       const confirmed = await context.confirm("Apply this install plan?");
-      if (!confirmed) return 0;
+      if (!confirmed) {
+        onOutcome({ type: "cancelled", stage: "confirmation" });
+        return 0;
+      }
     }
 
-    const result = await context.executeInstallPlan(plan, { yes: parsed.yes });
+    const result = await context.executeInstallPlan(plan, { yes: parsed.yes, projectRoot });
     if (result.ok && resolved.saveLinks) {
       const profileNames = new Set(context.config.profiles.profiles.map(({ name }) => name));
       const projects = linkProjectProfiles(
@@ -184,8 +205,10 @@ export async function runInstallCommand(args, context) {
       context.writeProjects(context.paths, context.config.profiles, projects);
     }
     context.ui.executionSummary(result);
+    onOutcome({ type: "completed", ok: result.ok });
     return result.ok ? 0 : 1;
   } catch (error) {
+    onOutcome({ type: "error" });
     return reportError(context, error);
   }
 }
@@ -261,7 +284,7 @@ export async function runUninstallCommand(args, context) {
       if (!confirmed) return 0;
     }
 
-    const result = await context.executeUninstallPlan(plan, { yes: parsed.yes });
+    const result = await context.executeUninstallPlan(plan, { yes: parsed.yes, projectRoot });
     if (result.ok && !parsed.keepLink && plan.unlinkProfiles.length > 0) {
       const projects = unlinkProjectProfiles(
         context.config.projects,

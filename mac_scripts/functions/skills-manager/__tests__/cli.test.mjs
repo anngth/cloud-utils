@@ -148,6 +148,21 @@ test("routes that use upstream skills fail early when npx is missing", async () 
   }
 });
 
+test("route grammar errors take precedence over missing npx", async () => {
+  for (const [argv, message] of [
+    [["source", "show"], /Usage: skm source show/i],
+    [["source", "add", "a\/repo", "--all", "--no-skills"], /mutually exclusive/i],
+    [["install", "--unsupported"], /Unknown option: --unsupported/i],
+  ]) {
+    const harness = cliHarness({ hasNpx: false });
+    assert.equal(await runCli(argv, harness.dependencies), 1);
+    assert.match(harness.stderr(), message);
+    assert.doesNotMatch(harness.stderr(), /npx is required/i);
+    assert.equal(harness.npxChecks(), 0);
+    assert.equal(harness.initialized(), 0);
+  }
+});
+
 test("configuration failures are rendered without dispatch", async () => {
   const harness = cliHarness();
   harness.dependencies.initializeConfig = () => { throw new Error("disk unavailable"); };

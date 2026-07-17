@@ -102,6 +102,42 @@ test("removes replacements sequentially and installs only successful removals", 
   assert.equal(events.length, 4);
 });
 
+test("records a removed-old-skill phase when replacement installation fails", async () => {
+  const result = await executeInstallPlan(plan({
+    replace: [req("a/repo", "review")],
+  }), {
+    runMutation: async (args) => args[1] === "remove" ? 0 : 7,
+  });
+  assert.deepEqual(result.replacements, [{
+    source: "a/repo",
+    skill: "review",
+    removeStatus: 0,
+    installStatus: 7,
+  }]);
+});
+
+test("passes the canonical project root to every install and uninstall mutation", async () => {
+  const calls = [];
+  await executeInstallPlan(plan({
+    install: [req("a/repo", "new")],
+    replace: [req("b/repo", "old")],
+  }), {
+    projectRoot: "/repo",
+    runMutation: async (args, options) => { calls.push([args, options]); return 0; },
+  });
+  await executeUninstallPlan({
+    remove: [req("a/repo", "new")], retain: [], absent: [], conflicts: [],
+    unlinkProfiles: ["frontend"], desiredConflicts: [],
+  }, {
+    projectRoot: "/repo",
+    runMutation: async (args, options) => { calls.push([args, options]); return 0; },
+  });
+  assert.equal(calls.length, 4);
+  assert.deepEqual(calls.map(([, options]) => options), [
+    { cwd: "/repo" }, { cwd: "/repo" }, { cwd: "/repo" }, { cwd: "/repo" },
+  ]);
+});
+
 test("an empty conflict-free plan succeeds without mutation", async () => {
   let calls = 0;
   const result = await executeInstallPlan(plan(), {

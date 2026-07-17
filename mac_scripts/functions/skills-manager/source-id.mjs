@@ -6,17 +6,29 @@ export class SourceIdentityError extends Error {}
 const SHORTHAND = /^[^\s/:]+\/[^\s/]+(?:\.git)?$/;
 const GITHUB_SSH = /^(?:git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+)\/([^/]+?)(?:\.git)?$/i;
 
+function stripQueryAndFragment(value) {
+  return value.split(/[?#]/, 1)[0];
+}
+
+function hasOpaqueCredentialRisk(value) {
+  return /[?#]/.test(value)
+    || /:\/\/[^/\s]*@/.test(value)
+    || /(?:access[_-]?token|token|auth|key|password|secret)\s*=/i.test(value);
+}
+
 export function redactSource(source) {
   const value = String(source);
   try {
     const url = new URL(value);
+    if (!url.hostname && hasOpaqueCredentialRisk(value)) return "[unsafe source redacted]";
     url.username = "";
     url.password = "";
-    for (const key of ["token", "access_token", "auth", "key"]) url.searchParams.delete(key);
-    url.search = url.searchParams.toString();
+    url.search = "";
+    url.hash = "";
     return url.toString().replace(/\/$/, "");
   } catch {
-    return value.replace(/\/\/[^/@]+@/, "//");
+    const redacted = stripQueryAndFragment(value.replace(/\/\/[^/@]+@/, "//"));
+    return hasOpaqueCredentialRisk(redacted) ? "[unsafe source redacted]" : redacted;
   }
 }
 
@@ -38,10 +50,12 @@ export function canonicalizeSource(source, {
 
   try {
     const url = new URL(value);
+    if (!url.hostname && hasOpaqueCredentialRisk(value)) {
+      throw new SourceIdentityError("Unsafe source credentials");
+    }
     url.username = "";
     url.password = "";
-    for (const key of ["token", "access_token", "auth", "key"]) url.searchParams.delete(key);
-    url.search = url.searchParams.toString();
+    url.search = "";
     url.hash = "";
     url.hostname = url.hostname.toLowerCase();
     if (url.hostname === "github.com") {
@@ -50,7 +64,10 @@ export function canonicalizeSource(source, {
     }
     url.pathname = url.pathname.replace(/\.git\/?$/, "").replace(/\/$/, "");
     return url.toString().replace(/\/$/, "");
-  } catch {
+  } catch (error) {
+    if (error instanceof SourceIdentityError || hasOpaqueCredentialRisk(value)) {
+      throw new SourceIdentityError("Unsafe source credentials", { cause: error });
+    }
     return value;
   }
 }

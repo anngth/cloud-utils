@@ -93,6 +93,41 @@ function rejectOptions(parsed, allowed = []) {
   if (parsed.force && !allow.has("force")) throw new CommandUsageError("Unexpected --force");
 }
 
+export function validateManagementCommandGrammar(family, args) {
+  const [action, ...rest] = args;
+  if (family === "profile") {
+    if (action === "list") { const parsed = parseOptions(rest); requirePositionals(parsed, 0, "skm profile list"); rejectOptions(parsed); }
+    if (action === "show") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm profile show <profile>"); rejectOptions(parsed); }
+    if (action === "create") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm profile create <profile>"); rejectOptions(parsed); }
+    if (action === "rename") { const parsed = parseOptions(rest); requirePositionals(parsed, 2, "skm profile rename <old> <new>"); rejectOptions(parsed); }
+    if (action === "remove") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm profile remove <profile> [--force]"); rejectOptions(parsed, ["force"]); }
+    return;
+  }
+  if (family === "source") {
+    if (action === "add") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm source add <source> --profile <profile>"); rejectOptions(parsed, ["profile", "skills", "all", "noSkills"]); }
+    if (action === "edit") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm source edit <source> --profile <profile>"); rejectOptions(parsed, ["profile"]); }
+    if (action === "remove") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm source remove <source> --profile <profile>"); rejectOptions(parsed, ["profile"]); }
+    if (action === "show") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm source show <source>"); rejectOptions(parsed); }
+    return;
+  }
+  if (family === "skill") {
+    if (!["add", "remove"].includes(action)) return;
+    const parsed = parseOptions(rest);
+    requireAtLeastOne(parsed, `skm skill ${action} <skill...> --source <source> --profile <profile>`);
+    rejectOptions(parsed, ["profile", "source"]);
+    if (parsed.profile === null) throw new CommandUsageError("Missing --profile");
+    if (parsed.source === null) throw new CommandUsageError("Missing --source");
+    return;
+  }
+  if (family === "project") {
+    if (action === "link") { const parsed = parseOptions(rest); requireAtLeastOne(parsed, "skm project link <profile...>"); rejectOptions(parsed); }
+    if (action === "unlink") { const parsed = parseOptions(rest); rejectOptions(parsed); }
+    if (action === "show") { const parsed = parseOptions(rest); requirePositionals(parsed, 0, "skm project show"); rejectOptions(parsed); }
+    if (action === "list") { const parsed = parseOptions(rest); requirePositionals(parsed, 0, "skm project list"); rejectOptions(parsed); }
+    if (action === "remove") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm project remove <project-path>"); rejectOptions(parsed); }
+  }
+}
+
 function reportError(context, error) {
   context.ui.error(error instanceof Error ? error.message : String(error));
   return 1;
@@ -139,6 +174,12 @@ function profileNames(document) {
 
 function currentProjectRoot(context) {
   return context.resolveProjectRoot({ cwd: context.cwd });
+}
+
+function profileSourceIdentity(rawSource, profile, context) {
+  const value = String(rawSource).trim();
+  if (isAbsolute(value) && profile.sources.some((entry) => entry.source === value)) return value;
+  return canonicalizeSource(value, { cwd: context.cwd });
 }
 
 async function runProfileList(args, context) {
@@ -285,10 +326,11 @@ async function runSourceEdit(args, context) {
   const parsed = parseOptions(args);
   requirePositionals(parsed, 1, "skm source edit <source> --profile <profile>");
   rejectOptions(parsed, ["profile"]);
-  const source = canonicalizeSource(parsed.positionals[0], { cwd: context.cwd });
   const chosenProfile = await resolveProfileName(parsed, context);
   if (chosenProfile.type === "cancel") return 0;
-  const entry = getProfile(context.config.profiles, chosenProfile.value).sources
+  const profile = getProfile(context.config.profiles, chosenProfile.value);
+  const source = profileSourceIdentity(parsed.positionals[0], profile, context);
+  const entry = profile.sources
     .find((item) => item.source === source);
   if (!entry) throw new CommandUsageError(`Source not found in ${chosenProfile.value}: ${redactSource(source)}`);
 
@@ -317,9 +359,10 @@ async function runSourceRemove(args, context) {
   const parsed = parseOptions(args);
   requirePositionals(parsed, 1, "skm source remove <source> --profile <profile>");
   rejectOptions(parsed, ["profile"]);
-  const source = canonicalizeSource(parsed.positionals[0], { cwd: context.cwd });
   const chosenProfile = await resolveProfileName(parsed, context);
   if (chosenProfile.type === "cancel") return 0;
+  const profile = getProfile(context.config.profiles, chosenProfile.value);
+  const source = profileSourceIdentity(parsed.positionals[0], profile, context);
   const next = removeProfileSource(context.config.profiles, chosenProfile.value, source);
   context.writeProfiles(context.paths, next);
   context.ui.sourceChanged({ action: "removed", profile: chosenProfile.value, source, skills: [] });
@@ -362,8 +405,8 @@ async function runSkillAdd(args, context) {
   rejectOptions(parsed, ["profile", "source"]);
   if (parsed.profile === null) throw new CommandUsageError("Missing --profile");
   if (parsed.source === null) throw new CommandUsageError("Missing --source");
-  const source = canonicalizeSource(parsed.source, { cwd: context.cwd });
   const profile = getProfile(context.config.profiles, parsed.profile);
+  const source = profileSourceIdentity(parsed.source, profile, context);
   if (!profile.sources.some((entry) => entry.source === source)) {
     throw new CommandUsageError(`Source not found in ${parsed.profile}: ${redactSource(source)}`);
   }
@@ -382,8 +425,9 @@ async function runSkillRemove(args, context) {
   rejectOptions(parsed, ["profile", "source"]);
   if (parsed.profile === null) throw new CommandUsageError("Missing --profile");
   if (parsed.source === null) throw new CommandUsageError("Missing --source");
-  const source = canonicalizeSource(parsed.source, { cwd: context.cwd });
-  const entry = getProfile(context.config.profiles, parsed.profile).sources
+  const profile = getProfile(context.config.profiles, parsed.profile);
+  const source = profileSourceIdentity(parsed.source, profile, context);
+  const entry = profile.sources
     .find((item) => item.source === source);
   if (!entry) throw new CommandUsageError(`Source not found in ${parsed.profile}: ${redactSource(source)}`);
   const requested = [...new Set(parsed.positionals)];

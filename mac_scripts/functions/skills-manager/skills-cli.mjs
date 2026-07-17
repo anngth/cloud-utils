@@ -12,7 +12,7 @@ export function hasCommand(name, { env = process.env, access = accessSync } = {}
   return false;
 }
 
-export function runNpx(args, { spawnImpl = spawn } = {}) {
+export function runNpx(args, { spawnImpl = spawn, cwd } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (status) => {
@@ -22,7 +22,7 @@ export function runNpx(args, { spawnImpl = spawn } = {}) {
     };
     let child;
     try {
-      child = spawnImpl("npx", args, { stdio: "inherit" });
+      child = spawnImpl("npx", args, { ...(cwd ? { cwd } : {}), stdio: "inherit" });
     } catch {
       finish(1);
       return;
@@ -119,6 +119,6 @@ export async function discoverAvailableSkills(source, { cwd, runner = runNpxCapt
   return parseAvailableSkills(stdout);
 }
 
-export function runSkillsMutation(args, { runner = runNpx } = {}) {
-  return runner(args);
+export function runSkillsMutation(args, { runner = runNpx, cwd } = {}) {
+  return runner(args, { ...(cwd ? { cwd } : {}) });
 }

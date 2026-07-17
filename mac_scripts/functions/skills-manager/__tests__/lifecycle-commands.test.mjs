@@ -111,6 +111,7 @@ function lifecycleHarness({
   installed = new Map(),
   selectedProfiles = [],
   selectedSkills,
+  skillSelectionCancelled = false,
   saveLinks = false,
   confirmed = true,
   execution = { ok: true, succeeded: [], failed: [] },
@@ -125,6 +126,7 @@ function lifecycleHarness({
   let confirmations = 0;
   let executionCalls = 0;
   let capturedPlan;
+  let executionOptions;
   const uiCalls = [];
   const projects = linkedProfiles.length
     ? { version: 1, projects: [{ root, profiles: linkedProfiles }] }
@@ -150,6 +152,7 @@ function lifecycleHarness({
     },
     selectSkills: async (items) => {
       skillSelections += 1;
+      if (skillSelectionCancelled) return { type: "cancel", selected: [] };
       return {
         type: "submit",
         selected: selectedSkills ?? items.map((item) => item.key),
@@ -157,9 +160,10 @@ function lifecycleHarness({
     },
     confirmSaveLinks: async () => saveLinks,
     confirm: async () => { confirmations += 1; return confirmed; },
-    executeInstallPlan: async (value) => {
+    executeInstallPlan: async (value, options) => {
       executionCalls += 1;
       capturedPlan = value;
+      executionOptions = options;
       return typeof execution === "function" ? execution(value) : execution;
     },
     writeProjects: (_paths, _profiles, document) => { writtenProjects = document; },
@@ -175,6 +179,7 @@ function lifecycleHarness({
     get confirmations() { return confirmations; },
     get executionCalls() { return executionCalls; },
     get capturedPlan() { return capturedPlan; },
+    get executionOptions() { return executionOptions; },
   };
 }
 
@@ -367,11 +372,91 @@ test("desired-source conflicts block independent installs before state discovery
   assert.equal(harness.executionCalls, 0);
 });
 
+test("desired-source conflict errors redact unsafe persisted source text", async () => {
+  const harness = lifecycleHarness({
+    profiles: {
+      version: 1,
+      profiles: [
+        { name: "a", sources: [{
+          source: "https://user:secret@git.example.com/a/repo?ToKeN=query-secret#fragment-secret",
+          skills: ["review"],
+        }] },
+        { name: "b", sources: [{ source: "b/repo", skills: ["review"] }] },
+      ],
+    },
+    linkedProfiles: ["a", "b"],
+  });
+  assert.equal(await runInstallCommand(["--yes"], harness.context), 1);
+  assert.doesNotMatch(harness.stderr(), /user|secret|token|fragment/i);
+  assert.match(harness.stderr(), /https:\/\/git\.example\.com\/a\/repo/);
+});
+
+test("install selector hints redact unsafe persisted source text", async () => {
+  const harness = lifecycleHarness({
+    profiles: {
+      version: 1,
+      profiles: [{ name: "a", sources: [{
+        source: "https://user:secret@git.example.com/a/repo?ToKeN=query-secret#fragment-secret",
+        skills: ["review"],
+      }] }],
+    },
+    linkedProfiles: ["a"],
+  });
+  let items;
+  harness.context.selectSkills = async (value) => {
+    items = value;
+    return { type: "cancel", selected: [] };
+  };
+  assert.equal(await runInstallCommand([], harness.context), 0);
+  assert.match(items[0].hint, /https:\/\/git\.example\.com\/a\/repo/);
+  assert.doesNotMatch(items[0].hint, /user|secret|token|fragment/i);
+});
+
 test("interactive cancellation is a successful no-op", async () => {
   const harness = lifecycleHarness({ confirmed: false });
-  assert.equal(await runInstallCommand([], harness.context), 0);
+  let outcome;
+  assert.equal(await runInstallCommand([], harness.context, {
+    onOutcome: (value) => { outcome = value; },
+  }), 0);
   assert.equal(harness.executionCalls, 0);
   assert.equal(harness.writtenProjects, undefined);
+  assert.deepEqual(outcome, { type: "cancelled", stage: "confirmation" });
+});
+
+test("nested skill selector cancellation has a captured non-completion outcome", async () => {
+  const harness = lifecycleHarness({ skillSelectionCancelled: true });
+  let outcome;
+  assert.equal(await runInstallCommand([], harness.context, {
+    onOutcome: (value) => { outcome = value; },
+  }), 0);
+  assert.equal(harness.executionCalls, 0);
+  assert.deepEqual(outcome, { type: "cancelled", stage: "skill-selection" });
+});
+
+test("completed install keeps numeric status and captures completion", async () => {
+  const harness = lifecycleHarness();
+  let outcome;
+  assert.equal(await runInstallCommand(["--yes"], harness.context, {
+    onOutcome: (value) => { outcome = value; },
+  }), 0);
+  assert.deepEqual(outcome, { type: "completed", ok: true });
+});
+
+test("install and uninstall execute mutations at the canonical project root", async () => {
+  const install = lifecycleHarness();
+  install.context.cwd = "/repo/subdirectory";
+  assert.equal(await runInstallCommand(["--yes"], install.context), 0);
+  assert.deepEqual(install.executionOptions, { yes: true, projectRoot: "/repo" });
+
+  const uninstall = makeUninstallHarness({ linkedProfiles: ["frontend"] });
+  let uninstallOptions;
+  uninstall.context.cwd = "/repo/subdirectory";
+  uninstall.context.executeUninstallPlan = async (_plan, options) => {
+    uninstallOptions = options;
+    return { ok: true, succeeded: [], failed: [] };
+  };
+  assert.equal(await runUninstallCommand(["frontend", "--yes"], uninstall.context), 0);
+  assert.deepEqual(uninstallOptions, { yes: true, projectRoot: "/repo" });
 });
 
 test("explicit profiles do not alter links", async () => {

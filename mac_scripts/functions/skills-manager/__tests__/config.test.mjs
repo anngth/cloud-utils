@@ -584,6 +584,14 @@ test("invalid JSON is byte preserving", (t) => {
   assert.equal(readFileSync(sandbox.profilesFile, "utf8"), "{broken");
 });
 
+test("invalid existing profiles are rejected before creating missing projects", (t) => {
+  const sandbox = makeSandbox(t, { createProjects: false });
+  writeFileSync(sandbox.profilesFile, "{broken", "utf8");
+  assert.throws(() => initializeConfig({ env: sandbox.env }), ConfigFileError);
+  assert.equal(readFileSync(sandbox.profilesFile, "utf8"), "{broken");
+  assert.equal(existsSync(sandbox.projectsFile), false);
+});
+
 test("invalid legacy JSON leaves both new documents absent", (t) => {
   const sandbox = makeSandbox(t, { createProfiles: false, createProjects: false });
   writeFileSync(sandbox.legacyFile, "{broken", "utf8");

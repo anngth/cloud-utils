@@ -12,7 +12,8 @@ function groupBySource(requirements) {
 
 export async function executeInstallPlan(plan, {
   yes = false,
-  runMutation = (args) => runSkillsMutation(args),
+  projectRoot = process.cwd(),
+  runMutation = (args, options) => runSkillsMutation(args, options),
   onEvent = () => {},
 } = {}) {
   if (plan.desiredConflicts.length > 0) {
@@ -21,9 +22,17 @@ export async function executeInstallPlan(plan, {
 
   const succeeded = [];
   const failed = [];
+  const replacements = plan.replace.map(({ source, skill }) => ({
+    source,
+    skill,
+    removeStatus: null,
+    installStatus: null,
+  }));
+  const replacementBySkill = new Map(replacements.map((item) => [item.skill, item]));
   for (const replacement of plan.replace) {
     const removeArgs = ["skills", "remove", replacement.skill, "--yes"];
-    const removeStatus = await runMutation(removeArgs);
+    const removeStatus = await runMutation(removeArgs, { cwd: projectRoot });
+    replacementBySkill.get(replacement.skill).removeStatus = removeStatus;
     onEvent({ action: "remove-for-replace", requirement: replacement, status: removeStatus });
     if (removeStatus !== 0) {
       failed.push({
@@ -46,7 +55,11 @@ export async function executeInstallPlan(plan, {
     const args = ["skills", "add", batch.source];
     for (const skill of batch.skills) args.push("--skill", skill);
     if (yes) args.push("--yes");
-    const status = await runMutation(args);
+    const status = await runMutation(args, { cwd: projectRoot });
+    for (const skill of batch.skills) {
+      const replacement = replacementBySkill.get(skill);
+      if (replacement?.source === batch.source) replacement.installStatus = status;
+    }
     const record = { action: "install", source: batch.source, skills: batch.skills, status };
     (status === 0 ? succeeded : failed).push(record);
     onEvent(record);
@@ -56,12 +69,14 @@ export async function executeInstallPlan(plan, {
     ok: failed.length === 0 && plan.conflicts.length === 0,
     succeeded,
     failed,
+    ...(replacements.length > 0 ? { replacements } : {}),
   };
 }
 
 export async function executeUninstallPlan(plan, {
   yes = false,
-  runMutation = (args) => runSkillsMutation(args),
+  projectRoot = process.cwd(),
+  runMutation = (args, options) => runSkillsMutation(args, options),
   onEvent = () => {},
 } = {}) {
   if (plan.desiredConflicts.length > 0) {
@@ -75,7 +90,7 @@ export async function executeUninstallPlan(plan, {
 
   const args = ["skills", "remove", ...names];
   if (yes) args.push("--yes");
-  const status = await runMutation(args);
+  const status = await runMutation(args, { cwd: projectRoot });
   const record = { action: "uninstall", source: null, skills: names, status };
   onEvent(record);
   return {
