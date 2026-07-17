@@ -1,27 +1,47 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { WRAPPER, makeSandbox } from "./helpers.mjs";
+import { JS_ENTRY, WRAPPER, makeSandbox } from "./helpers.mjs";
 
-test("wrapper forwards opaque argument boundaries and child status", (t) => {
+test("wrapper forwards opaque source-show arguments and child status", (t) => {
   const sandbox = makeSandbox(t);
+  const node = join(sandbox.binDir, "node");
+  writeFileSync(
+    node,
+    `#!/bin/zsh
+exec ${JSON.stringify(process.execPath)} -e '
+const fs = require("fs");
+fs.writeFileSync(process.env.SKM_ARGV_LOG, JSON.stringify(process.argv.slice(1)) + "\\n");
+process.exit(7);
+' "$@"
+`,
+    "utf8",
+  );
+  chmodSync(node, 0o755);
   const result = spawnSync(WRAPPER, ["source", "show", "owner/repo with space"], {
-    env: { ...sandbox.env, SKM_NPX_STATUS: "7" },
+    env: sandbox.env,
     encoding: "utf8",
   });
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 7);
   assert.equal(
     readFileSync(sandbox.argvLog, "utf8"),
-    '["skills","add","owner/repo with space","--list"]\n',
+    `${JSON.stringify([JS_ENTRY, "source", "show", "owner/repo with space"])}\n`,
   );
 });
 
-test("wrapper reports missing node after creating the config directory", (t) => {
+test("missing-node error names the SKM config directory", (t) => {
   const sandbox = makeSandbox(t);
   rmSync(sandbox.configDir, { recursive: true });
-  assert.equal(existsSync(sandbox.configDir), false);
   const noNodeBin = join(sandbox.root, "no-node-bin");
   mkdirSync(noNodeBin);
   symlinkSync("/usr/bin/dirname", join(noNodeBin, "dirname"));
@@ -31,6 +51,7 @@ test("wrapper reports missing node after creating the config directory", (t) => 
     encoding: "utf8",
   });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /node is required to read and update/);
+  assert.match(result.stderr, /node is required to manage .*\/skm/);
+  assert.doesNotMatch(result.stderr, /list\.json/);
   assert.equal(existsSync(sandbox.configDir), true);
 });

@@ -8,9 +8,9 @@ if ! mkdir -p "$CONFIG_DIR"; then
   exit 1
 fi
 
-SKILLS_FILE="$CONFIG_DIR/skm/list.json"
+SKM_CONFIG_DIR="$CONFIG_DIR/skm"
 if ! command -v node >/dev/null 2>&1; then
-  print -P "%F{red}❌ node is required to read and update ${SKILLS_FILE}%f" >&2
+  print -P "%F{red}❌ node is required to manage ${SKM_CONFIG_DIR}%f" >&2
   exit 1
 fi
 

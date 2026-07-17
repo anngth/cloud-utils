@@ -1,5 +1,10 @@
 # SKM JavaScript Migration Specification
 
+> **Historical migration contract:** This document describes the completed
+> Zsh-to-JavaScript compatibility migration. The current profile/project
+> redesign is specified in
+> [`2026-07-18-skm-profile-project-management-design.md`](superpowers/specs/2026-07-18-skm-profile-project-management-design.md).
+
 ## 1. Summary
 
 Migrate the `skm` command from `mac_scripts/functions/skills-manager/main.zsh`

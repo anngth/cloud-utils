@@ -56,30 +56,40 @@ Secrets: `VPS_CONFIGS`, `POSTGRES_SOURCES`, `POSTGRES_TARGETS`, `MONGO_SOURCES`,
 
 ## skm
 
-Skills manager implemented as a Node.js CLI, invoked through the `mac_scripts/skm` compatibility wrapper. It stores sources in `$CLOUD_UTILS_CONFIG_DIR/skm/list.json`.
+Profile-based project skill manager. Configuration lives in
+`$CLOUD_UTILS_CONFIG_DIR/skm/profiles.json` and `projects.json`.
 
 ```bash
 skm
-skm ls
-skm list
-skm add <source...>
-skm remove <source...>
-skm rm <source...>
-skm show
-skm show <source>
-skm help
-skm -h
-skm --help
+skm profile list
+skm profile create frontend-project
+skm source add vercel-labs/agent-skills --profile frontend-project
+skm project link frontend-project code-review
+skm status
+skm install
+skm install frontend-project --yes
+skm uninstall frontend-project
+skm uninstall frontend-project --keep-link
 ```
 
-| Command | Description |
-|---------|-------------|
-| `skm` | Interactive: Space toggle, Enter install, `q` cancel |
-| `skm ls` / `list` | Saved sources |
-| `skm add` | Add sources (skips duplicates) |
-| `skm remove` / `rm` | Remove sources |
-| `skm show` | Pick source or pass name directly |
-| `skm help` / `-h` / `--help` | Show command help |
+| Family | Supported commands |
+| --- | --- |
+| Profile | `profile list`, `show`, `create`, `rename`, `remove [--force]` |
+| Source | `source add`, `edit`, `remove`, `show` |
+| Skill | `skill add`, `remove` |
+| Project | `project link`, `unlink`, `show`, `list`, `remove` |
+| Lifecycle | `status`, `install`, `uninstall` |
+
+| Flag | Meaning |
+| --- | --- |
+| `-p`, `--profile` | Select the profile changed by a source or skill command |
+| `--skill` | Select an explicit source skill; repeat for multiple skills |
+| `--all` | Snapshot every currently discovered skill into one profile source |
+| `--no-skills` | Save a source with an empty skill selection |
+| `--yes` | Skip SKM and upstream confirmation prompts |
+| `--force` | Permit explicit mismatch or untracked replacement/removal |
+| `--dry-run` | Render a lifecycle plan without mutation |
+| `--keep-link` | Uninstall files without unlinking the selected profile |
 
 ## gt
 

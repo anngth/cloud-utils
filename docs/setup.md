@@ -67,16 +67,18 @@ Layout:
 ├── dbt/
 │   └── secrets
 └── skm/
-    └── list.json
+    ├── profiles.json
+    └── projects.json
 ```
 
 | Tool  | Config                              | Template in repo                                         |
 | ----- | ----------------------------------- | -------------------------------------------------------- |
 | `bud` | `bud/casks.txt`, `bud/formulas.txt`, `bud/taps.txt` | `mac_scripts/functions/brew-desired-update/*.example`    |
-| `skm` | `skm/list.json`                     | `mac_scripts/functions/skills-manager/list.json.example` |
+| `skm` | `skm/profiles.json`, `skm/projects.json` | Created automatically                                |
 | `dbt` | `dbt/secrets`                       | `mac_scripts/functions/db-tools/secrets.example`         |
 
 On first run, tools bootstrap missing files from legacy paths or `*.example`.
+For SKM, an existing `skm/list.json` is migrated once and retained unchanged.
 
 Optional:
 
