@@ -234,6 +234,9 @@ export function writeConfigTransaction(paths, { profiles, projects }, {
   fs = defaultFs,
   pid = process.pid,
 } = {}) {
+  if (!Number.isSafeInteger(pid) || pid < 0) {
+    throw new ConfigFileError("Invalid transaction identifier");
+  }
   const validProfiles = validateProfilesDocument(profiles);
   const profileNames = new Set(validProfiles.profiles.map((item) => item.name));
   const validProjects = validateProjectsDocument(projects, profileNames);

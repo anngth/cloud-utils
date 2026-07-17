@@ -135,6 +135,52 @@ test("writes and cleans up a complete cross-file transaction", (t) => {
   }
 });
 
+function assertTransactionIdRejectedBeforeMutation(t, pid) {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  const documents = readConfig(paths);
+  const beforeProfiles = readFileSync(paths.profilesFile);
+  const beforeProjects = readFileSync(paths.projectsFile);
+  const mutations = [];
+  const rejectMutation = (operation) => (...args) => {
+    mutations.push([operation, ...args]);
+    throw new Error(`unexpected ${operation}`);
+  };
+  const fs = {
+    ...realFs,
+    writeFileSync: rejectMutation("writeFileSync"),
+    renameSync: rejectMutation("renameSync"),
+    copyFileSync: rejectMutation("copyFileSync"),
+    rmSync: rejectMutation("rmSync"),
+  };
+  let error;
+  try {
+    writeConfigTransaction(paths, documents, { fs, pid });
+  } catch (cause) {
+    error = cause;
+  }
+
+  assert.deepEqual(mutations, []);
+  assert.ok(error instanceof ConfigFileError);
+  assert.equal(existsSync(paths.transactionFile), false);
+  assert.deepEqual(readFileSync(paths.profilesFile), beforeProfiles);
+  assert.deepEqual(readFileSync(paths.projectsFile), beforeProjects);
+  for (const target of [paths.profilesFile, paths.projectsFile]) {
+    assert.equal(existsSync(`${target}.${pid}.bak`), false);
+    assert.equal(existsSync(`${target}.${pid}.next`), false);
+  }
+}
+
+test("rejects string transaction identifiers before mutation", (t) => {
+  for (const pid of ["test", "1"]) assertTransactionIdRejectedBeforeMutation(t, pid);
+});
+
+test("rejects invalid numeric transaction identifiers before mutation", (t) => {
+  for (const pid of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assertTransactionIdRejectedBeforeMutation(t, pid);
+  }
+});
+
 test("rolls back when saving the profiles-written phase fails", (t) => {
   const sandbox = makeSandbox(t);
   const paths = initializeConfig({ env: sandbox.env });
