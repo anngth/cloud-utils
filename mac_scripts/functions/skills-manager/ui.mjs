@@ -14,11 +14,14 @@ const C = {
 };
 
 const fg = (color, text) => `${color}${text}${C.fgReset}`;
-const pipe = fg(C.cyan, "│");
+const plural = (count, singular, pluralForm = `${singular}s`) => (
+  `${count} ${count === 1 ? singular : pluralForm}`
+);
 
 export function createUi({ stdout = process.stdout, stderr = process.stderr } = {}) {
   const out = (line = "") => stdout.write(`${line}\n`);
   const err = (line) => stderr.write(`${line}\n`);
+  const pipe = fg(C.cyan, "│");
   const title = () => {
     out();
     out(`   ${C.bgCyan}${C.black} SKILLS MANAGER ${C.fgReset}${C.bgReset}`);
@@ -29,110 +32,182 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out(pipe);
   };
   const active = (text) => out(`${fg(C.cyan, "◆")}  ${text}`);
-  const listEnd = () => out(fg(C.cyan, "└"));
+  const item = (text, color = C.green) => out(`${pipe}  ${fg(color, "■")} ${text}`);
+  const listEnd = (text = "") => out(`${fg(C.cyan, "└")}${text ? `  ${text}` : ""}`);
 
   function usage() {
     title();
     step("Usage: skm <command> [args]");
-    active("Available commands");
-    out();
-    out(`${pipe}  ${fg(C.green, "ls")}, ${fg(C.green, "list")}`);
-    out(`${pipe}      Show saved sources from skm/list.json`);
+    active("Profile and project skill management");
     out(pipe);
-    out(`${pipe}  ${fg(C.green, "show")} [source]`);
-    out(`${pipe}      Show available skills; opens a single-select UI without source`);
-    out(pipe);
-    out(`${pipe}  ${fg(C.green, "add")} <source...>`);
-    out(`${pipe}      Add or update saved sources`);
-    out(pipe);
-    out(`${pipe}  ${fg(C.green, "remove")} <source...>`);
-    out(`${pipe}      Remove saved sources`);
+    out(`${pipe}  ${fg(C.green, "profile")} list | show | create | rename | remove`);
+    out(`${pipe}  ${fg(C.green, "source")} add | edit | remove | show`);
+    out(`${pipe}  ${fg(C.green, "skill")} add | remove`);
+    out(`${pipe}      Changes profile recipes; does not change installed project skills`);
+    out(`${pipe}  ${fg(C.green, "project")} link | unlink | show | list | remove`);
+    out(`${pipe}  ${fg(C.green, "status")} [profile...]`);
+    out(`${pipe}  ${fg(C.green, "install")} [profile...]`);
+    out(`${pipe}  ${fg(C.green, "uninstall")} [profile...]`);
     listEnd();
   }
 
-  function list(file, items) {
+  function profileList(value, positionalProjects) {
+    const profiles = Array.isArray(value) ? value : value.profiles;
+    const projects = Array.isArray(value) ? (positionalProjects ?? []) : value.projects;
     title();
-    step(`Source list: ${file}`);
-    step(`Found ${fg(C.green, String(items.length))} sources`);
-    active("Saved sources");
-    if (items.length === 0) {
-      out(`${pipe}  ${fg(C.yellow, "■")} No sources saved`);
-    } else {
-      for (const item of items) out(`${pipe}  ${fg(C.green, "■")} ${item.source}`);
+    step(`Found ${plural(profiles.length, "profile")}`);
+    active("Profiles");
+    if (profiles.length === 0) item("No profiles", C.yellow);
+    for (const profile of profiles) {
+      const sourceCount = profile.sources.length;
+      const skillCount = profile.sources.reduce((count, source) => count + source.skills.length, 0);
+      const linkedCount = projects.filter((project) => project.profiles.includes(profile.name)).length;
+      item(
+        `${profile.name} — ${plural(sourceCount, "source")}, ${plural(skillCount, "skill")}, ${plural(linkedCount, "linked project")}`,
+      );
     }
     listEnd();
   }
 
-  function addResult(file, requestCount, result) {
+  function profileShow(value, positionalProjects) {
+    const profile = value.profile ?? value;
+    const projects = value.profile ? value.projects : (positionalProjects ?? []);
     title();
-    step(`Source list: ${file}`);
-    step(`Add request: ${requestCount} sources`);
-    active("Add sources");
-    for (const item of result.results) {
-      const added = item.status === "added";
-      out(`${pipe}  ${fg(added ? C.green : C.yellow, "■")} ${added ? "Added" : "Already exists"}: ${item.source}`);
+    step(`Profile: ${profile.name}`);
+    const skillCount = profile.sources.reduce((count, source) => count + source.skills.length, 0);
+    step(`${plural(profile.sources.length, "source")}; ${plural(skillCount, "selected skill")}`);
+    active("Sources and selected skills");
+    if (profile.sources.length === 0) item("No sources", C.yellow);
+    for (const source of profile.sources) {
+      item(`${source.source} — ${plural(source.skills.length, "selected skill")}`);
+      for (const skill of source.skills) out(`${pipe}      ${fg(C.gray, "•")} ${skill}`);
     }
-    out(`${fg(C.cyan, "└")}  Added ${result.added} sources, skipped ${result.skipped} existing`);
+    out(pipe);
+    active("Linked projects");
+    if (projects.length === 0) item("No linked projects", C.yellow);
+    for (const project of projects) item(project.root);
+    listEnd();
   }
 
-  function removeResult(file, requestCount, result) {
+  function profileChanged(value, name, extra = {}) {
+    const change = typeof value === "string" ? { action: value, name, ...extra } : value;
     title();
-    step(`Source list: ${file}`);
-    step(`Remove request: ${requestCount} sources`);
-    active("Remove sources");
-    for (const item of result.results) {
-      const removed = item.status === "removed";
-      out(`${pipe}  ${fg(removed ? C.green : C.yellow, "■")} ${removed ? "Removed" : "Not found"}: ${item.source}`);
+    step(`Profile ${change.action}: ${change.oldName ? `${change.oldName} → ` : ""}${change.name}`);
+    if (change.action === "removed") {
+      out(`${pipe}  Configuration changed; installed project skills were not uninstalled`);
     }
-    out(`${fg(C.cyan, "└")}  Removed ${result.removed} sources, skipped ${result.skipped} missing`);
+    listEnd();
   }
 
-  function renderSelector(file, state, { mode, cancelled }) {
+  function sourceChanged(value, profile, source, skills = []) {
+    const change = typeof value === "string"
+      ? { action: value, profile, source, skills }
+      : value;
+    title();
+    step(`Source ${change.action}: ${change.source}`);
+    if (change.profile) step(`Profile: ${change.profile}`);
+    step(`${plural(change.skills?.length ?? 0, "selected skill")}`);
+    if (change.available?.length > 0) {
+      active("Available skills");
+      for (const record of change.available) {
+        item(`${record.name}${record.description ? ` — ${record.description}` : ""}`);
+      }
+    }
+    listEnd();
+  }
+
+  function skillChanged(value, profile, source, skills = [], missing = []) {
+    const change = typeof value === "string"
+      ? { action: value, profile, source, skills, missing }
+      : value;
+    title();
+    step(`Skills ${change.action}: ${plural(change.skills?.length ?? 0, "skill")}`);
+    step(`Profile: ${change.profile}; source: ${change.source}`);
+    for (const name of change.skills ?? []) item(name);
+    if (change.missing?.length > 0) item(`Not selected: ${change.missing.join(", ")}`, C.yellow);
+    out(pipe);
+    out(`${pipe}  This changes the profile definition and does not change installed project skills`);
+    listEnd();
+  }
+
+  function projectShow(value, positionalProfiles) {
+    const project = typeof value === "string"
+      ? { root: value, profiles: positionalProfiles ?? [] }
+      : value;
+    title();
+    step(`Project: ${project.root}`);
+    active("Linked profiles");
+    if (project.profiles.length === 0) item("No linked profiles", C.yellow);
+    for (const name of project.profiles) item(name);
+    listEnd();
+  }
+
+  function projectList(value) {
+    const projects = Array.isArray(value) ? value : value.projects;
+    title();
+    step(`Found ${plural(projects.length, "project")}`);
+    active("Registered projects");
+    if (projects.length === 0) item("No registered projects", C.yellow);
+    for (const project of projects) {
+      const stale = project.stale ? ` ${fg(C.yellow, "(stale root)")}` : "";
+      item(`${project.root}${stale} — ${project.profiles.join(", ") || "no profiles"}`);
+    }
+    listEnd();
+  }
+
+  function projectChanged(value, root, profiles = []) {
+    const change = typeof value === "string" ? { action: value, root, profiles } : value;
+    title();
+    step(`Project ${change.action}: ${change.root}`);
+    if (change.profiles?.length > 0) step(`Profiles: ${change.profiles.join(", ")}`);
+    out(`${pipe}  Configuration changed; installed project skills were not modified`);
+    listEnd();
+  }
+
+  function selector(heading, state, { mode } = {}) {
+    renderSelector(heading, state, { mode, cancelled: false });
+  }
+
+  function cancelledSelector(heading, state, { mode } = {}) {
+    renderSelector(heading, state, { mode, cancelled: true });
+  }
+
+  function renderSelector(heading, state, { mode, cancelled }) {
     stdout.write("\u001b[2J\u001b[H");
     title();
-    step(`Source list: ${file}`);
-    step(`Found ${fg(C.green, String(state.sources.length))} sources`);
-    const install = mode === "install";
-    active(install
-      ? `Select sources to install ${fg(C.white, "(space to toggle, enter to start, q to quit)")}`
-      : `Select source to inspect ${fg(C.white, "(enter to show, q to quit)")}`);
+    const values = state.items ?? state.sources ?? [];
+    step(String(heading));
+    active(mode === "install"
+      ? `Select items ${fg(C.white, "(space to toggle, enter to continue, q to quit)")}`
+      : `Select an item ${fg(C.white, "(enter to continue, q to quit)")}`);
     out(pipe);
-    state.sources.forEach((source, index) => {
-      const selected = install ? state.selected.has(index) : index === state.cursor;
+    values.forEach((entry, index) => {
+      const label = typeof entry === "string" ? entry : entry.label;
+      const hint = typeof entry === "string" ? "" : entry.hint;
+      const selected = mode === "install" ? state.selected.has(index) : index === state.cursor;
       const box = selected ? "■" : "□";
       const boxColor = selected ? C.brightGreen : C.gray;
-      const sourceColor = index === state.cursor ? C.white : C.gray;
-      out(`${pipe}  ${boxColor}${box}${C.reset} ${sourceColor}${source}${C.reset}`);
+      const labelColor = index === state.cursor ? C.white : C.gray;
+      out(`${pipe}  ${boxColor}${box}${C.reset} ${labelColor}${label}${C.reset}${hint ? ` ${fg(C.gray, hint)}` : ""}`);
     });
-    if (cancelled) {
-      out(pipe);
-      const label = install ? "Select sources to install" : "Select source to inspect";
-      out(`${fg(C.cyan, "└")}  ${fg(C.red, `${label} cancelled`)}`);
-    } else {
-      listEnd();
-    }
-  }
-
-  function selector(file, state, { mode }) {
-    renderSelector(file, state, { mode, cancelled: false });
-  }
-
-  function cancelledSelector(file, state, { mode }) {
-    renderSelector(file, state, { mode, cancelled: true });
+    if (cancelled) listEnd(fg(C.red, "Selection cancelled"));
+    else listEnd();
   }
 
   return {
     usage,
-    list,
-    addResult,
-    removeResult,
+    profileList,
+    profileShow,
+    profileChanged,
+    sourceChanged,
+    skillChanged,
+    projectShow,
+    projectList,
+    projectChanged,
     selector,
     cancelledSelector,
-    listEnd,
-    installing(source) { out(`${fg(C.cyan, "▶ Installing source:")} ${source}`); },
-    blank() { out(); },
     error(message) { err(fg(C.red, `❌ ${message}`)); },
     warn(message) { err(fg(C.yellow, `⚠️  ${message}`)); },
-    usageLine(text) { out(text); },
+    info(message) { out(message); },
   };
 }
