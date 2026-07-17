@@ -398,6 +398,64 @@ test("validates transaction journal schema and fields before cleanup", (t) => {
   }
 });
 
+test("rejects unsafe transaction paths without touching any files", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  const hash = (value) => createHash("sha256").update(value).digest("hex");
+  const files = ["profiles", "projects"].map((name) => {
+    const target = `${sandbox.root}/sentinel-${name}`;
+    const backup = `${target}.5050.bak`;
+    const next = `${target}.5050.next`;
+    const before = `sentinel ${name} backup`;
+    const after = `sentinel ${name} next`;
+    writeFileSync(target, `sentinel ${name} target`, "utf8");
+    writeFileSync(backup, before, "utf8");
+    writeFileSync(next, after, "utf8");
+    return {
+      target,
+      backup,
+      next,
+      beforeHash: hash(before),
+      nextHash: hash(after),
+    };
+  });
+  writeFileSync(paths.transactionFile, `${JSON.stringify({
+    version: 1,
+    phase: "prepared",
+    files,
+  }, null, 2)}\n`, "utf8");
+  const watchedPaths = [
+    paths.profilesFile,
+    paths.projectsFile,
+    paths.transactionFile,
+    ...files.flatMap(({ target, backup, next }) => [target, backup, next]),
+  ];
+  const before = new Map(watchedPaths.map((filePath) => [
+    filePath,
+    readFileSync(filePath),
+  ]));
+  const copies = [];
+  const removals = [];
+  const fs = {
+    ...realFs,
+    copyFileSync(from, to) {
+      copies.push([from, to]);
+      realFs.copyFileSync(from, to);
+    },
+    rmSync(filePath, options) {
+      removals.push([filePath, options]);
+      realFs.rmSync(filePath, options);
+    },
+  };
+
+  assert.throws(() => recoverConfigTransaction(paths, { fs }), ConfigFileError);
+  assert.deepEqual(copies, []);
+  assert.deepEqual(removals, []);
+  for (const filePath of watchedPaths) {
+    assert.deepEqual(readFileSync(filePath), before.get(filePath));
+  }
+});
+
 test("defaultConfigDir uses HOME without os.homedir fallback", () => {
   assert.equal(
     defaultConfigDir({ HOME: "/Users/test" }),

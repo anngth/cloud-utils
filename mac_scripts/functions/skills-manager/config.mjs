@@ -110,7 +110,8 @@ function hashFile(filePath, fs) {
   return sha256(fs.readFileSync(filePath));
 }
 
-function readAndValidateJournal(filePath, fs) {
+function readAndValidateJournal(paths, fs) {
+  const filePath = paths.transactionFile;
   let value;
   try {
     value = JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -132,6 +133,26 @@ function readAndValidateJournal(filePath, fs) {
       }
     }
   }
+  const expectedTargets = new Set([paths.profilesFile, paths.projectsFile]);
+  const transactionIds = new Set();
+  for (const item of value.files) {
+    if (!expectedTargets.delete(item.target)) {
+      throw new ConfigFileError(`Invalid transaction journal target: ${item.target}`);
+    }
+    const backupPrefix = `${item.target}.`;
+    const backupSuffix = ".bak";
+    if (!item.backup.startsWith(backupPrefix) || !item.backup.endsWith(backupSuffix)) {
+      throw new ConfigFileError(`Invalid transaction journal backup: ${item.backup}`);
+    }
+    const transactionId = item.backup.slice(backupPrefix.length, -backupSuffix.length);
+    if (!/^\d+$/.test(transactionId) || item.next !== `${item.target}.${transactionId}.next`) {
+      throw new ConfigFileError(`Invalid transaction journal artifacts: ${item.target}`);
+    }
+    transactionIds.add(transactionId);
+  }
+  if (expectedTargets.size !== 0 || transactionIds.size !== 1) {
+    throw new ConfigFileError(`Invalid transaction journal paths: ${filePath}`);
+  }
   return value;
 }
 
@@ -145,7 +166,7 @@ function cleanupTransaction(journal, journalPath, fs) {
 
 export function recoverConfigTransaction(paths, { fs = defaultFs } = {}) {
   if (!fs.existsSync(paths.transactionFile)) return;
-  const journal = readAndValidateJournal(paths.transactionFile, fs);
+  const journal = readAndValidateJournal(paths, fs);
   const bothNext = journal.files.every((item) => hashFile(item.target, fs) === item.nextHash);
   if (journal.phase === "targets-written" && bothNext) {
     cleanupTransaction(journal, paths.transactionFile, fs);
