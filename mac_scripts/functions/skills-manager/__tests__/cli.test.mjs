@@ -230,7 +230,7 @@ test("empty install selection warns and exits one", async (t) => {
 });
 
 test("invalid usage does not normalize while interactive show normalizes before TTY validation", async (t) => {
-  const sandbox = makeSandbox(t);
+  const sandbox = makeSandbox(t, { list: [] });
   rmSync(sandbox.skillsFile);
   const managerDir = `${sandbox.root}/manager-without-example`;
   const stdout = new PassThrough();
@@ -254,16 +254,21 @@ test("invalid usage does not normalize while interactive show normalizes before 
   assert.equal(readFileSync(sandbox.skillsFile, "utf8"), "[]\n");
 });
 
-test("help bootstraps before dispatch without checking npx", async (t) => {
-  const sandbox = makeSandbox(t);
-  rmSync(sandbox.skillsFile);
-  writeFileSync(`${sandbox.root}/list.json.example`, '[{"source":"example/repo"}]\n');
+test("help bootstraps new documents before dispatch without checking npx", async (t) => {
+  const sandbox = makeSandbox(t, { createProfiles: false, createProjects: false });
   const status = await runCli(["--help"], {
     env: { ...sandbox.env, PATH: sandbox.root },
-    managerDir: sandbox.root,
     stdout: new PassThrough(),
     stderr: new PassThrough(),
   });
   assert.equal(status, 0);
-  assert.equal(readFileSync(sandbox.skillsFile, "utf8"), '[{"source":"example/repo"}]\n');
+  assert.deepEqual(JSON.parse(readFileSync(sandbox.profilesFile, "utf8")), {
+    version: 1,
+    profiles: [{ name: "default", sources: [] }],
+  });
+  assert.deepEqual(JSON.parse(readFileSync(sandbox.projectsFile, "utf8")), {
+    version: 1,
+    projects: [],
+  });
+  assert.equal(existsSync(sandbox.legacyFile), false);
 });

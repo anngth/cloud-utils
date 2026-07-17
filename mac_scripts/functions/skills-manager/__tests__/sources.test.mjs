@@ -83,7 +83,7 @@ test("a modifying write drops legacy top-level fields and keeps item fields", (t
 });
 
 test("failed atomic rename keeps original bytes and cleans its own temp file", (t) => {
-  const sandbox = makeSandbox(t);
+  const sandbox = makeSandbox(t, { list: [] });
   const before = readFileSync(sandbox.skillsFile, "utf8");
   const fs = {
     ...realFs,
@@ -99,7 +99,7 @@ test("failed atomic rename keeps original bytes and cleans its own temp file", (
 });
 
 test("serialization failure leaves the original untouched", (t) => {
-  const sandbox = makeSandbox(t);
+  const sandbox = makeSandbox(t, { list: [] });
   const before = readFileSync(sandbox.skillsFile, "utf8");
   const circular = { source: "a/one" };
   circular.self = circular;
@@ -109,7 +109,7 @@ test("serialization failure leaves the original untouched", (t) => {
 });
 
 test("temporary-file write failure leaves the original untouched", (t) => {
-  const sandbox = makeSandbox(t);
+  const sandbox = makeSandbox(t, { list: [] });
   const before = readFileSync(sandbox.skillsFile, "utf8");
   const fs = {
     ...realFs,
