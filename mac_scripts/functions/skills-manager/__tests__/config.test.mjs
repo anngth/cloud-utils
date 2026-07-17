@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import test from "node:test";
 import { makeSandbox } from "./helpers.mjs";
-import { bootstrapFile, defaultConfigDir, initializeConfig } from "../config.mjs";
+import {
+  ConfigFileError,
+  EMPTY_PROFILES,
+  EMPTY_PROJECTS,
+  defaultConfigDir,
+  initializeConfig,
+  readConfig,
+  recoverConfigTransaction,
+  writeJsonAtomic,
+  writeProfiles,
+  writeProjects,
+} from "../config.mjs";
 
 test("defaultConfigDir uses HOME without os.homedir fallback", () => {
   assert.equal(
@@ -16,70 +26,110 @@ test("defaultConfigDir uses HOME without os.homedir fallback", () => {
   );
 });
 
-test("bootstrapFile prefers legacy and never overwrites destination", (t) => {
-  const sandbox = makeSandbox(t);
-  const dest = join(sandbox.root, "dest/list.json");
-  const example = join(sandbox.root, "example.json");
-  const legacy = join(sandbox.root, "legacy.json");
-  const writes = [];
-  writeFileSync(example, "[]\n");
-  writeFileSync(legacy, '[{"source":"legacy/repo"}]\n');
-
-  assert.equal(bootstrapFile({ dest, example, legacy, stderr: { write: (s) => writes.push(s) } }), true);
-  assert.equal(readFileSync(dest, "utf8"), '[{"source":"legacy/repo"}]\n');
-  assert.match(writes.join(""), /Migrated list\.json/);
-
-  writeFileSync(legacy, '[{"source":"changed/repo"}]\n');
-  assert.equal(bootstrapFile({ dest, example, legacy }), true);
-  assert.equal(readFileSync(dest, "utf8"), '[{"source":"legacy/repo"}]\n');
+test("creates one empty profile and an empty project registry when fresh", (t) => {
+  const sandbox = makeSandbox(t, { createProfiles: false, createProjects: false });
+  initializeConfig({ env: sandbox.env });
+  assert.deepEqual(JSON.parse(readFileSync(sandbox.profilesFile, "utf8")), EMPTY_PROFILES);
+  assert.deepEqual(JSON.parse(readFileSync(sandbox.projectsFile, "utf8")), EMPTY_PROJECTS);
 });
 
-test("bootstrapFile silently falls back to the example", (t) => {
-  const sandbox = makeSandbox(t);
-  const dest = join(sandbox.root, "example-dest/list.json");
-  const example = join(sandbox.root, "example-only.json");
-  const writes = [];
-  writeFileSync(example, '[{"source":"example/repo"}]\n');
-  assert.equal(bootstrapFile({
-    dest,
-    example,
-    legacy: join(sandbox.root, "absent.json"),
-    stderr: { write: (value) => writes.push(value) },
-  }), true);
-  assert.equal(readFileSync(dest, "utf8"), '[{"source":"example/repo"}]\n');
-  assert.deepEqual(writes, []);
-});
-
-test("initializeConfig performs the second legacy attempt when first pass creates nothing", (t) => {
-  const sandbox = makeSandbox(t);
-  const managerDir = join(sandbox.root, "manager");
-  const configDir = join(sandbox.root, "config-two");
-  mkdirSync(join(configDir, "skills"), { recursive: true });
-  writeFileSync(join(configDir, "skills/list.json"), '[{"source":"old/repo"}]\n');
-
-  const result = initializeConfig({
-    env: { CLOUD_UTILS_CONFIG_DIR: configDir, HOME: sandbox.env.HOME },
-    managerDir,
-    stderr: { write() {} },
+test("migrates legacy sources without selecting skills or linking a project", (t) => {
+  const sandbox = makeSandbox(t, {
+    createProfiles: false,
+    createProjects: false,
+    legacyList: [{ source: "b/repo" }, { source: "a/repo" }],
   });
-
-  assert.equal(result.skillsFile, join(configDir, "skm/list.json"));
-  assert.equal(readFileSync(result.skillsFile, "utf8"), '[{"source":"old/repo"}]\n');
-  assert.equal(existsSync(join(configDir, "skills/list.json")), true);
+  initializeConfig({ env: sandbox.env });
+  const data = JSON.parse(readFileSync(sandbox.profilesFile, "utf8"));
+  assert.deepEqual(data.profiles[0].sources, [
+    { source: "a/repo", skills: [] },
+    { source: "b/repo", skills: [] },
+  ]);
+  assert.equal(existsSync(sandbox.legacyFile), true);
+  assert.deepEqual(JSON.parse(readFileSync(sandbox.projectsFile, "utf8")), EMPTY_PROJECTS);
 });
 
-test("initializeConfig propagates config directory creation failure", () => {
-  const failure = new Error("mkdir denied");
+test("migrates legacy presets and canonicalizes duplicate source identities", (t) => {
+  const sandbox = makeSandbox(t, {
+    createProfiles: false,
+    createProjects: false,
+    legacyList: { presets: [
+      { source: "https://github.com/acme/skills.git" },
+      { source: "acme/skills" },
+    ] },
+  });
+  initializeConfig({ env: sandbox.env });
+  assert.deepEqual(readConfig(initializeConfig({ env: sandbox.env })).profiles.profiles[0].sources, [
+    { source: "acme/skills", skills: [] },
+  ]);
+});
+
+test("refuses projects.json without profiles.json", (t) => {
+  const sandbox = makeSandbox(t, { createProfiles: false });
+  assert.throws(() => initializeConfig({ env: sandbox.env }), /profiles\.json.*missing/i);
+});
+
+test("invalid JSON is byte preserving", (t) => {
+  const sandbox = makeSandbox(t);
+  writeFileSync(sandbox.profilesFile, "{broken", "utf8");
+  assert.throws(() => readConfig(initializeConfig({ env: sandbox.env })), ConfigFileError);
+  assert.equal(readFileSync(sandbox.profilesFile, "utf8"), "{broken");
+});
+
+test("invalid legacy JSON leaves both new documents absent", (t) => {
+  const sandbox = makeSandbox(t, { createProfiles: false, createProjects: false });
+  writeFileSync(sandbox.legacyFile, "{broken", "utf8");
+  assert.throws(() => initializeConfig({ env: sandbox.env }), ConfigFileError);
+  assert.equal(readFileSync(sandbox.legacyFile, "utf8"), "{broken");
+  assert.equal(existsSync(sandbox.profilesFile), false);
+  assert.equal(existsSync(sandbox.projectsFile), false);
+});
+
+test("returns the legacy file only as a compatibility alias", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  assert.equal(paths.skillsFile, sandbox.legacyFile);
+  assert.equal(paths.transactionFile, sandbox.transactionFile);
+});
+
+test("refuses to proceed while a transaction file requires recovery", (t) => {
+  const sandbox = makeSandbox(t);
+  writeFileSync(sandbox.transactionFile, "{}\n", "utf8");
   assert.throws(
-    () => initializeConfig({
-      env: { CLOUD_UTILS_CONFIG_DIR: "/denied" },
-      managerDir: "/manager",
-      fs: {
-        copyFileSync() {},
-        existsSync() { return false; },
-        mkdirSync() { throw failure; },
-      },
-    }),
-    failure,
+    () => recoverConfigTransaction(initializeConfig({ env: sandbox.env })),
+    ConfigFileError,
   );
+});
+
+test("writes a JSON document atomically and cleans up its temporary file after a failure", (t) => {
+  const sandbox = makeSandbox(t);
+  const file = sandbox.profilesFile;
+  const writes = [];
+  const fs = {
+    writeFileSync(path, value) { writes.push([path, value]); },
+    renameSync() { throw new Error("rename failed"); },
+    rmSync(path, options) { writes.push([path, options]); },
+  };
+  assert.throws(() => writeJsonAtomic(file, { version: 1 }, { fs, pid: 42 }), /rename failed/);
+  assert.deepEqual(writes, [
+    [`${file}.42.tmp`, '{\n  "version": 1\n}\n'],
+    [`${file}.42.tmp`, { force: true }],
+  ]);
+});
+
+test("validates documents before writing profiles and projects", (t) => {
+  const sandbox = makeSandbox(t);
+  const paths = initializeConfig({ env: sandbox.env });
+  writeProfiles(paths, {
+    version: 1,
+    profiles: [{ name: "z", sources: [] }, { name: "a", sources: [] }],
+  });
+  writeProjects(paths, readConfig(paths).profiles, {
+    version: 1,
+    projects: [{ root: "/repo", profiles: ["a"] }],
+  });
+  assert.deepEqual(readConfig(paths), {
+    profiles: { version: 1, profiles: [{ name: "a", sources: [] }, { name: "z", sources: [] }] },
+    projects: { version: 1, projects: [{ root: "/repo", profiles: ["a"] }] },
+  });
 });

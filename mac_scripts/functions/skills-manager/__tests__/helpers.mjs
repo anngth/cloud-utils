@@ -15,16 +15,32 @@ function executable(path, body) {
   chmodSync(path, 0o755);
 }
 
-export function makeSandbox(t, { list = [] } = {}) {
+export function makeSandbox(t, {
+  profiles = { version: 1, profiles: [{ name: "default", sources: [] }] },
+  projects = { version: 1, projects: [] },
+  legacyList,
+  list = [],
+  createProfiles = true,
+  createProjects = true,
+} = {}) {
   const root = mkdtempSync(join(tmpdir(), "skm-test-"));
   const configDir = join(root, "config");
   const binDir = join(root, "bin");
-  const skillsDir = join(configDir, "skm");
-  const skillsFile = join(skillsDir, "list.json");
+  const skmDir = join(configDir, "skm");
+  const profilesFile = join(skmDir, "profiles.json");
+  const projectsFile = join(skmDir, "projects.json");
+  const legacyFile = join(skmDir, "list.json");
+  const transactionFile = join(skmDir, ".transaction.json");
+  const skillsFile = legacyFile;
   const argvLog = join(root, "npx-argv.jsonl");
-  mkdirSync(skillsDir, { recursive: true });
+  mkdirSync(skmDir, { recursive: true });
   mkdirSync(binDir, { recursive: true });
-  writeFileSync(skillsFile, `${JSON.stringify(list, null, 2)}\n`, "utf8");
+  if (createProfiles) writeFileSync(profilesFile, `${JSON.stringify(profiles, null, 2)}\n`);
+  if (createProjects) writeFileSync(projectsFile, `${JSON.stringify(projects, null, 2)}\n`);
+  const selectedLegacy = legacyList ?? list;
+  if (selectedLegacy !== undefined) {
+    writeFileSync(legacyFile, `${JSON.stringify(selectedLegacy, null, 2)}\n`);
+  }
 
   executable(
     join(binDir, "node"),
@@ -43,6 +59,11 @@ process.exit(Number(process.env.SKM_NPX_STATUS || 0));
   const sandbox = {
     root,
     configDir,
+    skmDir,
+    profilesFile,
+    projectsFile,
+    legacyFile,
+    transactionFile,
     skillsFile,
     binDir,
     argvLog,
