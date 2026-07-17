@@ -103,14 +103,14 @@ send -- "\r"
 expect_exact "__SKM_SHELL_READY__" "shell-ready"
 expect_exact "__SKM_PROMPT__ " "initial-prompt"
 
-send -- {stty -pendin; baseline=$(stty -g); print -r -- "__SKM_"BASELINE__:$baseline; "$SKM_TEST_NODE" "$SKM_TEST_CLI" show}
+send -- {stty -pendin; baseline=$(stty -g); print -r -- "__SKM_"BASELINE__:$baseline; "$SKM_TEST_NODE" "$SKM_TEST_CLI"}
 send -- "\r"
 expect {
   -re {__SKM_BASELINE__:([^\r\n]+)} { set baseline $expect_out(1,string) }
   timeout { fail "baseline:timeout" }
   eof { fail "baseline:eof" }
 }
-expect_exact "Select source to inspect" "initial-selector"
+expect_exact "Actions" "initial-selector"
 
 send -raw -- "\032"
 expect {
@@ -139,12 +139,11 @@ expect_exact "__SKM_PROMPT__ " "stopped-state-prompt"
 
 send -- {fg; skm_status=$?; print -r -- "__SKM_"STATUS__:$skm_status}
 send -- "\r"
-expect_exact "Select source to inspect" "resumed-selector"
+expect_exact "Actions" "resumed-selector"
 puts "__SKM_RESUMED_SELECTOR__"
 
 # A bare q reaches the CLI without Enter only after raw mode is restored.
 send -raw -- "q"
-expect_exact "Select source to inspect cancelled" "cancelled"
 puts "__SKM_RESUMED_RAW_Q__"
 expect {
   -re {__SKM_STATUS__:([0-9]+)} { set status $expect_out(1,string) }
@@ -206,12 +205,26 @@ function waitForRelease(filePath) {
   });
 }
 
-writeFileSync(process.env.SKM_NPX_TTY_STATE, stty(["-g"]).trim() + "\n", "utf8");
-writeFileSync(process.env.SKM_NPX_TTY_DETAIL, stty(["-a"]), "utf8");
-writeFileSync(process.env.SKM_ARGV_LOG, JSON.stringify(process.argv.slice(2)) + "\n", "utf8");
-process.stdout.write("__SKM_NPX_READY__\n");
-await waitForRelease(process.env.SKM_NPX_RELEASE);
+const args = process.argv.slice(2);
+if (JSON.stringify(args) === JSON.stringify(["skills", "list", "--json"])) {
+  process.stdout.write("[]\n");
+} else {
+  writeFileSync(process.env.SKM_NPX_TTY_STATE, stty(["-g"]).trim() + "\n", "utf8");
+  writeFileSync(process.env.SKM_NPX_TTY_DETAIL, stty(["-a"]), "utf8");
+  writeFileSync(process.env.SKM_ARGV_LOG, JSON.stringify(args) + "\n", "utf8");
+  process.stdout.write("__SKM_NPX_READY__\n");
+  await waitForRelease(process.env.SKM_NPX_RELEASE);
+}
 `;
+
+const TEST_PROFILES = {
+  version: 1,
+  profiles: [{
+    name: "frontend",
+    sources: [{ source: "a/one", skills: ["frontend-design"] }],
+  }],
+};
+const TEST_PROJECTS = { version: 1, projects: [] };
 
 function decodeSnapshot(encoded) {
   return JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
@@ -400,7 +413,7 @@ async function finishAndAssertRestored(session, before) {
 }
 
 test("foreground shell Ctrl+Z, fg, and q preserve terminal job control", { skip: !hasMacOsPtyTools }, (t) => {
-  const sandbox = makeSandbox(t, { list: [{ source: "a/one" }] });
+  const sandbox = makeSandbox(t, { profiles: TEST_PROFILES, projects: TEST_PROJECTS });
   const expectScript = join(sandbox.root, "foreground-job.exp");
   writeFileSync(expectScript, FOREGROUND_JOB_EXPECT_SOURCE, "utf8");
   const result = spawnSync(EXPECT, [expectScript], {
@@ -423,38 +436,44 @@ test("foreground shell Ctrl+Z, fg, and q preserve terminal job control", { skip:
   assert.match(result.stdout, /__SKM_STOPPED_DETAIL_BEGIN__[\s\S]*\bicanon\b[\s\S]*__SKM_STOPPED_DETAIL_END__/);
   assert.match(result.stdout, /__SKM_RESUMED_SELECTOR__/);
   assert.match(result.stdout, /__SKM_RESUMED_RAW_Q__/);
-  assert.match(result.stdout, /Select source to inspect cancelled/);
   assert.match(result.stdout, /__SKM_STATUS__:0/);
   assert.match(result.stdout, /__SKM_FINAL__:[^\r\n]+/);
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /unsettled top-level await/i);
 });
 
-test("q cancels install selector and restores terminal state", { skip: !hasMacOsPtyTools }, async (t) => {
-  const sandbox = makeSandbox(t, { list: [{ source: "a/one" }] });
-  const { session, before } = await readySession(t, [], sandbox, "Select sources to install");
+test("q cancels dashboard and restores terminal state", { skip: !hasMacOsPtyTools }, async (t) => {
+  const sandbox = makeSandbox(t, { profiles: TEST_PROFILES, projects: TEST_PROJECTS });
+  const { session, before } = await readySession(t, [], sandbox, "Actions");
   session.input("q");
   const result = await finishAndAssertRestored(session, before);
   assert.deepEqual(result.childExit, { status: 0, signal: null });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /Select sources to install cancelled/);
+  assert.match(result.stdout, /Project:/);
 });
 
-test("raw Ctrl+C cancels show selector and restores terminal state", { skip: !hasMacOsPtyTools }, async (t) => {
-  const sandbox = makeSandbox(t, { list: [{ source: "a/one" }] });
-  const { session, before } = await readySession(t, ["show"], sandbox, "Select source to inspect");
+test("raw Ctrl+C cancels a profile selector and restores terminal state", { skip: !hasMacOsPtyTools }, async (t) => {
+  const sandbox = makeSandbox(t, { profiles: TEST_PROFILES, projects: TEST_PROJECTS });
+  const { session, before } = await readySession(
+    t,
+    ["source", "add", "b/two", "--no-skills"],
+    sandbox,
+    "Select a profile",
+  );
   session.input("\u0003");
   const result = await finishAndAssertRestored(session, before);
   assert.deepEqual(result.childExit, { status: 0, signal: null });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /Select source to inspect cancelled/);
+  assert.match(result.stdout, /Selection cancelled/);
 });
 
 test("Enter restores terminal input before the child inherits stdio", { skip: !hasMacOsPtyTools }, async (t) => {
-  const sandbox = makeSandbox(t, { list: [{ source: "a/one" }] });
+  const sandbox = makeSandbox(t, { profiles: TEST_PROFILES, projects: TEST_PROJECTS });
   const heldNpx = installHeldNpx(sandbox);
-  const { session, before } = await readySession(t, ["show"], sandbox, "Select source to inspect");
+  const { session, before } = await readySession(t, ["install", "frontend"], sandbox, "Select items");
   const beforeEnter = session.stdout.length;
   try {
+    session.input(" \r");
+    await session.waitForText("Apply this install plan?", { from: beforeEnter });
     session.input("\r");
     await session.waitForText("__SKM_NPX_READY__", { from: beforeEnter });
     const inherited = {
@@ -476,14 +495,14 @@ test("Enter restores terminal input before the child inherits stdio", { skip: !h
   assert.equal(result.status, 0);
   assert.equal(
     readFileSync(sandbox.argvLog, "utf8"),
-    '["skills","add","a/one","--list"]\n',
+    '["skills","add","a/one","--skill","frontend-design"]\n',
   );
 });
 
 for (const signal of ["SIGTERM", "SIGHUP"]) {
   test(`${signal} restores terminal state before signal termination`, { skip: !hasMacOsPtyTools }, async (t) => {
-    const sandbox = makeSandbox(t, { list: [{ source: "a/one" }] });
-    const { session, before } = await readySession(t, ["show"], sandbox, "Select source to inspect");
+    const sandbox = makeSandbox(t, { profiles: TEST_PROFILES, projects: TEST_PROJECTS });
+    const { session, before } = await readySession(t, [], sandbox, "Actions");
     session.signalCli(signal);
     const result = await finishAndAssertRestored(session, before);
     assert.deepEqual(result.childExit, { status: null, signal });

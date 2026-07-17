@@ -51,6 +51,25 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     listEnd();
   }
 
+  function dashboard({ projectRoot, linkedProfiles, actions, state }) {
+    stdout.write("\u001b[2J\u001b[H");
+    title();
+    step(`Project: ${projectRoot}`);
+    active("Linked profiles");
+    if (linkedProfiles.length === 0) item("No linked profiles", C.yellow);
+    else item(linkedProfiles.join(", "));
+    out(pipe);
+    active(`Actions ${fg(C.white, "(enter to continue, q to quit)")}`);
+    out(pipe);
+    const cursor = state?.cursor ?? 0;
+    actions.forEach((action, index) => {
+      const marker = index === cursor ? "◆" : "◇";
+      const color = index === cursor ? C.brightGreen : C.gray;
+      out(`${pipe}  ${fg(color, marker)} ${fg(index === cursor ? C.white : C.gray, action.label)}`);
+    });
+    listEnd();
+  }
+
   function profileList(value, positionalProjects) {
     const profiles = Array.isArray(value) ? value : value.profiles;
     const projects = Array.isArray(value) ? (positionalProjects ?? []) : value.projects;
@@ -301,7 +320,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   function renderSelector(heading, state, { mode, cancelled }) {
     stdout.write("\u001b[2J\u001b[H");
     title();
-    const values = state.items ?? state.sources ?? [];
+    const values = state.items;
     step(String(heading));
     active(mode === "install"
       ? `Select items ${fg(C.white, "(space to toggle, enter to continue, q to quit)")}`
@@ -322,6 +341,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
 
   return {
     usage,
+    dashboard,
     profileList,
     profileShow,
     profileChanged,

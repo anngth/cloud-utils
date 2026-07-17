@@ -199,7 +199,7 @@ export function initializeConfig({
   fs.mkdirSync(skmDir, { recursive: true });
   recoverConfigTransaction(paths, { fs, pid });
   bootstrapDocuments(paths, { fs, pid });
-  return { ...paths, skillsFile: paths.legacyFile };
+  return paths;
 }
 
 export function readConfig(paths, { fs = defaultFs } = {}) {

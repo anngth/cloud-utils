@@ -1,7 +1,7 @@
 const SUSPEND_KEEPALIVE_DELAY = 2_147_483_647;
 
-export function createSelectorState(sources) {
-  return { sources: [...sources], cursor: 0, selected: new Set() };
+export function createSelectorState(items) {
+  return { items: items.map((item) => ({ ...item })), cursor: 0, selected: new Set() };
 }
 
 export function decodeKeys(buffer) {
@@ -43,12 +43,12 @@ export function createKeyDecoder() {
 
 export function reduceSelector(state, key, { multiple }) {
   const next = {
-    sources: state.sources,
+    items: state.items,
     cursor: state.cursor,
     selected: new Set(state.selected),
   };
   if (key === "up") next.cursor = Math.max(0, next.cursor - 1);
-  if (key === "down") next.cursor = Math.min(next.sources.length - 1, next.cursor + 1);
+  if (key === "down") next.cursor = Math.min(next.items.length - 1, next.cursor + 1);
   if (key === "toggle" && multiple) {
     if (next.selected.has(next.cursor)) next.selected.delete(next.cursor);
     else next.selected.add(next.cursor);
@@ -56,13 +56,14 @@ export function reduceSelector(state, key, { multiple }) {
   if (key === "cancel") return { type: "cancel", state: next, selected: [] };
   if (key === "submit") {
     const indexes = multiple ? [...next.selected].sort((a, b) => a - b) : [next.cursor];
-    return { type: "submit", state: next, selected: indexes.map((index) => next.sources[index]) };
+    return { type: "submit", state: next, selected: indexes.map((index) => next.items[index].value) };
   }
   return { type: "continue", state: next, selected: [] };
 }
 
 export function runSelector({
-  sources,
+  items,
+  initial = [],
   multiple,
   input = process.stdin,
   render,
@@ -71,7 +72,11 @@ export function runSelector({
   clearIntervalImpl = clearInterval,
 }) {
   return new Promise((resolve, reject) => {
-    let state = createSelectorState(sources);
+    let state = createSelectorState(items);
+    const initialValues = new Set(initial);
+    state.selected = new Set(state.items.flatMap((item, index) => (
+      initialValues.has(item.value) ? [index] : []
+    )));
     let active = true;
     let suspended = false;
     let suspensionKeepalive;

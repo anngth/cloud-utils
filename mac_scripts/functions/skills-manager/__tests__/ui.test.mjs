@@ -17,6 +17,7 @@ test("management UI exposes the complete renderer surface", () => {
   const { ui } = makeUi();
   for (const name of [
     "usage",
+    "dashboard",
     "profileList",
     "profileShow",
     "profileChanged",
@@ -293,14 +294,33 @@ test("usage documents management families and the non-installing skill boundary"
   assert.match(rendered, /does not change installed project skills/);
 });
 
+test("dashboard renders the current project, linked profiles, and actions", () => {
+  const { stdout, ui } = makeUi();
+  ui.dashboard({
+    projectRoot: "/repo/app",
+    linkedProfiles: ["frontend", "quality"],
+    actions: [
+      { value: "install-linked", label: "Install linked profiles" },
+      { value: "exit", label: "Exit" },
+    ],
+  });
+  const rendered = stdout.read();
+  for (const text of ["/repo/app", "frontend, quality", "Install linked profiles", "Exit"]) {
+    assert.match(rendered, new RegExp(text.replace("/", "\\/")));
+  }
+});
+
 test("selector keeps ANSI output and renders selected items", () => {
   const { stdout, ui } = makeUi();
   ui.selector("Choose profiles", {
-    sources: ["frontend", "review"],
+    items: [
+      { value: "frontend", label: "Frontend" },
+      { value: "review", label: "Review" },
+    ],
     cursor: 1,
     selected: new Set([0]),
   }, { mode: "install" });
   assert.match(stdout.read(), /\u001b\[46m/);
-  assert.match(stdout.read(), /■.*frontend/);
-  assert.match(stdout.read(), /□.*review/);
+  assert.match(stdout.read(), /■.*Frontend/);
+  assert.match(stdout.read(), /□.*Review/);
 });

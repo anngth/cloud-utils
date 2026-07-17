@@ -19,7 +19,6 @@ export function makeSandbox(t, {
   profiles = { version: 1, profiles: [{ name: "default", sources: [] }] },
   projects = { version: 1, projects: [] },
   legacyList,
-  list,
   createProfiles = true,
   createProjects = true,
 } = {}) {
@@ -31,15 +30,13 @@ export function makeSandbox(t, {
   const projectsFile = join(skmDir, "projects.json");
   const legacyFile = join(skmDir, "list.json");
   const transactionFile = join(skmDir, ".transaction.json");
-  const skillsFile = legacyFile;
   const argvLog = join(root, "npx-argv.jsonl");
   mkdirSync(skmDir, { recursive: true });
   mkdirSync(binDir, { recursive: true });
   if (createProfiles) writeFileSync(profilesFile, `${JSON.stringify(profiles, null, 2)}\n`);
   if (createProjects) writeFileSync(projectsFile, `${JSON.stringify(projects, null, 2)}\n`);
-  const selectedLegacy = legacyList ?? list;
-  if (selectedLegacy !== undefined) {
-    writeFileSync(legacyFile, `${JSON.stringify(selectedLegacy, null, 2)}\n`);
+  if (legacyList !== undefined) {
+    writeFileSync(legacyFile, `${JSON.stringify(legacyList, null, 2)}\n`);
   }
 
   executable(
@@ -64,7 +61,6 @@ process.exit(Number(process.env.SKM_NPX_STATUS || 0));
     projectsFile,
     legacyFile,
     transactionFile,
-    skillsFile,
     binDir,
     argvLog,
     env: {

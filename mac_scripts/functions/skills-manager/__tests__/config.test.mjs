@@ -593,10 +593,11 @@ test("invalid legacy JSON leaves both new documents absent", (t) => {
   assert.equal(existsSync(sandbox.projectsFile), false);
 });
 
-test("returns the legacy file only as a compatibility alias", (t) => {
+test("returns the explicit legacy file without the transitional skillsFile alias", (t) => {
   const sandbox = makeSandbox(t);
   const paths = initializeConfig({ env: sandbox.env });
-  assert.equal(paths.skillsFile, sandbox.legacyFile);
+  assert.equal(paths.legacyFile, sandbox.legacyFile);
+  assert.equal("skillsFile" in paths, false);
   assert.equal(paths.transactionFile, sandbox.transactionFile);
 });
 

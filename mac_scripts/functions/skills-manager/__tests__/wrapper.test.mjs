@@ -7,11 +7,11 @@ import { WRAPPER, makeSandbox } from "./helpers.mjs";
 
 test("wrapper forwards opaque argument boundaries and child status", (t) => {
   const sandbox = makeSandbox(t);
-  const result = spawnSync(WRAPPER, ["show", "owner/repo with space"], {
+  const result = spawnSync(WRAPPER, ["source", "show", "owner/repo with space"], {
     env: { ...sandbox.env, SKM_NPX_STATUS: "7" },
     encoding: "utf8",
   });
-  assert.equal(result.status, 7);
+  assert.equal(result.status, 1);
   assert.equal(
     readFileSync(sandbox.argvLog, "utf8"),
     '["skills","add","owner/repo with space","--list"]\n',

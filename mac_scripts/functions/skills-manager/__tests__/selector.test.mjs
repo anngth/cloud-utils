@@ -27,8 +27,22 @@ test("createKeyDecoder preserves one-byte escape fragments before mixed keys", (
   assert.deepEqual(decoder.push(Buffer.from("Bj")), ["down", "down"]);
 });
 
+test("generic selector returns item values rather than source strings", () => {
+  const state = createSelectorState([
+    { value: "frontend", label: "Frontend" },
+    { value: "review", label: "Review" },
+  ]);
+  const toggled = reduceSelector(state, "toggle", { multiple: true });
+  const submitted = reduceSelector(toggled.state, "submit", { multiple: true });
+  assert.deepEqual(submitted.selected, ["frontend"]);
+});
+
 test("cursor movement clamps and multi-select returns display order", () => {
-  let state = createSelectorState(["a", "b", "c"]);
+  let state = createSelectorState([
+    { value: "a", label: "A" },
+    { value: "b", label: "B" },
+    { value: "c", label: "C" },
+  ]);
   state = reduceSelector(state, "up", { multiple: true }).state;
   assert.equal(state.cursor, 0);
   state = reduceSelector(state, "toggle", { multiple: true }).state;
@@ -40,7 +54,10 @@ test("cursor movement clamps and multi-select returns display order", () => {
 });
 
 test("single-select ignores toggle and submits the cursor", () => {
-  let state = createSelectorState(["a", "b"]);
+  let state = createSelectorState([
+    { value: "a", label: "A" },
+    { value: "b", label: "B" },
+  ]);
   state = reduceSelector(state, "toggle", { multiple: false }).state;
   state = reduceSelector(state, "down", { multiple: false }).state;
   const result = reduceSelector(state, "submit", { multiple: false });
@@ -95,7 +112,10 @@ test("runSelector restores raw mode and listeners on submit", async () => {
   processRef.pid = 123;
   processRef.kill = () => assert.fail("submit must not signal the process");
   const promise = runSelector({
-    sources: ["a", "b"],
+    items: [
+      { value: "a", label: "A" },
+      { value: "b", label: "B" },
+    ],
     multiple: true,
     input,
     render() {},
@@ -108,13 +128,37 @@ test("runSelector restores raw mode and listeners on submit", async () => {
   assertSelectorListenersRemoved(input, processRef);
 });
 
+test("runSelector marks initial values without changing item order", async () => {
+  const input = new FakeInput();
+  const processRef = new EventEmitter();
+  processRef.pid = 123;
+  processRef.kill = () => {};
+  let initialState;
+  const promise = runSelector({
+    items: [
+      { value: "frontend", label: "Frontend" },
+      { value: "review", label: "Review" },
+    ],
+    initial: ["review"],
+    multiple: true,
+    input,
+    render(state) { initialState ??= state; },
+    processRef,
+  });
+  input.emit("data", Buffer.from("\r"));
+  assert.deepEqual((await promise).selected, ["review"]);
+  assert.deepEqual([...initialState.selected], [1]);
+});
+
 test("cleanup restores an input that was already raw", async () => {
   const input = new FakeInput();
   input.isRaw = true;
   const processRef = new EventEmitter();
   processRef.pid = 123;
   processRef.kill = () => {};
-  const promise = runSelector({ sources: ["a"], multiple: false, input, render() {}, processRef });
+  const promise = runSelector({
+    items: [{ value: "a", label: "A" }], multiple: false, input, render() {}, processRef,
+  });
   input.emit("end");
   assert.equal((await promise).type, "cancel");
   assert.equal(input.isRaw, true);
@@ -130,7 +174,9 @@ test("EOF and SIGINT use cancellation cleanup", async () => {
     const processRef = new EventEmitter();
     processRef.pid = 123;
     processRef.kill = () => {};
-    const promise = runSelector({ sources: ["a"], multiple: false, input, render() {}, processRef });
+    const promise = runSelector({
+      items: [{ value: "a", label: "A" }], multiple: false, input, render() {}, processRef,
+    });
     finish(input, processRef);
     assert.equal((await promise).type, "cancel");
     assert.equal(input.isRaw, false);
@@ -146,7 +192,9 @@ test("SIGTERM and SIGHUP restore raw mode before re-signalling", async () => {
     processRef.kill = (pid, sentSignal) => {
       observed = { pid, sentSignal, raw: input.isRaw };
     };
-    runSelector({ sources: ["a"], multiple: false, input, render() {}, processRef });
+    runSelector({
+      items: [{ value: "a", label: "A" }], multiple: false, input, render() {}, processRef,
+    });
     processRef.emit(signal);
     assert.deepEqual(observed, { pid: 123, sentSignal: signal, raw: false });
   }
@@ -160,7 +208,7 @@ test("SIGTSTP restores mode and SIGCONT resumes and redraws", () => {
   let renders = 0;
   processRef.kill = (_pid, signal) => signals.push({ signal, raw: input.isRaw });
   runSelector({
-    sources: ["a"],
+    items: [{ value: "a", label: "A" }],
     multiple: false,
     input,
     render() { renders += 1; },
@@ -188,7 +236,7 @@ test("raw Ctrl+Z suspends and resumes an active cancellable selector", async () 
     signals.push({ signal, raw: input.isRaw });
   };
   const promise = runSelector({
-    sources: ["a"],
+    items: [{ value: "a", label: "A" }],
     multiple: false,
     input,
     render() {
@@ -233,7 +281,7 @@ test("cancelling while suspended clears the keepalive", async () => {
   processRef.pid = 123;
   processRef.kill = () => {};
   const promise = runSelector({
-    sources: ["a"],
+    items: [{ value: "a", label: "A" }],
     multiple: false,
     input,
     render() {},
@@ -256,7 +304,10 @@ test("selector accepts input after SIGCONT", async () => {
   processRef.pid = 123;
   processRef.kill = () => {};
   const promise = runSelector({
-    sources: ["a", "b"],
+    items: [
+      { value: "a", label: "A" },
+      { value: "b", label: "B" },
+    ],
     multiple: false,
     input,
     render() {},
@@ -280,7 +331,7 @@ test("SIGCONT transition failures clean up and reject", async () => {
     const expected = new Error(`${failurePoint} failed`);
     let renders = 0;
     const promise = runSelector({
-      sources: ["a"],
+      items: [{ value: "a", label: "A" }],
       multiple: false,
       input,
       render() {
@@ -333,7 +384,7 @@ test("SIGTSTP kill failures clean up and reject", async () => {
     throw expected;
   };
   const promise = runSelector({
-    sources: ["a"],
+    items: [{ value: "a", label: "A" }],
     multiple: false,
     input,
     render() {},

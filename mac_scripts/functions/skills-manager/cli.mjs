@@ -1,204 +1,200 @@
 #!/usr/bin/env node
 
-import { dirname } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { initializeConfig } from "./config.mjs";
-import { runSelector } from "./selector.mjs";
-import { hasCommand, runNpx } from "./skills-cli.mjs";
+import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import {
-  SourceListError,
-  addSources,
-  hasSource,
-  normalizeSourceFile,
-  readSources,
-  removeSources,
-  writeSourcesAtomic,
-} from "./sources.mjs";
+  initializeConfig as initializeConfigDefault,
+  readConfig as readConfigDefault,
+  writeConfigTransaction as writeConfigTransactionDefault,
+  writeProfiles as writeProfilesDefault,
+  writeProjects as writeProjectsDefault,
+} from "./config.mjs";
+import { runDashboard as runDashboardDefault } from "./dashboard.mjs";
+import { loadInstalledState as loadInstalledStateDefault } from "./installed-state.mjs";
+import {
+  runInstallCommand as runInstallCommandDefault,
+  runStatusCommand as runStatusCommandDefault,
+  runUninstallCommand as runUninstallCommandDefault,
+} from "./lifecycle-commands.mjs";
+import {
+  runProfileCommand as runProfileCommandDefault,
+  runProjectCommand as runProjectCommandDefault,
+  runSkillCommand as runSkillCommandDefault,
+  runSourceCommand as runSourceCommandDefault,
+} from "./manage-commands.mjs";
+import {
+  executeInstallPlan as executeInstallPlanDefault,
+  executeUninstallPlan as executeUninstallPlanDefault,
+} from "./operations.mjs";
+import { resolveProjectRoot as resolveProjectRootDefault } from "./projects.mjs";
+import { runSelector as runSelectorDefault } from "./selector.mjs";
+import {
+  discoverAvailableSkills as discoverAvailableSkillsDefault,
+  hasCommand as hasCommandDefault,
+} from "./skills-cli.mjs";
 import { createUi } from "./ui.mjs";
 
-const MANAGER_DIR = dirname(fileURLToPath(import.meta.url));
-const NO_SOURCES = "No sources saved. Add one with: skm add <source>";
+function requiresNpx(action, args) {
+  if (["status", "install", "uninstall"].includes(action)) return true;
+  if (action === "source") {
+    const subcommand = args[0];
+    if (subcommand === "show" || subcommand === "edit") return true;
+    return subcommand === "add" && !args.includes("--no-skills");
+  }
+  return action === "skill" && args[0] === "add";
+}
 
-export async function runCli(argv, {
-  env = process.env,
-  stdin = process.stdin,
-  stdout = process.stdout,
-  stderr = process.stderr,
-  managerDir = MANAGER_DIR,
-  npxRunner = runNpx,
-  selectorRunner = runSelector,
-} = {}) {
-  const ui = createUi({ stdout, stderr });
-  let skillsFile;
+export async function runCli(argv, dependencies = {}) {
+  const {
+    cwd = process.cwd(),
+    env = process.env,
+    stdin = process.stdin,
+    stdout = process.stdout,
+    stderr = process.stderr,
+    hasCommand = hasCommandDefault,
+    initializeConfig = initializeConfigDefault,
+    readConfig = readConfigDefault,
+    writeProfiles = writeProfilesDefault,
+    writeProjects = writeProjectsDefault,
+    writeConfigTransaction = writeConfigTransactionDefault,
+    resolveProjectRoot = resolveProjectRootDefault,
+    discoverAvailableSkills = discoverAvailableSkillsDefault,
+    loadInstalledState = loadInstalledStateDefault,
+    executeInstallPlan = executeInstallPlanDefault,
+    executeUninstallPlan = executeUninstallPlanDefault,
+    selectorRunner = runSelectorDefault,
+    runProfileCommand = runProfileCommandDefault,
+    runSourceCommand = runSourceCommandDefault,
+    runSkillCommand = runSkillCommandDefault,
+    runProjectCommand = runProjectCommandDefault,
+    runStatusCommand = runStatusCommandDefault,
+    runInstallCommand = runInstallCommandDefault,
+    runUninstallCommand = runUninstallCommandDefault,
+    runDashboard = runDashboardDefault,
+    pathExists = existsSync,
+    ui = createUi({ stdout, stderr }),
+  } = dependencies;
+
+  const action = argv[0];
+  const args = argv.slice(1);
+  const requireNpx = () => {
+    if (hasCommand("npx", { env })) return true;
+    ui.error("npx is required to run skills commands");
+    return false;
+  };
+  if (["help", "-h", "--help"].includes(action)) {
+    ui.usage();
+    return 0;
+  }
+
+  const routes = {
+    profile: runProfileCommand,
+    source: runSourceCommand,
+    skill: runSkillCommand,
+    project: runProjectCommand,
+    status: runStatusCommand,
+    install: runInstallCommand,
+    uninstall: runUninstallCommand,
+  };
+
+  if (action !== undefined && routes[action] === undefined) {
+    ui.error(`Unknown command: ${action}`);
+    ui.usageLine?.("Use 'skm --help' for usage information");
+    return 1;
+  }
+  if (action === undefined && (!stdin.isTTY || !stdout.isTTY)) {
+    ui.error("skm requires an interactive terminal");
+    return 1;
+  }
+  if (requiresNpx(action, args) && !requireNpx()) return 1;
+
+  let paths;
+  let config;
   try {
-    ({ skillsFile } = initializeConfig({ env, managerDir, stderr }));
+    paths = initializeConfig({ env });
   } catch {
     ui.error("Could not create config directory.");
     return 1;
   }
-
-  const requireNpx = () => {
-    if (hasCommand("npx", { env })) return true;
-    ui.error("npx is required to run 'npx skills add'");
-    return false;
-  };
-
-  const load = () => {
-    normalizeSourceFile(skillsFile);
-    return readSources(skillsFile);
-  };
-
-  const action = argv[0];
-  const args = argv.slice(1);
-
   try {
-    if (["help", "-h", "--help"].includes(action)) {
-      ui.usage();
-      return 0;
-    }
-    if (action === undefined) return await runInstallSelector();
-    if (action === "ls" || action === "list") {
-      if (!requireNpx()) return 1;
-      ui.list(skillsFile, load());
-      return 0;
-    }
-    if (action === "show" || action === "list-available") {
-      return await runShow(args);
-    }
-    if (action === "add") return runAdd(args);
-    if (action === "remove" || action === "rm") return runRemove(args);
-    ui.error(`Unknown command: ${action}`);
-    ui.usageLine("Use 'skm --help' for usage information");
-    return 1;
+    config = readConfig(paths);
   } catch (error) {
-    renderError(error);
+    ui.error(error instanceof Error ? error.message : String(error));
     return 1;
   }
 
-  function renderError(error) {
-    if (error instanceof SourceListError) {
-      ui.error(`Could not read source list: ${error.filePath}`);
-    } else {
-      ui.error(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function runShow(showArgs) {
-    if (showArgs.length > 1) {
-      ui.error("show accepts at most one source");
-      ui.usageLine("Usage: skm show [source]");
-      return 1;
-    }
-    if (!requireNpx()) return 1;
-    if (showArgs.length === 1) {
-      return await npxRunner(["skills", "add", showArgs[0], "--list"]);
-    }
-    normalizeSourceFile(skillsFile);
-    if (!stdin.isTTY || !stdout.isTTY) {
-      ui.error("skm show requires an interactive terminal when no source is provided");
-      ui.usageLine("Usage: skm show <source>");
-      return 1;
-    }
-    const items = readSources(skillsFile);
-    if (items.length === 0) {
-      ui.warn(NO_SOURCES);
-      return 1;
-    }
+  const select = async (items, {
+    initial = [],
+    multiple = true,
+    title = "Select items",
+    render,
+  } = {}) => {
     const result = await selectorRunner({
-      sources: items.map((item) => item.source),
-      multiple: false,
+      items,
+      initial,
+      multiple,
       input: stdin,
-      render: (state) => ui.selector(skillsFile, state, { mode: "show" }),
+      render: render ?? ((state) => ui.selector(title, state, {
+        mode: multiple ? "install" : "select",
+      })),
     });
-    if (result.type === "cancel") {
-      ui.cancelledSelector(skillsFile, result.state, { mode: "show" });
-      return 0;
+    if (result.type === "cancel" && !render) {
+      ui.cancelledSelector(title, result.state, { mode: multiple ? "install" : "select" });
     }
-    return await npxRunner(["skills", "add", result.selected[0], "--list"]);
-  }
+    return result;
+  };
 
-  function runAdd(requested) {
-    if (requested.length === 0) {
-      ui.error("At least one source is required");
-      ui.usageLine("Usage: skm add <source...>");
-      return 1;
-    }
-    if (!requireNpx()) return 1;
-    const result = addSources(load(), requested);
-    writeSourcesAtomic(skillsFile, result.items);
-    ui.addResult(skillsFile, requested.length, result);
-    return 0;
-  }
+  const context = {
+    cwd,
+    env,
+    stdin,
+    stdout,
+    stderr,
+    paths,
+    config,
+    ui,
+    pathExists,
+    requireNpx,
+    resolveProjectRoot,
+    discoverAvailableSkills,
+    loadInstalledState: ({ projectRoot }) => loadInstalledState({ projectRoot, env }),
+    executeInstallPlan,
+    executeUninstallPlan,
+    writeProfiles,
+    writeProjects,
+    writeConfigTransaction,
+    selectItems: ({ items, ...options }) => select(items, options),
+    selectProfiles: (items, options) => select(items, options),
+    selectSkills: (items, options) => select(items, options),
+    selectAction: (items, options) => select(items, options),
+    confirm: async (message) => {
+      ui.confirm(message);
+      const result = await select([
+        { value: true, label: "Yes" },
+        { value: false, label: "No" },
+      ], { multiple: false, title: message });
+      return result.type === "submit" && result.selected[0] === true;
+    },
+    confirmSaveLinks: async ({ projectRoot, profileNames }) => {
+      const message = `Link ${profileNames.join(", ")} to ${projectRoot}?`;
+      ui.confirm(message);
+      const result = await select([
+        { value: true, label: "Yes" },
+        { value: false, label: "No" },
+      ], { multiple: false, title: message });
+      return result.type === "submit" && result.selected[0] === true;
+    },
+    runProfileCommand,
+    runSourceCommand,
+    runSkillCommand,
+    runProjectCommand,
+    runStatusCommand,
+    runInstallCommand,
+    runUninstallCommand,
+  };
 
-  function runRemove(requested) {
-    if (requested.length === 0) {
-      ui.error("At least one source is required");
-      ui.usageLine("Usage: skm remove <source...>");
-      return 1;
-    }
-    if (!requireNpx()) return 1;
-    const result = removeSources(load(), requested);
-    writeSourcesAtomic(skillsFile, result.items);
-    ui.removeResult(skillsFile, requested.length, result);
-    return 0;
-  }
-
-  async function runInstallSelector() {
-    if (!requireNpx()) return 1;
-    normalizeSourceFile(skillsFile);
-    if (!stdin.isTTY || !stdout.isTTY) {
-      ui.error("skm requires an interactive terminal");
-      return 1;
-    }
-    const items = readSources(skillsFile);
-    if (items.length === 0) {
-      ui.warn(NO_SOURCES);
-      return 1;
-    }
-    const result = await selectorRunner({
-      sources: items.map((item) => item.source),
-      multiple: true,
-      input: stdin,
-      render: (state) => ui.selector(skillsFile, state, { mode: "install" }),
-    });
-    if (result.type === "cancel") {
-      ui.cancelledSelector(skillsFile, result.state, { mode: "install" });
-      return 0;
-    }
-    if (result.selected.length === 0) {
-      ui.listEnd();
-      ui.warn("No sources selected");
-      return 1;
-    }
-
-    ui.listEnd();
-    ui.blank();
-    let failed = false;
-    for (const source of result.selected) {
-      let current;
-      try {
-        current = readSources(skillsFile);
-      } catch (error) {
-        renderError(error);
-        failed = true;
-        continue;
-      }
-      if (!hasSource(current, source)) {
-        ui.error(`Source not found: ${source}`);
-        failed = true;
-        continue;
-      }
-
-      ui.installing(source);
-      try {
-        if (await npxRunner(["skills", "add", source]) !== 0) failed = true;
-      } catch (error) {
-        renderError(error);
-        failed = true;
-      }
-    }
-    return failed ? 1 : 0;
-  }
+  if (action === undefined) return runDashboard(context);
+  return routes[action](args, context);
 }
 
 async function main() {

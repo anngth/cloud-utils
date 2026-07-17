@@ -1,274 +1,142 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { PassThrough } from "node:stream";
 import test from "node:test";
 import { runCli } from "../cli.mjs";
-import { makeSandbox, runJavaScript } from "./helpers.mjs";
 
-function ttyStream() {
-  const stream = new PassThrough();
-  stream.isTTY = true;
-  stream.isRaw = false;
-  stream.setRawMode = (value) => { stream.isRaw = value; };
-  return stream;
+function cliHarness({ stdinIsTTY = true, stdoutIsTTY = true, hasNpx = true } = {}) {
+  const calls = [];
+  let stdout = "";
+  let stderr = "";
+  let initialized = 0;
+  let read = 0;
+  const handler = (name) => async (args, context) => {
+    calls.push([name, args, context]);
+    return 0;
+  };
+  return {
+    calls,
+    stdout: () => stdout,
+    stderr: () => stderr,
+    initialized: () => initialized,
+    read: () => read,
+    dependencies: {
+      cwd: "/repo",
+      env: { PATH: "/bin" },
+      stdin: { isTTY: stdinIsTTY },
+      stdout: { isTTY: stdoutIsTTY, write: (value) => { stdout += value; } },
+      stderr: { write: (value) => { stderr += value; } },
+      hasCommand: () => hasNpx,
+      initializeConfig: () => {
+        initialized += 1;
+        return { profilesFile: "/profiles", projectsFile: "/projects" };
+      },
+      readConfig: () => {
+        read += 1;
+        return {
+          profiles: { version: 1, profiles: [{ name: "default", sources: [] }] },
+          projects: { version: 1, projects: [] },
+        };
+      },
+      runProfileCommand: handler("profile"),
+      runSourceCommand: handler("source"),
+      runSkillCommand: handler("skill"),
+      runProjectCommand: handler("project"),
+      runStatusCommand: handler("status"),
+      runInstallCommand: handler("install"),
+      runUninstallCommand: handler("uninstall"),
+      runDashboard: async (context) => {
+        calls.push(["dashboard", [], context]);
+        return 0;
+      },
+      ui: {
+        usage() { stdout += "usage\n"; },
+        error: (message) => { stderr += `${message}\n`; },
+        usageLine: (message) => { stderr += `${message}\n`; },
+      },
+    },
+  };
 }
 
-test("help and unknown commands bootstrap but do not require npx", (t) => {
-  const sandbox = makeSandbox(t);
-  const env = { PATH: sandbox.root };
+test("dispatches only the new top-level commands", async () => {
+  for (const [argv, handler] of [
+    [["profile", "list"], "profile"],
+    [["source", "show", "a/repo"], "source"],
+    [["skill", "remove", "a", "--source", "a/repo", "-p", "default"], "skill"],
+    [["project", "show"], "project"],
+    [["status"], "status"],
+    [["install", "frontend"], "install"],
+    [["uninstall", "frontend"], "uninstall"],
+  ]) {
+    const harness = cliHarness();
+    assert.equal(await runCli(argv, harness.dependencies), 0);
+    assert.deepEqual(harness.calls.map(([name]) => name), [handler]);
+    assert.deepEqual(harness.calls[0][1], argv.slice(1));
+  }
+});
+
+test("rejects removed legacy commands", async () => {
+  for (const command of ["ls", "list", "add", "remove", "rm", "show"]) {
+    const harness = cliHarness({ hasNpx: false });
+    assert.equal(await runCli([command], harness.dependencies), 1);
+    assert.match(harness.stderr(), new RegExp(`Unknown command: ${command}`));
+    assert.deepEqual(harness.calls, []);
+    assert.equal(harness.initialized(), 0);
+    assert.equal(harness.read(), 0);
+  }
+});
+
+test("help aliases render without bootstrapping or checking npx", async () => {
   for (const alias of ["help", "-h", "--help"]) {
-    assert.equal(runJavaScript([alias], sandbox, { env }).status, 0);
-  }
-  const unknown = runJavaScript(["wat"], sandbox, { env });
-  assert.equal(unknown.status, 1);
-  assert.match(unknown.stderr, /Unknown command: wat/);
-});
-
-test("usage validation precedes missing npx", (t) => {
-  const sandbox = makeSandbox(t);
-  for (const args of [["add"], ["remove"], ["show", "a", "b"]]) {
-    const result = runJavaScript(args, sandbox, { env: { PATH: sandbox.root } });
-    assert.equal(result.status, 1);
-    assert.doesNotMatch(result.stderr, /npx is required/);
+    const harness = cliHarness({ hasNpx: false });
+    assert.equal(await runCli([alias], harness.dependencies), 0);
+    assert.match(harness.stdout(), /usage/);
+    assert.equal(harness.initialized(), 0);
+    assert.equal(harness.read(), 0);
   }
 });
 
-test("every valid compatibility command that requires npx checks it first", (t) => {
-  const sandbox = makeSandbox(t, { list: [{ source: "a/one" }] });
-  for (const args of [[], ["ls"], ["list"], ["show"], ["show", "a/one"], ["add", "b/two"], ["remove", "a/one"]]) {
-    const result = runJavaScript(args, sandbox, { env: { PATH: sandbox.root } });
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /npx is required to run 'npx skills add'/);
+test("no arguments require a TTY and dispatch the dashboard", async () => {
+  const interactive = cliHarness();
+  assert.equal(await runCli([], interactive.dependencies), 0);
+  assert.deepEqual(interactive.calls.map(([name]) => name), ["dashboard"]);
+
+  for (const options of [{ stdinIsTTY: false }, { stdoutIsTTY: false }]) {
+    const nonInteractive = cliHarness(options);
+    assert.equal(await runCli([], nonInteractive.dependencies), 1);
+    assert.match(nonInteractive.stderr(), /interactive terminal/i);
+    assert.deepEqual(nonInteractive.calls, []);
   }
 });
 
-test("all valid compatibility aliases dispatch", (t) => {
-  const sandbox = makeSandbox(t, { list: [{ source: "a/one" }] });
-  assert.equal(runJavaScript(["ls"], sandbox).status, 0);
-  assert.equal(runJavaScript(["list"], sandbox).status, 0);
-  assert.equal(runJavaScript(["rm", "missing/repo"], sandbox).status, 0);
-  assert.equal(runJavaScript(["list-available", "unsaved/repo"], sandbox).status, 0);
+test("valid routes receive initialized paths and validated config", async () => {
+  const harness = cliHarness();
+  assert.equal(await runCli(["profile", "list"], harness.dependencies), 0);
+  assert.equal(harness.initialized(), 1);
+  assert.equal(harness.read(), 1);
+  const context = harness.calls[0][2];
+  assert.deepEqual(context.paths, { profilesFile: "/profiles", projectsFile: "/projects" });
+  assert.equal(context.config.profiles.profiles[0].name, "default");
+  assert.equal(context.cwd, "/repo");
 });
 
-test("add and remove persist once without invoking npx", (t) => {
-  const sandbox = makeSandbox(t);
-  assert.equal(runJavaScript(["add", "b/two", "a/one", "a/one"], sandbox).status, 0);
-  assert.deepEqual(JSON.parse(readFileSync(sandbox.skillsFile, "utf8")), [
-    { source: "a/one" },
-    { source: "b/two" },
-  ]);
-  assert.equal(runJavaScript(["remove", "a/one", "x/missing"], sandbox).status, 0);
-  assert.deepEqual(JSON.parse(readFileSync(sandbox.skillsFile, "utf8")), [{ source: "b/two" }]);
-  assert.equal(existsSync(sandbox.argvLog), false);
+test("routes that use upstream skills fail early when npx is missing", async () => {
+  for (const argv of [
+    ["source", "show", "a/repo"],
+    ["skill", "add", "a", "--source", "a/repo", "-p", "default"],
+    ["status"],
+    ["install", "frontend"],
+    ["uninstall", "frontend"],
+  ]) {
+    const harness = cliHarness({ hasNpx: false });
+    assert.equal(await runCli(argv, harness.dependencies), 1);
+    assert.match(harness.stderr(), /npx is required/i);
+    assert.deepEqual(harness.calls, []);
+  }
 });
 
-test("show passes an unsaved opaque source and propagates status", (t) => {
-  const sandbox = makeSandbox(t);
-  const result = runJavaScript(["show", "owner/repo with | %"], sandbox, {
-    env: { SKM_NPX_STATUS: "7" },
-  });
-  assert.equal(result.status, 7);
-  assert.equal(
-    readFileSync(sandbox.argvLog, "utf8"),
-    '["skills","add","owner/repo with | %","--list"]\n',
-  );
-});
-
-test("invalid data is deterministic, byte preserving, and does not invoke npx", (t) => {
-  const sandbox = makeSandbox(t);
-  writeFileSync(sandbox.skillsFile, "{broken", "utf8");
-  const result = runJavaScript(["list"], sandbox);
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /Could not read source list/);
-  assert.doesNotMatch(result.stderr, /SyntaxError|stack/);
-  assert.equal(readFileSync(sandbox.skillsFile, "utf8"), "{broken");
-  assert.equal(existsSync(sandbox.argvLog), false);
-});
-
-test("install runs selected sources sequentially and aggregates failure", async (t) => {
-  const sandbox = makeSandbox(t, { list: [{ source: "a/one" }, { source: "b/two" }] });
-  const calls = [];
-  const statuses = [2, 0];
-  const status = await runCli([], {
-    env: sandbox.env,
-    stdin: ttyStream(),
-    stdout: ttyStream(),
-    stderr: new PassThrough(),
-    npxRunner: async (args) => { calls.push(args); return statuses.shift(); },
-    selectorRunner: async ({ sources }) => ({
-      type: "submit",
-      state: { sources, cursor: 0, selected: new Set([0, 1]) },
-      selected: sources,
-    }),
-  });
-  assert.equal(status, 1);
-  assert.deepEqual(calls, [
-    ["skills", "add", "a/one"],
-    ["skills", "add", "b/two"],
-  ]);
-});
-
-test("install continues after per-source lookup, read, runner, and child failures", async (t) => {
-  const sources = ["a/child", "b/missing", "c/spawn", "d/read", "e/success"];
-  const sandbox = makeSandbox(t, { list: sources.map((source) => ({ source })) });
-  const calls = [];
-  const stderr = new PassThrough();
-  let errorOutput = "";
-  stderr.setEncoding("utf8");
-  stderr.on("data", (chunk) => {
-    errorOutput += chunk;
-    if (chunk.includes("Could not read source list")) {
-      writeFileSync(
-        sandbox.skillsFile,
-        `${JSON.stringify([{ source: "d/read" }, { source: "e/success" }], null, 2)}\n`,
-        "utf8",
-      );
-    }
-  });
-
-  const status = await runCli([], {
-    env: sandbox.env,
-    stdin: ttyStream(),
-    stdout: ttyStream(),
-    stderr,
-    selectorRunner: async ({ sources: selectedSources }) => ({
-      type: "submit",
-      state: { sources: selectedSources, cursor: 0, selected: new Set([0, 1, 2, 3, 4]) },
-      selected: selectedSources,
-    }),
-    npxRunner: async (args) => {
-      calls.push(args);
-      const source = args[2];
-      if (source === "a/child") {
-        writeFileSync(
-          sandbox.skillsFile,
-          `${JSON.stringify(sources.filter((item) => item !== "b/missing").map((item) => ({ source: item })), null, 2)}\n`,
-          "utf8",
-        );
-        return 2;
-      }
-      if (source === "c/spawn") {
-        writeFileSync(sandbox.skillsFile, "{broken", "utf8");
-        throw new Error("spawn exploded");
-      }
-      return 0;
-    },
-  });
-
-  assert.equal(status, 1);
-  assert.deepEqual(calls, [
-    ["skills", "add", "a/child"],
-    ["skills", "add", "c/spawn"],
-    ["skills", "add", "e/success"],
-  ]);
-  assert.match(errorOutput, /Source not found: b\/missing/);
-  assert.match(errorOutput, /spawn exploded/);
-  assert.match(errorOutput, /Could not read source list/);
-});
-
-test("interactive cancellation exits zero without spawning", async (t) => {
-  const sandbox = makeSandbox(t, { list: [{ source: "a/one" }] });
-  const status = await runCli(["show"], {
-    env: sandbox.env,
-    stdin: ttyStream(),
-    stdout: ttyStream(),
-    stderr: new PassThrough(),
-    npxRunner: async () => assert.fail("cancel must not spawn"),
-    selectorRunner: async ({ sources }) => ({
-      type: "cancel",
-      state: { sources, cursor: 0, selected: new Set() },
-      selected: [],
-    }),
-  });
-  assert.equal(status, 0);
-});
-
-test("install detects a source removed after selection and does not spawn", async (t) => {
-  const sandbox = makeSandbox(t, { list: [{ source: "a/one" }] });
-  const stderr = new PassThrough();
-  let errorOutput = "";
-  stderr.setEncoding("utf8");
-  stderr.on("data", (chunk) => { errorOutput += chunk; });
-  const status = await runCli([], {
-    env: sandbox.env,
-    stdin: ttyStream(),
-    stdout: ttyStream(),
-    stderr,
-    npxRunner: async () => assert.fail("missing selected source must not spawn"),
-    selectorRunner: async ({ sources }) => {
-      writeFileSync(sandbox.skillsFile, "[]\n");
-      return {
-        type: "submit",
-        state: { sources, cursor: 0, selected: new Set([0]) },
-        selected: sources,
-      };
-    },
-  });
-  assert.equal(status, 1);
-  assert.match(errorOutput, /Source not found: a\/one/);
-});
-
-test("empty install selection warns and exits one", async (t) => {
-  const sandbox = makeSandbox(t, { list: [{ source: "a/one" }] });
-  const stderr = new PassThrough();
-  let errorOutput = "";
-  stderr.setEncoding("utf8");
-  stderr.on("data", (chunk) => { errorOutput += chunk; });
-  const status = await runCli([], {
-    env: sandbox.env,
-    stdin: ttyStream(),
-    stdout: ttyStream(),
-    stderr,
-    selectorRunner: async ({ sources }) => ({
-      type: "submit",
-      state: { sources, cursor: 0, selected: new Set() },
-      selected: [],
-    }),
-  });
-  assert.equal(status, 1);
-  assert.match(errorOutput, /No sources selected/);
-});
-
-test("invalid usage does not normalize while interactive show normalizes before TTY validation", async (t) => {
-  const sandbox = makeSandbox(t, { list: [] });
-  rmSync(sandbox.skillsFile);
-  const managerDir = `${sandbox.root}/manager-without-example`;
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
-
-  assert.equal(await runCli(["add"], {
-    env: { ...sandbox.env, PATH: sandbox.root },
-    managerDir,
-    stdout,
-    stderr,
-  }), 1);
-  assert.equal(existsSync(sandbox.skillsFile), false);
-
-  assert.equal(await runCli(["show"], {
-    env: sandbox.env,
-    managerDir,
-    stdin: new PassThrough(),
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-  }), 1);
-  assert.equal(readFileSync(sandbox.skillsFile, "utf8"), "[]\n");
-});
-
-test("help bootstraps new documents before dispatch without checking npx", async (t) => {
-  const sandbox = makeSandbox(t, { createProfiles: false, createProjects: false });
-  const status = await runCli(["--help"], {
-    env: { ...sandbox.env, PATH: sandbox.root },
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-  });
-  assert.equal(status, 0);
-  assert.deepEqual(JSON.parse(readFileSync(sandbox.profilesFile, "utf8")), {
-    version: 1,
-    profiles: [{ name: "default", sources: [] }],
-  });
-  assert.deepEqual(JSON.parse(readFileSync(sandbox.projectsFile, "utf8")), {
-    version: 1,
-    projects: [],
-  });
-  assert.equal(existsSync(sandbox.legacyFile), false);
+test("configuration failures are rendered without dispatch", async () => {
+  const harness = cliHarness();
+  harness.dependencies.initializeConfig = () => { throw new Error("disk unavailable"); };
+  assert.equal(await runCli(["profile", "list"], harness.dependencies), 1);
+  assert.match(harness.stderr(), /Could not create config directory/);
+  assert.deepEqual(harness.calls, []);
 });
