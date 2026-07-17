@@ -8,6 +8,7 @@ function cliHarness({ stdinIsTTY = true, stdoutIsTTY = true, hasNpx = true } = {
   let stderr = "";
   let initialized = 0;
   let read = 0;
+  let npxChecks = 0;
   const handler = (name) => async (args, context) => {
     calls.push([name, args, context]);
     return 0;
@@ -18,13 +19,14 @@ function cliHarness({ stdinIsTTY = true, stdoutIsTTY = true, hasNpx = true } = {
     stderr: () => stderr,
     initialized: () => initialized,
     read: () => read,
+    npxChecks: () => npxChecks,
     dependencies: {
       cwd: "/repo",
       env: { PATH: "/bin" },
       stdin: { isTTY: stdinIsTTY },
       stdout: { isTTY: stdoutIsTTY, write: (value) => { stdout += value; } },
       stderr: { write: (value) => { stderr += value; } },
-      hasCommand: () => hasNpx,
+      hasCommand: () => { npxChecks += 1; return hasNpx; },
       initializeConfig: () => {
         initialized += 1;
         return { profilesFile: "/profiles", projectsFile: "/projects" };
@@ -83,6 +85,19 @@ test("rejects removed legacy commands", async () => {
     assert.equal(harness.read(), 0);
   }
 });
+
+for (const command of ["constructor", "toString", "__proto__"]) {
+  test(`rejects inherited route name ${command} without npx checks or dispatch`, async () => {
+    const harness = cliHarness({ hasNpx: false });
+    assert.equal(await runCli([command], harness.dependencies), 1);
+    assert.match(harness.stderr(), new RegExp(`Unknown command: ${command}`));
+    assert.match(harness.stderr(), /skm --help/);
+    assert.deepEqual(harness.calls, []);
+    assert.equal(harness.npxChecks(), 0);
+    assert.equal(harness.initialized(), 0);
+    assert.equal(harness.read(), 0);
+  });
+}
 
 test("help aliases render without bootstrapping or checking npx", async () => {
   for (const alias of ["help", "-h", "--help"]) {

@@ -97,7 +97,7 @@ export async function runCli(argv, dependencies = {}) {
     uninstall: runUninstallCommand,
   };
 
-  if (action !== undefined && routes[action] === undefined) {
+  if (action !== undefined && !Object.hasOwn(routes, action)) {
     ui.error(`Unknown command: ${action}`);
     ui.usageLine?.("Use 'skm --help' for usage information");
     return 1;
