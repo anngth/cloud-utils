@@ -19,11 +19,17 @@ function parseLifecycleOptions(args, { install = false, uninstall = false } = {}
   };
   const flags = new Map();
   if (install || uninstall) {
+    flags.set("-y", "yes");
     flags.set("--yes", "yes");
+    flags.set("-f", "force");
     flags.set("--force", "force");
+    flags.set("-d", "dryRun");
     flags.set("--dry-run", "dryRun");
   }
-  if (uninstall) flags.set("--keep-link", "keepLink");
+  if (uninstall) {
+    flags.set("-l", "keepLink");
+    flags.set("--keep-link", "keepLink");
+  }
 
   for (const arg of args) {
     const key = flags.get(arg);

@@ -306,6 +306,30 @@ test("dry-run renders a plan without execution or link writes", async () => {
   assert.equal(harness.uiCalls[0][1].dryRun, true);
 });
 
+test("install short flags match yes dry-run and force", async () => {
+  const dryRun = lifecycleHarness({ installed: new Map() });
+  assert.equal(await runInstallCommand(["-d"], dryRun.context), 0);
+  assert.equal(dryRun.executionCalls, 0);
+  assert.equal(dryRun.confirmations, 0);
+  assert.equal(dryRun.uiCalls[0][1].dryRun, true);
+
+  const yes = lifecycleHarness();
+  assert.equal(await runInstallCommand(["-y"], yes.context), 0);
+  assert.equal(yes.skillSelections, 0);
+  assert.equal(yes.confirmations, 0);
+  assert.equal(yes.executionCalls, 1);
+
+  const force = lifecycleHarness({
+    installed: new Map([
+      ["frontend-design", actualSkill("frontend-design", null)],
+    ]),
+  });
+  assert.equal(await runInstallCommand(["-y", "-f"], force.context), 0);
+  assert.deepEqual(force.capturedPlan.replace.map((item) => item.skill), [
+    "frontend-design",
+  ]);
+});
+
 test("yes skips temporary selection and confirmation and reaches execution", async () => {
   const harness = lifecycleHarness();
   assert.equal(await runInstallCommand(["--yes"], harness.context), 0);
@@ -499,6 +523,16 @@ test("keep-link removes files but leaves the selected profile linked", async () 
   assert.equal(harness.uiCalls[0][1].keepLink, true);
 });
 
+test("uninstall short keep-link preserves project links", async () => {
+  const harness = makeUninstallHarness({ linkedProfiles: ["frontend"] });
+  assert.equal(await runUninstallCommand([
+    "frontend", "-y", "-l",
+  ], harness.context), 0);
+  assert.deepEqual(harness.removedNames, ["code-review", "frontend-design"]);
+  assert.equal(harness.projectWrites, 0);
+  assert.equal(harness.uiCalls[0][1].keepLink, true);
+});
+
 test("uninstall failure prevents link removal", async () => {
   const harness = makeUninstallHarness({ executionOk: false, linkedProfiles: ["frontend"] });
   assert.equal(await runUninstallCommand(["frontend", "--yes"], harness.context), 1);
@@ -596,4 +630,11 @@ test("uninstall requires linked or explicitly named profiles", async () => {
   assert.equal(await runUninstallCommand(["--yes"], harness.context), 1);
   assert.equal(harness.stateCalls, 0);
   assert.match(harness.stderr(), /project link|name profiles/i);
+});
+
+test("unsupported lifecycle short flags still fail before discovery", async () => {
+  const harness = lifecycleHarness();
+  assert.equal(await runInstallCommand(["-z"], harness.context), 1);
+  assert.equal(harness.stateCalls, 0);
+  assert.match(harness.stderr(), /unknown option: -z/i);
 });
