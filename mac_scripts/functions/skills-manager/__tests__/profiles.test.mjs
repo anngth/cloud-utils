@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import {
   ProfileConfigError,
@@ -9,6 +10,27 @@ import {
 } from "../profiles.mjs";
 
 const base = { version: 1, profiles: [{ name: "default", sources: [] }] };
+
+test("ships a current profiles example instead of a legacy list example", () => {
+  const profilesExample = new URL("../profiles.json.example", import.meta.url);
+  const legacyExample = new URL("../list.json.example", import.meta.url);
+
+  assert.equal(existsSync(profilesExample), true);
+  assert.equal(existsSync(legacyExample), false);
+  assert.deepEqual(
+    validateProfilesDocument(JSON.parse(readFileSync(profilesExample, "utf8"))),
+    {
+      version: 1,
+      profiles: [{
+        name: "default",
+        sources: [
+          { source: "anthropics/skills", skills: [] },
+          { source: "vercel-labs/agent-skills", skills: [] },
+        ],
+      }],
+    },
+  );
+});
 
 test("requires at least one profile", () => {
   assert.throws(

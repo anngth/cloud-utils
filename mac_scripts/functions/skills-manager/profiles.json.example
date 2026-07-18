@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "name": "default",
+      "sources": [
+        {
+          "source": "anthropics/skills",
+          "skills": []
+        },
+        {
+          "source": "vercel-labs/agent-skills",
+          "skills": []
+        }
+      ]
+    }
+  ]
+}
