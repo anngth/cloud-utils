@@ -75,10 +75,14 @@ export function parseAvailableSkills(output) {
   for (let index = start + 1; index < end; index += 1) {
     const name = lines[index].match(/^│\s{4}(\S.*)$/)?.[1]?.trim();
     if (!name) continue;
-    const description = lines[index + 1]?.match(/^│\s{6}(\S.*)$/)?.[1]?.trim();
+    let descriptionIndex = index + 1;
+    while (descriptionIndex < end && /^│\s*$/.test(lines[descriptionIndex])) {
+      descriptionIndex += 1;
+    }
+    const description = lines[descriptionIndex]?.match(/^│\s{6}(\S.*)$/)?.[1]?.trim();
     if (!description) throw new DiscoveryParseError(`Missing description for skill: ${name}`);
     result.push({ name, description });
-    index += 1;
+    index = descriptionIndex;
   }
   if (result.length === 0) throw new DiscoveryParseError("No skill records found");
   if (new Set(result.map((item) => item.name)).size !== result.length) {

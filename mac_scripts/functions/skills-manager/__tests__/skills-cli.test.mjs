@@ -19,6 +19,7 @@ import { makeSandbox } from "./helpers.mjs";
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const FLAT = join(TEST_DIR, "fixtures/discovery-flat.txt");
 const GROUPED = join(TEST_DIR, "fixtures/discovery-grouped.txt");
+const SUPERPOWERS_1_5_19 = join(TEST_DIR, "fixtures/discovery-superpowers-1.5.19.txt");
 
 test("hasCommand searches PATH without a shell", (t) => {
   const sandbox = makeSandbox(t);
@@ -169,10 +170,31 @@ test("parses flat and grouped available-skill output", () => {
     { name: "react-best-practices", description: "Review React code for performance." },
     { name: "docs", description: "Create concise documentation." },
   ]);
+  assert.deepEqual(parseAvailableSkills(readFileSync(SUPERPOWERS_1_5_19, "utf8")), [
+    {
+      name: "brainstorming",
+      description: "You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation.",
+    },
+    {
+      name: "dispatching-parallel-agents",
+      description: "Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies",
+    },
+  ]);
 });
 
 test("rejects uncertain discovery output", () => {
   assert.throws(() => parseAvailableSkills("Available Skills\nmaybe"), DiscoveryParseError);
+  assert.throws(
+    () => parseAvailableSkills([
+      "◇  Available Skills",
+      "│    brainstorming",
+      "│",
+      "│    dispatching-parallel-agents",
+      "│      Use when facing 2+ independent tasks.",
+      "└  Use --skill <name> to install specific skills",
+    ].join("\n")),
+    /Missing description for skill: brainstorming/,
+  );
 });
 
 test("discovers available skills only from successful upstream output", async () => {

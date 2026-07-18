@@ -84,6 +84,10 @@ Profile, source, skill, and project commands only read or change saved
 configuration; they never install or uninstall project skills. Use the
 lifecycle commands for project files.
 
+For `source add`, `source edit`, and `source remove`, omitting `-p` / `--profile`
+opens the interactive profile selector. `skill add` and `skill remove` still
+require an explicit profile.
+
 | Family | Supported commands |
 | --- | --- |
 | Profile | `profile list`, `show`, `create`, `rename`, `remove [--force]` |

@@ -45,7 +45,9 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     const command = (syntax, description) => {
       out(`${pipe}  ${fg(C.green, syntax)}${description ? `  ${fg(C.gray, description)}` : ""}`);
     };
-    const continuation = (syntax) => out(`${pipe}      ${fg(C.green, syntax)}`);
+    const continuation = (syntax, description) => {
+      out(`${pipe}      ${fg(C.green, syntax)}${description ? `  ${fg(C.gray, description)}` : ""}`);
+    };
     const note = (text) => out(`${pipe}  ${fg(C.gray, text)}`);
 
     title();
@@ -56,8 +58,8 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     section("Lifecycle");
     command("skm status [profile...]", "Compare desired and installed skills");
     command("skm install [profile...] [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]", "Install selected profile skills");
-    command("skm uninstall [profile...] [(-y | --yes)] [(-f | --force)]", "Uninstall selected profile skills");
-    continuation("[(-d | --dry-run)] [(-l | --keep-link)]");
+    command("skm uninstall [profile...] [(-y | --yes)] [(-f | --force)]");
+    continuation("[(-d | --dry-run)] [(-l | --keep-link)]", "Uninstall selected profile skills");
 
     section("Profiles");
     command("skm profile list", "List profiles");
@@ -67,17 +69,17 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     command("skm profile remove <profile> [(-f | --force)]", "Remove a profile");
 
     section("Sources");
-    command("skm source add <source> (-p | --profile) <profile>", "Add a source and select skills");
-    continuation("[[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)]");
-    command("skm source edit <source> (-p | --profile) <profile>", "Edit selected source skills");
-    command("skm source remove <source> (-p | --profile) <profile>", "Remove a source from a profile");
+    command("skm source add <source> [(-p | --profile) <profile>]");
+    continuation("[[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)]", "Add a source and select skills");
+    command("skm source edit <source> [(-p | --profile) <profile>]", "Edit selected source skills");
+    command("skm source remove <source> [(-p | --profile) <profile>]", "Remove a source from a profile");
     command("skm source show <source>", "Show available source skills");
 
     section("Skills");
-    command("skm skill add <skill...> (-s | --source) <source>", "Add skills to a profile source");
-    continuation("(-p | --profile) <profile>");
-    command("skm skill remove <skill...> (-s | --source) <source>", "Remove skills from a profile source");
-    continuation("(-p | --profile) <profile>");
+    command("skm skill add <skill...> (-s | --source) <source>");
+    continuation("(-p | --profile) <profile>", "Add skills to a profile source");
+    command("skm skill remove <skill...> (-s | --source) <source>");
+    continuation("(-p | --profile) <profile>", "Remove skills from a profile source");
 
     section("Projects");
     command("skm project link <profile...>", "Link profiles to the current project");

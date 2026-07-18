@@ -355,39 +355,66 @@ test("errors and warnings use stderr while info uses stdout", () => {
 test("usage documents every command signature and short flag", () => {
   const { stdout, ui } = makeUi();
   ui.usage();
-  const rendered = stdout.read().replace(/\u001b\[[0-9;]*m/g, "");
-  const signatures = [
-    "skm",
-    "skm (help | -h | --help)",
-    "skm status [profile...]",
-    "skm install [profile...] [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]",
-    "skm uninstall [profile...] [(-y | --yes)] [(-f | --force)]",
-    "[(-d | --dry-run)] [(-l | --keep-link)]",
-    "skm profile list",
-    "skm profile show <profile>",
-    "skm profile create <profile>",
-    "skm profile rename <old> <new>",
-    "skm profile remove <profile> [(-f | --force)]",
-    "skm source add <source> (-p | --profile) <profile>",
-    "[[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)]",
-    "skm source edit <source> (-p | --profile) <profile>",
-    "skm source remove <source> (-p | --profile) <profile>",
-    "skm source show <source>",
-    "skm skill add <skill...> (-s | --source) <source>",
-    "skm skill remove <skill...> (-s | --source) <source>",
-    "skm project link <profile...>",
-    "skm project unlink [profile...]",
-    "skm project show",
-    "skm project list",
-    "skm project remove <project-path>",
-  ];
-  for (const signature of signatures) {
-    assert.ok(rendered.includes(signature), `missing help signature: ${signature}`);
+  const lines = stdout.read()
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd());
+
+  assert.equal(lines.find((line) => line.includes("Usage:")), "◇  Usage: skm [command]");
+
+  const sections = ["Lifecycle", "Profiles", "Sources", "Skills", "Projects", "Notes"];
+  const sectionIndexes = sections.map((section) => lines.indexOf(`◆  ${section}`));
+  assert.ok(sectionIndexes.every((index) => index >= 0), "all help sections are present");
+  assert.deepEqual(sectionIndexes, [...sectionIndexes].sort((left, right) => left - right));
+
+  for (const [first, continuation] of [
+    [
+      "│  skm uninstall [profile...] [(-y | --yes)] [(-f | --force)]",
+      "│      [(-d | --dry-run)] [(-l | --keep-link)]  Uninstall selected profile skills",
+    ],
+    [
+      "│  skm source add <source> [(-p | --profile) <profile>]",
+      "│      [[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)]  Add a source and select skills",
+    ],
+    [
+      "│  skm skill add <skill...> (-s | --source) <source>",
+      "│      (-p | --profile) <profile>  Add skills to a profile source",
+    ],
+    [
+      "│  skm skill remove <skill...> (-s | --source) <source>",
+      "│      (-p | --profile) <profile>  Remove skills from a profile source",
+    ],
+  ]) {
+    const index = lines.indexOf(first);
+    assert.ok(index >= 0, `missing wrapped signature: ${first}`);
+    assert.equal(lines[index + 1], continuation);
   }
-  assert.match(rendered, /Open interactive dashboard/);
-  assert.match(rendered, /use current project links/i);
-  assert.match(rendered, /change configuration only/i);
-  assert.match(rendered, /mismatch\/untracked skill changes/i);
+
+  for (const line of [
+    "│  skm source edit <source> [(-p | --profile) <profile>]  Edit selected source skills",
+    "│  skm source remove <source> [(-p | --profile) <profile>]  Remove a source from a profile",
+  ]) assert.ok(lines.includes(line), `missing source signature: ${line}`);
+
+  for (const line of [
+    "│  skm  Open interactive dashboard",
+    "│  skm (help | -h | --help)  Show this help",
+    "│  skm status [profile...]  Compare desired and installed skills",
+    "│  skm install [profile...] [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]  Install selected profile skills",
+    "│  skm profile list  List profiles",
+    "│  skm profile show <profile>  Show one profile",
+    "│  skm profile create <profile>  Create a profile",
+    "│  skm profile rename <old> <new>  Rename a profile",
+    "│  skm profile remove <profile> [(-f | --force)]  Remove a profile",
+    "│  skm source show <source>  Show available source skills",
+    "│  skm project link <profile...>  Link profiles to the current project",
+    "│  skm project unlink [profile...]  Unlink profiles from the current project",
+    "│  skm project show  Show the current project",
+    "│  skm project list  List registered projects",
+    "│  skm project remove <project-path>  Remove a project registration",
+    "│  Profile names omitted from lifecycle commands use current project links.",
+    "│  Profile, source, skill, and project commands change configuration only.",
+    "│  --force permits linked-profile removal or mismatch/untracked skill changes.",
+  ]) assert.ok(lines.includes(line), `missing help line: ${line}`);
 });
 
 test("dashboard renders the current project, linked profiles, and actions", () => {

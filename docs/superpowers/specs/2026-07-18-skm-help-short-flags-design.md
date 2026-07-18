@@ -22,7 +22,8 @@ The help output is grouped by purpose in this order:
 Each subcommand occupies one line where practical. A command may wrap onto one
 continuation line when keeping all alternatives on one line would reduce
 readability. Each signature has a short action description; descriptions do not
-repeat details already expressed by the syntax.
+repeat details already expressed by the syntax. For wrapped signatures, the
+description appears only after the final continuation syntax.
 
 The notation is:
 
@@ -53,12 +54,12 @@ Profiles
                                                Remove a profile
 
 Sources
-  skm source add <source> (-p | --profile) <profile>
+  skm source add <source> [(-p | --profile) <profile>]
       [[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)]
                                                Add a source and select skills
-  skm source edit <source> (-p | --profile) <profile>
+  skm source edit <source> [(-p | --profile) <profile>]
                                                Edit selected source skills
-  skm source remove <source> (-p | --profile) <profile>
+  skm source remove <source> [(-p | --profile) <profile>]
                                                Remove a source from a profile
   skm source show <source>                     Show available source skills
 
@@ -104,6 +105,10 @@ Short and long forms are semantically identical. Existing validation remains in
 force: unknown flags are rejected, value flags require a value, repeated
 non-repeatable value flags are rejected, and source selection modes remain
 mutually exclusive even when short and long forms are mixed.
+
+Source-command profiles are optional: omitting `-p` / `--profile` from `source
+add`, `source edit`, or `source remove` opens the interactive profile selector.
+Skill commands continue to require an explicit profile.
 
 ## Implementation boundaries
 

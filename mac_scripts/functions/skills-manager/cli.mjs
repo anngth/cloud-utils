@@ -41,7 +41,7 @@ function requiresNpx(action, args) {
   if (action === "source") {
     const subcommand = args[0];
     if (subcommand === "show" || subcommand === "edit") return true;
-    return subcommand === "add" && !args.includes("--no-skills");
+    return subcommand === "add" && !args.some((arg) => ["-n", "--no-skills"].includes(arg));
   }
   return action === "skill" && args[0] === "add";
 }

@@ -1,0 +1,14 @@
+
+│
+◇  Available Skills
+│
+│    brainstorming
+│
+│      You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation.
+│
+│    dispatching-parallel-agents
+│
+│      Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies
+
+│
+└  Use --skill <name> to install specific skills

@@ -109,9 +109,9 @@ export function validateManagementCommandGrammar(family, args) {
     return;
   }
   if (family === "source") {
-    if (action === "add") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm source add <source> --profile <profile>"); rejectOptions(parsed, ["profile", "skills", "all", "noSkills"]); }
-    if (action === "edit") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm source edit <source> --profile <profile>"); rejectOptions(parsed, ["profile"]); }
-    if (action === "remove") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm source remove <source> --profile <profile>"); rejectOptions(parsed, ["profile"]); }
+    if (action === "add") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm source add <source> [(-p | --profile) <profile>]"); rejectOptions(parsed, ["profile", "skills", "all", "noSkills"]); }
+    if (action === "edit") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm source edit <source> [(-p | --profile) <profile>]"); rejectOptions(parsed, ["profile"]); }
+    if (action === "remove") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm source remove <source> [(-p | --profile) <profile>]"); rejectOptions(parsed, ["profile"]); }
     if (action === "show") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm source show <source>"); rejectOptions(parsed); }
     return;
   }
@@ -300,7 +300,7 @@ async function sourceSelection(parsed, source, context) {
 
 async function runSourceAdd(args, context) {
   const parsed = parseOptions(args);
-  requirePositionals(parsed, 1, "skm source add <source> --profile <profile>");
+  requirePositionals(parsed, 1, "skm source add <source> [(-p | --profile) <profile>]");
   rejectOptions(parsed, ["profile", "skills", "all", "noSkills"]);
   const source = canonicalizeSource(parsed.positionals[0], { cwd: context.cwd });
   const chosenProfile = await resolveProfileName(parsed, context);
@@ -329,7 +329,7 @@ async function runSourceAdd(args, context) {
 
 async function runSourceEdit(args, context) {
   const parsed = parseOptions(args);
-  requirePositionals(parsed, 1, "skm source edit <source> --profile <profile>");
+  requirePositionals(parsed, 1, "skm source edit <source> [(-p | --profile) <profile>]");
   rejectOptions(parsed, ["profile"]);
   const chosenProfile = await resolveProfileName(parsed, context);
   if (chosenProfile.type === "cancel") return 0;
@@ -362,7 +362,7 @@ async function runSourceEdit(args, context) {
 
 async function runSourceRemove(args, context) {
   const parsed = parseOptions(args);
-  requirePositionals(parsed, 1, "skm source remove <source> --profile <profile>");
+  requirePositionals(parsed, 1, "skm source remove <source> [(-p | --profile) <profile>]");
   rejectOptions(parsed, ["profile"]);
   const chosenProfile = await resolveProfileName(parsed, context);
   if (chosenProfile.type === "cancel") return 0;

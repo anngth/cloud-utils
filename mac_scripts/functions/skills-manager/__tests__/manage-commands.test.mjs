@@ -278,6 +278,16 @@ test("management commands reject unknown flags before writes", async (t) => {
   assert.equal(harness.writtenProfiles, undefined);
 });
 
+test("source command usage shows profile selection as optional", async (t) => {
+  for (const action of ["add", "edit", "remove"]) {
+    const harness = makeManagementHarness(t);
+    assert.equal(await runSourceCommand([action], harness.context), 1);
+    assert.ok(harness.stderr().includes(
+      `Usage: skm source ${action} <source> [(-p | --profile) <profile>]`,
+    ));
+  }
+});
+
 test("profile and project read commands route complete display state", async (t) => {
   const harness = makeManagementHarness(t, {
     profiles: profileWithSource("default", "acme/skills", ["a"]),
