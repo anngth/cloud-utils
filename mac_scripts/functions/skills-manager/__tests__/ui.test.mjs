@@ -352,14 +352,42 @@ test("errors and warnings use stderr while info uses stdout", () => {
   assert.match(stderr.read(), /careful/);
 });
 
-test("usage documents management families and the non-installing skill boundary", () => {
+test("usage documents every command signature and short flag", () => {
   const { stdout, ui } = makeUi();
   ui.usage();
-  const rendered = stdout.read();
-  for (const name of ["profile", "source", "skill", "project", "status", "install", "uninstall"]) {
-    assert.match(rendered, new RegExp(name));
+  const rendered = stdout.read().replace(/\u001b\[[0-9;]*m/g, "");
+  const signatures = [
+    "skm",
+    "skm (help | -h | --help)",
+    "skm status [profile...]",
+    "skm install [profile...] [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]",
+    "skm uninstall [profile...] [(-y | --yes)] [(-f | --force)]",
+    "[(-d | --dry-run)] [(-l | --keep-link)]",
+    "skm profile list",
+    "skm profile show <profile>",
+    "skm profile create <profile>",
+    "skm profile rename <old> <new>",
+    "skm profile remove <profile> [(-f | --force)]",
+    "skm source add <source> (-p | --profile) <profile>",
+    "[[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)]",
+    "skm source edit <source> (-p | --profile) <profile>",
+    "skm source remove <source> (-p | --profile) <profile>",
+    "skm source show <source>",
+    "skm skill add <skill...> (-s | --source) <source>",
+    "skm skill remove <skill...> (-s | --source) <source>",
+    "skm project link <profile...>",
+    "skm project unlink [profile...]",
+    "skm project show",
+    "skm project list",
+    "skm project remove <project-path>",
+  ];
+  for (const signature of signatures) {
+    assert.ok(rendered.includes(signature), `missing help signature: ${signature}`);
   }
-  assert.match(rendered, /does not change installed project skills/);
+  assert.match(rendered, /Open interactive dashboard/);
+  assert.match(rendered, /use current project links/i);
+  assert.match(rendered, /change configuration only/i);
+  assert.match(rendered, /mismatch\/untracked skill changes/i);
 });
 
 test("dashboard renders the current project, linked profiles, and actions", () => {

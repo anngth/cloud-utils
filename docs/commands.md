@@ -66,14 +66,14 @@ skm
 skm profile list
 skm profile create frontend-project
 skm profile create code-review
-skm source add vercel-labs/agent-skills --profile frontend-project
-skm skill add code-review --source vercel-labs/agent-skills --profile frontend-project
+skm source add vercel-labs/agent-skills -p frontend-project
+skm skill add code-review -s vercel-labs/agent-skills -p frontend-project
 skm project link frontend-project code-review
 skm status
 skm install
-skm install frontend-project code-review --yes
+skm install frontend-project code-review -y
 skm uninstall frontend-project
-skm uninstall frontend-project --keep-link
+skm uninstall frontend-project -l
 ```
 
 With no arguments, `skm` opens the project-aware dashboard. Its actions install
@@ -94,15 +94,16 @@ lifecycle commands for project files.
 
 | Flag | Meaning |
 | --- | --- |
+| `-h`, `--help` | Show top-level SKM help |
 | `-p`, `--profile` | Select the profile changed by a source or skill command |
-| `--source` | Select the saved profile source changed by `skill add` or `skill remove` |
-| `--skill` | Select an explicit skill for `source add`; repeat for multiple skills |
-| `--all` | Snapshot every currently discovered skill into one profile source |
-| `--no-skills` | Save a source with an empty skill selection |
-| `--yes` | Skip SKM and upstream confirmation prompts |
-| `--force` | Permit linked-profile removal or lifecycle mismatch/untracked replacement/removal |
-| `--dry-run` | Render a lifecycle plan without mutation |
-| `--keep-link` | Uninstall files without unlinking the selected profile |
+| `-s`, `--source` | Select the saved profile source changed by `skill add` or `skill remove` |
+| `-k`, `--skill` | Select an explicit skill for `source add`; repeat for multiple skills |
+| `-a`, `--all` | Snapshot every currently discovered skill into one profile source |
+| `-n`, `--no-skills` | Save a source with an empty skill selection |
+| `-y`, `--yes` | Skip SKM and upstream confirmation prompts |
+| `-f`, `--force` | Permit linked-profile removal or lifecycle mismatch/untracked replacement/removal |
+| `-d`, `--dry-run` | Render a lifecycle plan without mutation |
+| `-l`, `--keep-link` | Uninstall files without unlinking the selected profile |
 
 `status`, `install`, and `uninstall` accept one or multiple explicit profile
 names. Without profile names they use the current project's linked profiles;

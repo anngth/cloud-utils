@@ -38,18 +38,58 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   const listEnd = (text = "") => out(`${fg(C.cyan, "└")}${text ? `  ${text}` : ""}`);
 
   function usage() {
+    const section = (name) => {
+      out(pipe);
+      active(name);
+    };
+    const command = (syntax, description) => {
+      out(`${pipe}  ${fg(C.green, syntax)}${description ? `  ${fg(C.gray, description)}` : ""}`);
+    };
+    const continuation = (syntax) => out(`${pipe}      ${fg(C.green, syntax)}`);
+    const note = (text) => out(`${pipe}  ${fg(C.gray, text)}`);
+
     title();
-    step("Usage: skm <command> [args]");
-    active("Profile and project skill management");
-    out(pipe);
-    out(`${pipe}  ${fg(C.green, "profile")} list | show | create | rename | remove`);
-    out(`${pipe}  ${fg(C.green, "source")} add | edit | remove | show`);
-    out(`${pipe}  ${fg(C.green, "skill")} add | remove`);
-    out(`${pipe}      Changes profile recipes; does not change installed project skills`);
-    out(`${pipe}  ${fg(C.green, "project")} link | unlink | show | list | remove`);
-    out(`${pipe}  ${fg(C.green, "status")} [profile...]`);
-    out(`${pipe}  ${fg(C.green, "install")} [profile...]`);
-    out(`${pipe}  ${fg(C.green, "uninstall")} [profile...]`);
+    step("Usage: skm [command]");
+    command("skm", "Open interactive dashboard");
+    command("skm (help | -h | --help)", "Show this help");
+
+    section("Lifecycle");
+    command("skm status [profile...]", "Compare desired and installed skills");
+    command("skm install [profile...] [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]", "Install selected profile skills");
+    command("skm uninstall [profile...] [(-y | --yes)] [(-f | --force)]", "Uninstall selected profile skills");
+    continuation("[(-d | --dry-run)] [(-l | --keep-link)]");
+
+    section("Profiles");
+    command("skm profile list", "List profiles");
+    command("skm profile show <profile>", "Show one profile");
+    command("skm profile create <profile>", "Create a profile");
+    command("skm profile rename <old> <new>", "Rename a profile");
+    command("skm profile remove <profile> [(-f | --force)]", "Remove a profile");
+
+    section("Sources");
+    command("skm source add <source> (-p | --profile) <profile>", "Add a source and select skills");
+    continuation("[[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)]");
+    command("skm source edit <source> (-p | --profile) <profile>", "Edit selected source skills");
+    command("skm source remove <source> (-p | --profile) <profile>", "Remove a source from a profile");
+    command("skm source show <source>", "Show available source skills");
+
+    section("Skills");
+    command("skm skill add <skill...> (-s | --source) <source>", "Add skills to a profile source");
+    continuation("(-p | --profile) <profile>");
+    command("skm skill remove <skill...> (-s | --source) <source>", "Remove skills from a profile source");
+    continuation("(-p | --profile) <profile>");
+
+    section("Projects");
+    command("skm project link <profile...>", "Link profiles to the current project");
+    command("skm project unlink [profile...]", "Unlink profiles from the current project");
+    command("skm project show", "Show the current project");
+    command("skm project list", "List registered projects");
+    command("skm project remove <project-path>", "Remove a project registration");
+
+    section("Notes");
+    note("Profile names omitted from lifecycle commands use current project links.");
+    note("Profile, source, skill, and project commands change configuration only.");
+    note("--force permits linked-profile removal or mismatch/untracked skill changes.");
     listEnd();
   }
 
