@@ -35,12 +35,17 @@ function parseOptions(args) {
   const valueFlags = new Map([
     ["-p", "profile"],
     ["--profile", "profile"],
+    ["-s", "source"],
     ["--source", "source"],
+    ["-k", "skills"],
     ["--skill", "skills"],
   ]);
   const booleanFlags = new Map([
+    ["-a", "all"],
     ["--all", "all"],
+    ["-n", "noSkills"],
     ["--no-skills", "noSkills"],
+    ["-f", "force"],
     ["--force", "force"],
   ]);
 

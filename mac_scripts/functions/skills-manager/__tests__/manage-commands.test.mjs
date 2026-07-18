@@ -339,3 +339,68 @@ test("skill add rejects an unsaved source before discovery", async (t) => {
   assert.equal(harness.upstreamCalls.length, 0);
   assert.equal(harness.writtenProfiles, undefined);
 });
+
+test("management short value flags match their long forms", async (t) => {
+  const source = makeManagementHarness(t, {
+    discover: [
+      { name: "a", description: "A" },
+      { name: "b", description: "B" },
+    ],
+  });
+  assert.equal(await runSourceCommand([
+    "add", "acme/skills", "-p", "default", "-k", "a", "-k", "b",
+  ], source.context), 0);
+  assert.deepEqual(source.writtenProfiles, profileWithSource(
+    "default", "acme/skills", ["a", "b"],
+  ));
+
+  const skill = makeManagementHarness(t, {
+    profiles: profileWithSource("default", "acme/skills", ["a"]),
+  });
+  assert.equal(await runSkillCommand([
+    "remove", "a", "-s", "acme/skills", "-p", "default",
+  ], skill.context), 0);
+  assert.deepEqual(skill.writtenProfiles, profileWithSource("default", "acme/skills", []));
+});
+
+test("management short boolean flags match their long forms", async (t) => {
+  const all = makeManagementHarness(t, {
+    discover: [
+      { name: "a", description: "A" },
+      { name: "b", description: "B" },
+    ],
+  });
+  assert.equal(await runSourceCommand([
+    "add", "acme/skills", "-p", "default", "-a",
+  ], all.context), 0);
+  assert.deepEqual(all.writtenProfiles, profileWithSource(
+    "default", "acme/skills", ["a", "b"],
+  ));
+
+  const none = makeManagementHarness(t);
+  assert.equal(await runSourceCommand([
+    "add", "acme/skills", "-p", "default", "-n",
+  ], none.context), 0);
+  assert.equal(none.upstreamCalls.length, 0);
+  assert.deepEqual(none.writtenProfiles, profileWithSource("default", "acme/skills", []));
+
+  const forced = makeManagementHarness(t, {
+    profiles: profiles("default", "frontend"),
+    projects: projects({ root: "/repo", profiles: ["frontend"] }),
+  });
+  assert.equal(await runProfileCommand(["remove", "frontend", "-f"], forced.context), 0);
+  assert.deepEqual(forced.transactions[0], {
+    profiles: profiles("default"),
+    projects: projects(),
+  });
+});
+
+test("mixed short and long source selection modes remain mutually exclusive", async (t) => {
+  const harness = makeManagementHarness(t);
+  assert.equal(await runSourceCommand([
+    "add", "acme/skills", "-p", "default", "-k", "a", "--all",
+  ], harness.context), 1);
+  assert.equal(harness.upstreamCalls.length, 0);
+  assert.equal(harness.writtenProfiles, undefined);
+  assert.match(harness.stderr(), /mutually exclusive/i);
+});
