@@ -74,7 +74,7 @@ Projects
   skm project unlink [profile...]              Unlink profiles from the current project
   skm project show                             Show the current project
   skm project list                             List registered projects
-  skm project remove <project-path>            Remove a project registration
+  skm project remove [project-path]            Remove a project registration
 
 Notes
   Profile names omitted from lifecycle commands use current project links.

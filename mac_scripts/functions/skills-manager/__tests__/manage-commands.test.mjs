@@ -111,6 +111,38 @@ test("project remove without a path removes the resolved current project", async
     "projectChanged",
     { action: "removed", root: "/repo", profiles: [] },
   ]);
+  assert.equal(harness.upstreamCalls.length, 0);
+});
+
+test("project remove resolves explicit absolute and relative paths", async (t) => {
+  for (const { args, cwd, root } of [
+    { args: ["remove", "/repo/absolute"], cwd: "/repo/nested", root: "/repo/absolute" },
+    { args: ["remove", "../relative"], cwd: "/repo/nested", root: "/repo/relative" },
+  ]) {
+    const harness = makeManagementHarness(t, {
+      projects: projects({ root, profiles: ["default"] }),
+    });
+    harness.context.cwd = cwd;
+
+    assert.equal(await runProjectCommand(args, harness.context), 0);
+    assert.deepEqual(harness.writtenProjects, projects());
+    assert.deepEqual(harness.uiCalls.at(-1), [
+      "projectChanged",
+      { action: "removed", root, profiles: [] },
+    ]);
+    assert.equal(harness.upstreamCalls.length, 0);
+  }
+});
+
+test("project remove rejects two paths without writing", async (t) => {
+  const harness = makeManagementHarness(t, {
+    projects: projects({ root: "/one", profiles: ["default"] }),
+  });
+
+  assert.equal(await runProjectCommand(["remove", "/one", "/two"], harness.context), 1);
+  assert.match(harness.stderr(), /Usage: skm project remove \[project-path\]/);
+  assert.equal(harness.writtenProjects, undefined);
+  assert.equal(harness.upstreamCalls.length, 0);
 });
 
 test("profile remove blocks linked use and force unlinks in one transaction", async (t) => {

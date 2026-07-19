@@ -82,6 +82,12 @@ test("project remove without a path passes grammar validation", async () => {
   assert.deepEqual(harness.calls[0][1], ["remove"]);
 });
 
+test("project remove rejects two paths without dispatch", async () => {
+  const harness = cliHarness();
+  assert.equal(await runCli(["project", "remove", "/one", "/two"], harness.dependencies), 1);
+  assert.deepEqual(harness.calls, []);
+});
+
 test("rejects removed legacy commands", async () => {
   for (const command of ["ls", "list", "add", "remove", "rm", "show"]) {
     const harness = cliHarness({ hasNpx: false });
