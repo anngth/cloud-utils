@@ -380,7 +380,7 @@ skm project unlink <profile...>
 skm project unlink
 skm project show
 skm project list
-skm project remove <project-path>
+skm project remove [project-path]
 ```
 
 Behavior:
@@ -396,8 +396,10 @@ Behavior:
 - `show` displays the resolved current project and linked profiles.
 - `list` displays all registered project roots and profile links, marking roots
   that no longer exist.
-- `remove` deletes a stale or unwanted project entry only. It does not modify
-  the project filesystem or uninstall skills.
+- `remove [project-path]` deletes a stale or unwanted project entry only. When
+  the path is omitted, it resolves and removes the current project root, using
+  the same project-root resolution as `link`, `unlink`, and `show`. It does not
+  modify the project filesystem or uninstall skills.
 
 ### 8.6 Status
 
