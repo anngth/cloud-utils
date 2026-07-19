@@ -75,6 +75,13 @@ test("dispatches only the new top-level commands", async () => {
   }
 });
 
+test("project remove without a path passes grammar validation", async () => {
+  const harness = cliHarness();
+  assert.equal(await runCli(["project", "remove"], harness.dependencies), 0);
+  assert.deepEqual(harness.calls.map(([name]) => name), ["project"]);
+  assert.deepEqual(harness.calls[0][1], ["remove"]);
+});
+
 test("rejects removed legacy commands", async () => {
   for (const command of ["ls", "list", "add", "remove", "rm", "show"]) {
     const harness = cliHarness({ hasNpx: false });

@@ -86,7 +86,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     command("skm project unlink [profile...]", "Unlink profiles from the current project");
     command("skm project show", "Show the current project");
     command("skm project list", "List registered projects");
-    command("skm project remove <project-path>", "Remove a project registration");
+    command("skm project remove [project-path]", "Remove a project registration");
 
     section("Notes");
     note("Profile names omitted from lifecycle commands use current project links.");

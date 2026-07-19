@@ -98,6 +98,21 @@ test("project link changes config without invoking upstream", async (t) => {
   assert.equal(harness.upstreamCalls.length, 0);
 });
 
+test("project remove without a path removes the resolved current project", async (t) => {
+  const harness = makeManagementHarness(t, {
+    projects: projects({ root: "/repo", profiles: ["default"] }),
+  });
+  harness.context.cwd = "/repo/packages/app";
+  harness.context.resolveProjectRoot = () => "/repo";
+
+  assert.equal(await runProjectCommand(["remove"], harness.context), 0);
+  assert.deepEqual(harness.writtenProjects, projects());
+  assert.deepEqual(harness.uiCalls.at(-1), [
+    "projectChanged",
+    { action: "removed", root: "/repo", profiles: [] },
+  ]);
+});
+
 test("profile remove blocks linked use and force unlinks in one transaction", async (t) => {
   const blocked = makeManagementHarness(t, {
     profiles: profiles("default", "frontend"),

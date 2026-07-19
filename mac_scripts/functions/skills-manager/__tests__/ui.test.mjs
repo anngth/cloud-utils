@@ -410,7 +410,7 @@ test("usage documents every command signature and short flag", () => {
     "│  skm project unlink [profile...]  Unlink profiles from the current project",
     "│  skm project show  Show the current project",
     "│  skm project list  List registered projects",
-    "│  skm project remove <project-path>  Remove a project registration",
+    "│  skm project remove [project-path]  Remove a project registration",
     "│  Profile names omitted from lifecycle commands use current project links.",
     "│  Profile, source, skill, and project commands change configuration only.",
     "│  --force permits linked-profile removal or mismatch/untracked skill changes.",

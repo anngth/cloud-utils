@@ -88,6 +88,10 @@ function requireAtLeastOne(parsed, usage) {
   if (parsed.positionals.length === 0) throw new CommandUsageError(`Usage: ${usage}`);
 }
 
+function requireAtMostOne(parsed, usage) {
+  if (parsed.positionals.length > 1) throw new CommandUsageError(`Usage: ${usage}`);
+}
+
 function rejectOptions(parsed, allowed = []) {
   const allow = new Set(allowed);
   if (parsed.profile !== null && !allow.has("profile")) throw new CommandUsageError("Unexpected --profile");
@@ -129,7 +133,7 @@ export function validateManagementCommandGrammar(family, args) {
     if (action === "unlink") { const parsed = parseOptions(rest); rejectOptions(parsed); }
     if (action === "show") { const parsed = parseOptions(rest); requirePositionals(parsed, 0, "skm project show"); rejectOptions(parsed); }
     if (action === "list") { const parsed = parseOptions(rest); requirePositionals(parsed, 0, "skm project list"); rejectOptions(parsed); }
-    if (action === "remove") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm project remove <project-path>"); rejectOptions(parsed); }
+    if (action === "remove") { const parsed = parseOptions(rest); requireAtMostOne(parsed, "skm project remove [project-path]"); rejectOptions(parsed); }
   }
 }
 
@@ -527,10 +531,12 @@ async function runProjectList(args, context) {
 
 async function runProjectRemove(args, context) {
   const parsed = parseOptions(args);
-  requirePositionals(parsed, 1, "skm project remove <project-path>");
+  requireAtMostOne(parsed, "skm project remove [project-path]");
   rejectOptions(parsed);
   const rawRoot = parsed.positionals[0];
-  const root = isAbsolute(rawRoot) ? resolve(rawRoot) : resolve(context.cwd, rawRoot);
+  const root = rawRoot === undefined
+    ? currentProjectRoot(context)
+    : isAbsolute(rawRoot) ? resolve(rawRoot) : resolve(context.cwd, rawRoot);
   if (!context.config.projects.projects.some((item) => item.root === root)) {
     throw new CommandUsageError(`Project not found: ${root}`);
   }
