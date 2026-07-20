@@ -35,6 +35,23 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   };
   const active = (text) => out(`${fg(C.cyan, "◆")}  ${text}`);
   const item = (text, color = C.green) => out(`${pipe}  ${fg(color, "■")} ${text}`);
+  const skillItem = ({
+    name,
+    suffix = "",
+    marker = "■",
+    markerColor = C.green,
+    suffixColor = C.gray,
+    indent = "  ",
+  }) => out(
+    `${pipe}${indent}${fg(markerColor, marker)} ${fg(C.brightGreen, name)}`
+      + `${suffix ? ` ${fg(suffixColor, suffix)}` : ""}`,
+  );
+  const skillList = (values, renderItem) => {
+    values.forEach((value, index) => {
+      if (index > 0) out(pipe);
+      renderItem(value);
+    });
+  };
   const listEnd = (text = "") => out(`${fg(C.cyan, "└")}${text ? `  ${text}` : ""}`);
 
   function usage() {
@@ -143,7 +160,12 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     if (profile.sources.length === 0) item("No sources", C.yellow);
     for (const source of profile.sources) {
       item(`${redactSource(source.source)} — ${plural(source.skills.length, "selected skill")}`);
-      for (const skill of source.skills) out(`${pipe}      ${fg(C.gray, "•")} ${skill}`);
+      skillList(source.skills, (name) => skillItem({
+        name,
+        marker: "•",
+        markerColor: C.gray,
+        indent: "      ",
+      }));
     }
     out(pipe);
     active("Linked projects");
@@ -172,9 +194,10 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     step(`${plural(change.skills?.length ?? 0, "selected skill")}`);
     if (change.available?.length > 0) {
       active("Available skills");
-      for (const record of change.available) {
-        item(`${record.name}${record.description ? ` — ${record.description}` : ""}`);
-      }
+      skillList(change.available, (record) => skillItem({
+        name: record.name,
+        suffix: record.description ? `— ${record.description}` : "",
+      }));
     }
     listEnd();
   }
@@ -186,7 +209,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     title();
     step(`Skills ${change.action}: ${plural(change.skills?.length ?? 0, "skill")}`);
     step(`Profile: ${change.profile}; source: ${redactSource(change.source)}`);
-    for (const name of change.skills ?? []) item(name);
+    skillList(change.skills ?? [], (name) => skillItem({ name }));
     if (change.missing?.length > 0) item(`Not selected: ${change.missing.join(", ")}`, C.yellow);
     out(pipe);
     out(`${pipe}  This changes the profile definition and does not change installed project skills`);

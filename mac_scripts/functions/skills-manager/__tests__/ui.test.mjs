@@ -13,6 +13,10 @@ function makeUi() {
   return { stdout, stderr, ui: createUi({ stdout, stderr }) };
 }
 
+const paint = (code, text) => `\u001b[${code}m${text}\u001b[39m`;
+const stripAnsi = (text) => text.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "");
+const occurrences = (text, fragment) => text.split(fragment).length - 1;
+
 test("management UI exposes the complete renderer surface", () => {
   const { ui } = makeUi();
   for (const name of [
@@ -96,6 +100,55 @@ test("source and skill result renderers include selected-skill counts", () => {
   });
   assert.match(skill.stdout.read(), /1 skill/);
   assert.match(skill.stdout.read(), /does not change installed project skills/);
+});
+
+test("available skill rows highlight only names and separate adjacent records", () => {
+  const { stdout, ui } = makeUi();
+  ui.sourceChanged({
+    action: "shown",
+    profile: null,
+    source: "obra/superpowers",
+    skills: ["brainstorming", "test-driven-development"],
+    available: [
+      { name: "brainstorming", description: "Explore requirements" },
+      { name: "test-driven-development", description: "Test first" },
+    ],
+  });
+
+  const rendered = stdout.read();
+  assert.ok(rendered.includes(`${paint("92", "brainstorming")} ${paint("90", "— Explore requirements")}`));
+  assert.equal(occurrences(rendered, "\u001b[92mbrainstorming\u001b[39m"), 1);
+  assert.match(
+    stripAnsi(rendered),
+    /│  ■ brainstorming — Explore requirements\n│\n│  ■ test-driven-development — Test first\n└/,
+  );
+});
+
+test("profile and skill-change lists highlight and separate name-only skills", () => {
+  const profile = makeUi();
+  profile.ui.profileShow({
+    profile: {
+      name: "quality",
+      sources: [{ source: "obra/superpowers", skills: ["brainstorming", "testing"] }],
+    },
+    projects: [],
+  });
+  assert.match(
+    stripAnsi(profile.stdout.read()),
+    /│      • brainstorming\n│\n│      • testing/,
+  );
+  assert.ok(profile.stdout.read().includes(paint("92", "brainstorming")));
+
+  const changed = makeUi();
+  changed.ui.skillChanged({
+    action: "added",
+    profile: "quality",
+    source: "obra/superpowers",
+    skills: ["brainstorming", "testing"],
+    missing: [],
+  });
+  assert.match(stripAnsi(changed.stdout.read()), /■ brainstorming\n│\n│  ■ testing/);
+  assert.ok(changed.stdout.read().includes(paint("92", "testing")));
 });
 
 test("source renderers never display URL queries, fragments, or credentials", () => {
