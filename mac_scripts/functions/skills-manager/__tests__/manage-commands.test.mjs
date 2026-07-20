@@ -191,6 +191,14 @@ test("source add snapshots selected discovery records", async (t) => {
   assert.equal(await runSourceCommand([
     "add", "acme/skills", "--profile", "default",
   ], harness.context), 0);
+  assert.ok(harness.selectionCalls[0][0].items.every((item) => item.kind === "skill"));
+  assert.deepEqual(
+    harness.selectionCalls[0][0].items.map(({ value, label, hint }) => ({ value, label, hint })),
+    [
+      { value: "a", label: "a", hint: "A" },
+      { value: "b", label: "b", hint: "B" },
+    ],
+  );
   assert.deepEqual(harness.writtenProfiles.profiles[0].sources, [{
     source: "acme/skills",
     skills: ["b"],
@@ -271,6 +279,11 @@ test("source edit retains an unavailable saved skill unless deselected", async (
   assert.equal(await runSourceCommand([
     "edit", "acme/skills", "-p", "default",
   ], harness.context), 0);
+  const editItems = harness.selectionCalls[0][0].items;
+  assert.deepEqual(editItems.map(({ kind, value, hint }) => ({ kind, value, hint })), [
+    { kind: "skill", value: "old", hint: "saved; unavailable upstream" },
+    { kind: "skill", value: "current", hint: "Current" },
+  ]);
   assert.deepEqual(harness.writtenProfiles.profiles[0].sources[0].skills, ["old", "current"]);
 });
 

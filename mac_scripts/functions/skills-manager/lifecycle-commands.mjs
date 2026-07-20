@@ -116,6 +116,7 @@ function desiredConflictMessage(conflicts) {
 
 function selectableInstallItems(plan) {
   return [...plan.install, ...plan.replace].map((item) => ({
+    kind: "skill",
     key: item.key,
     value: item.key,
     label: item.skill,

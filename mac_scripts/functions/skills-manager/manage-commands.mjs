@@ -296,7 +296,9 @@ async function sourceSelection(parsed, source, context) {
   }
   const result = await selectedValues(
     context,
-    available.map(({ name, description }) => ({ value: name, label: name, hint: description })),
+    available.map(({ name, description }) => ({
+      kind: "skill", value: name, label: name, hint: description,
+    })),
     { multiple: true, title: `Select skills from ${redactSource(source)}` },
   );
   return { ...result, available };
@@ -348,8 +350,18 @@ async function runSourceEdit(args, context) {
   const items = [
     ...entry.skills
       .filter((name) => !found.has(name))
-      .map((name) => ({ value: name, label: name, hint: "saved; unavailable upstream" })),
-    ...available.map(({ name, description }) => ({ value: name, label: name, hint: description })),
+      .map((name) => ({
+        kind: "skill",
+        value: name,
+        label: name,
+        hint: "saved; unavailable upstream",
+      })),
+    ...available.map(({ name, description }) => ({
+      kind: "skill",
+      value: name,
+      label: name,
+      hint: description,
+    })),
   ];
   const selection = await selectedValues(context, items, {
     initial: entry.skills,

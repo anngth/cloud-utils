@@ -432,6 +432,9 @@ test("install selector hints redact unsafe persisted source text", async () => {
     return { type: "cancel", selected: [] };
   };
   assert.equal(await runInstallCommand([], harness.context), 0);
+  assert.equal(items[0].kind, "skill");
+  assert.equal(items[0].value, items[0].key);
+  assert.equal(items[0].label, "review");
   assert.match(items[0].hint, /https:\/\/git\.example\.com\/a\/repo/);
   assert.doesNotMatch(items[0].hint, /user|secret|token|fragment/i);
 });

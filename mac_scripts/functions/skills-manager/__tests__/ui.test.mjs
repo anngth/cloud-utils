@@ -524,3 +524,32 @@ test("selector keeps ANSI output and renders selected items", () => {
   assert.match(stdout.read(), /■.*Frontend/);
   assert.match(stdout.read(), /□.*Review/);
 });
+
+test("skill selectors highlight names and separate rows while profile selectors stay compact", () => {
+  const skills = makeUi();
+  skills.ui.selector("Choose skills", {
+    items: [
+      { kind: "skill", value: "brainstorming", label: "brainstorming", hint: "Explore" },
+      { kind: "skill", value: "testing", label: "testing", hint: "Verify" },
+    ],
+    cursor: 1,
+    selected: new Set([0]),
+  }, { mode: "install" });
+  const skillOutput = skills.stdout.read();
+  assert.ok(skillOutput.includes(paint("92", "brainstorming")));
+  assert.ok(skillOutput.includes(paint("92", "testing")));
+  assert.match(stripAnsi(skillOutput), /■ brainstorming Explore\n│\n│  □ testing Verify/);
+
+  const profiles = makeUi();
+  profiles.ui.selector("Choose profiles", {
+    items: [
+      { value: "frontend", label: "Frontend" },
+      { value: "review", label: "Review" },
+    ],
+    cursor: 1,
+    selected: new Set([0]),
+  }, { mode: "install" });
+  const profileOutput = profiles.stdout.read();
+  assert.doesNotMatch(stripAnsi(profileOutput), /Frontend\n│\n│  □ Review/);
+  assert.ok(!profileOutput.includes(paint("92", "Frontend")));
+});

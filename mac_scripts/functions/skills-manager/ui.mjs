@@ -430,11 +430,17 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     values.forEach((entry, index) => {
       const label = typeof entry === "string" ? entry : entry.label;
       const hint = typeof entry === "string" ? "" : entry.hint;
+      const skillEntry = typeof entry !== "string" && entry.kind === "skill";
+      const previous = values[index - 1];
+      const previousSkill = typeof previous !== "string" && previous?.kind === "skill";
+      if (index > 0 && skillEntry && previousSkill) out(pipe);
       const selected = mode === "install" ? state.selected.has(index) : index === state.cursor;
       const box = selected ? "■" : "□";
       const boxColor = selected ? C.brightGreen : C.gray;
-      const labelColor = index === state.cursor ? C.white : C.gray;
-      out(`${pipe}  ${boxColor}${box}${C.reset} ${labelColor}${label}${C.reset}${hint ? ` ${fg(C.gray, hint)}` : ""}`);
+      const labelColor = skillEntry
+        ? C.brightGreen
+        : index === state.cursor ? C.white : C.gray;
+      out(`${pipe}  ${boxColor}${box}${C.reset} ${fg(labelColor, label)}${hint ? ` ${fg(C.gray, hint)}` : ""}`);
     });
     if (cancelled) listEnd(fg(C.red, "Selection cancelled"));
     else listEnd();
