@@ -405,6 +405,25 @@ test("execution summary warns when removal succeeded but replacement failed", ()
   assert.equal(occurrences(rendered, "npx skills add a/repo --skill review"), 1);
 });
 
+test("execution summary preserves a failed replacement install batch as one retry", () => {
+  const { stdout, ui } = makeUi();
+  ui.executionSummary({
+    ok: false,
+    succeeded: [],
+    failed: [{
+      action: "install", source: "a/repo", skills: ["review", "testing"], status: 7,
+    }],
+    replacements: [
+      { source: "a/repo", skill: "review", removeStatus: 0, installStatus: 7 },
+      { source: "a/repo", skill: "testing", removeStatus: 0, installStatus: 7 },
+    ],
+  });
+  const rendered = stripAnsi(stdout.read());
+  assert.equal(occurrences(rendered, "npx skills add a/repo --skill review --skill testing"), 1);
+  assert.doesNotMatch(rendered, /npx skills add a\/repo --skill review(?:\r?\n|$)/);
+  assert.doesNotMatch(rendered, /npx skills add a\/repo --skill testing(?:\r?\n|$)/);
+});
+
 test("execution retry guidance redacts unsafe persisted source text", () => {
   const { stdout, ui } = makeUi();
   ui.executionSummary({

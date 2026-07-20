@@ -412,15 +412,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
       }));
       out(pipe);
     }
-    const replacementRetryRecords = incompleteReplacements.map((record) => ({
-      action: "install",
-      source: record.source,
-      skills: [record.skill],
-    }));
-    const retryCommands = uniqueRetryCommands([
-      ...replacementRetryRecords,
-      ...result.failed,
-    ]);
+    const retryCommands = uniqueRetryCommands(result.failed);
     if (retryCommands.length > 0) {
       active("Retry commands");
       for (const command of retryCommands) item(command, C.red);
