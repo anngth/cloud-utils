@@ -124,6 +124,22 @@ test("available skill rows highlight only names and separate adjacent records", 
   );
 });
 
+test("a single available skill row has no skill-to-skill separator", () => {
+  const { stdout, ui } = makeUi();
+  ui.sourceChanged({
+    action: "shown",
+    profile: null,
+    source: "obra/superpowers",
+    skills: ["brainstorming"],
+    available: [{ name: "brainstorming", description: "Explore requirements" }],
+  });
+
+  assert.match(
+    stripAnsi(stdout.read()),
+    /◆  Available skills\n│  ■ brainstorming — Explore requirements\n└/,
+  );
+});
+
 test("profile and skill-change lists highlight and separate name-only skills", () => {
   const profile = makeUi();
   profile.ui.profileShow({
