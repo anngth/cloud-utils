@@ -19,3 +19,4 @@ cd() {
 # Aliases for mac
 alias avd='~/Library/Android/sdk/tools/emulator -list-avds'
 alias xcls='xcrun simctl list devices'
+alias codex2='CODEX_HOME="$HOME/.codex-2" codex app'
