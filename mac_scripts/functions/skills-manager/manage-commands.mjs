@@ -107,7 +107,7 @@ export function validateManagementCommandGrammar(family, args) {
   if (family === "profile") {
     if (action === "list") { const parsed = parseOptions(rest); requirePositionals(parsed, 0, "skm profile list"); rejectOptions(parsed); }
     if (action === "show") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm profile show <profile>"); rejectOptions(parsed); }
-    if (action === "create") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm profile create <profile>"); rejectOptions(parsed); }
+    if (action === "add") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm profile add <profile>"); rejectOptions(parsed); }
     if (action === "rename") { const parsed = parseOptions(rest); requirePositionals(parsed, 2, "skm profile rename <old> <new>"); rejectOptions(parsed); }
     if (action === "remove") { const parsed = parseOptions(rest); requirePositionals(parsed, 1, "skm profile remove <profile> [--force]"); rejectOptions(parsed, ["force"]); }
     return;
@@ -212,9 +212,9 @@ async function runProfileShow(args, context) {
   return 0;
 }
 
-async function runProfileCreate(args, context) {
+async function runProfileAdd(args, context) {
   const parsed = parseOptions(args);
-  requirePositionals(parsed, 1, "skm profile create <profile>");
+  requirePositionals(parsed, 1, "skm profile add <profile>");
   rejectOptions(parsed);
   const name = parsed.positionals[0];
   const next = createProfile(context.config.profiles, name);
@@ -263,7 +263,7 @@ export async function runProfileCommand(args, context) {
   try {
     if (action === "list") return await runProfileList(rest, context);
     if (action === "show") return await runProfileShow(rest, context);
-    if (action === "create") return await runProfileCreate(rest, context);
+    if (action === "add") return await runProfileAdd(rest, context);
     if (action === "rename") return await runProfileRename(rest, context);
     if (action === "remove") return await runProfileRemove(rest, context);
     context.ui.error(`Unknown profile command: ${action ?? ""}`);

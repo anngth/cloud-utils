@@ -91,6 +91,41 @@ test("profile rename updates linked projects through one transaction", async (t)
   assert.deepEqual(harness.transactions[0].projects.projects[0].profiles, ["web"]);
 });
 
+test("profile add creates and persists an empty profile", async (t) => {
+  const harness = makeManagementHarness(t);
+
+  assert.equal(await runProfileCommand(["add", "frontend"], harness.context), 0);
+  assert.deepEqual(
+    harness.writtenProfiles.profiles.map(({ name, sources }) => ({ name, sources })),
+    [
+      { name: "default", sources: [] },
+      { name: "frontend", sources: [] },
+    ],
+  );
+  assert.deepEqual(harness.uiCalls.at(-1), [
+    "profileChanged",
+    { action: "created", name: "frontend" },
+  ]);
+});
+
+test("profile create is not retained as an alias", async (t) => {
+  const harness = makeManagementHarness(t);
+
+  assert.equal(await runProfileCommand(["create", "frontend"], harness.context), 1);
+  assert.match(harness.stderr(), /Unknown profile command: create/);
+  assert.equal(harness.writtenProfiles, undefined);
+});
+
+test("profile add reports its exact usage for missing or extra names", async (t) => {
+  for (const args of [["add"], ["add", "frontend", "extra"]]) {
+    const harness = makeManagementHarness(t);
+
+    assert.equal(await runProfileCommand(args, harness.context), 1);
+    assert.match(harness.stderr(), /^Usage: skm profile add <profile>$/m);
+    assert.equal(harness.writtenProfiles, undefined);
+  }
+});
+
 test("project link changes config without invoking upstream", async (t) => {
   const harness = makeManagementHarness(t, { profiles: profiles("frontend") });
   assert.equal(await runProjectCommand(["link", "frontend"], harness.context), 0);
@@ -334,7 +369,8 @@ test("source add rejects conflicting selection modes before discovery", async (t
 
 test("management commands reject unknown flags before writes", async (t) => {
   const harness = makeManagementHarness(t);
-  assert.equal(await runProfileCommand(["create", "web", "--wat"], harness.context), 1);
+  assert.equal(await runProfileCommand(["add", "web", "--wat"], harness.context), 1);
+  assert.match(harness.stderr(), /Unknown option: --wat/);
   assert.equal(harness.writtenProfiles, undefined);
 });
 

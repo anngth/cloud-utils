@@ -81,7 +81,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     section("Profiles");
     command("skm profile list", "List profiles");
     command("skm profile show <profile>", "Show one profile");
-    command("skm profile create <profile>", "Create a profile");
+    command("skm profile add <profile>", "Create a profile");
     command("skm profile rename <old> <new>", "Rename a profile");
     command("skm profile remove <profile> [(-f | --force)]", "Remove a profile");
 

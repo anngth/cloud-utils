@@ -521,7 +521,7 @@ test("usage documents every command signature and short flag", () => {
     "│  skm install [profile...] [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]  Install selected profile skills",
     "│  skm profile list  List profiles",
     "│  skm profile show <profile>  Show one profile",
-    "│  skm profile create <profile>  Create a profile",
+    "│  skm profile add <profile>  Create a profile",
     "│  skm profile rename <old> <new>  Rename a profile",
     "│  skm profile remove <profile> [(-f | --force)]  Remove a profile",
     "│  skm source show <source>  Show available source skills",

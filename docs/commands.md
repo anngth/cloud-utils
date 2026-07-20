@@ -65,8 +65,8 @@ retained unchanged. See [setup.md — Local config](setup.md#local-config).
 ```bash
 skm
 skm profile list
-skm profile create frontend-project
-skm profile create code-review
+skm profile add frontend-project
+skm profile add code-review
 skm source add vercel-labs/agent-skills -p frontend-project
 skm skill add code-review -s vercel-labs/agent-skills -p frontend-project
 skm project link frontend-project code-review
@@ -91,7 +91,7 @@ require an explicit profile.
 
 | Family | Supported commands |
 | --- | --- |
-| Profile | `profile list`, `show`, `create`, `rename`, `remove [--force]` |
+| Profile | `profile list`, `show`, `add`, `rename`, `remove [--force]` |
 | Source | `source add`, `edit`, `remove`, `show` |
 | Skill | `skill add <skill...> --source <source> --profile <profile>`, `skill remove <skill...> --source <source> --profile <profile>` |
 | Project | `project link`, `unlink`, `show`, `list`, `remove` |
