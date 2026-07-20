@@ -367,6 +367,14 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     return `npx skills add ${shellArg(redactSource(record.source))} ${skills}`;
   }
 
+  const operationSkillRows = (records) => records.flatMap((record) => (
+    record.skills.map((name) => ({ name, record }))
+  ));
+
+  const uniqueRetryCommands = (records) => [
+    ...new Set(records.map((record) => retryCommand(record))),
+  ];
+
   function executionSummary(result, { operation = "install" } = {}) {
     title();
     const label = operation === "uninstall" ? "Uninstall" : "Install";
@@ -377,31 +385,45 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     ));
     if (incompleteReplacements.length > 0) {
       active("Replacement warning");
-      for (const record of incompleteReplacements) {
-        const retry = retryCommand({
-          action: "install",
-          source: record.source,
-          skills: [record.skill],
-        });
-        item(
-          `Old skill ${record.skill} was removed, but replacement from ${redactSource(record.source)} failed. Retry: ${retry} (status ${record.installStatus})`,
-          C.red,
-        );
-      }
+      skillList(incompleteReplacements, (record) => skillItem({
+        name: record.skill,
+        suffix: `— old version removed; replacement from ${redactSource(record.source)}`
+          + ` failed (status ${record.installStatus})`,
+        markerColor: C.red,
+        suffixColor: C.red,
+      }));
       out(pipe);
     }
     if (result.succeeded.length > 0) {
       active("Succeeded");
-      for (const record of result.succeeded) {
-        item(`${record.action}: ${record.skills.join(", ")}`);
-      }
+      skillList(operationSkillRows(result.succeeded), ({ name, record }) => skillItem({
+        name,
+        suffix: `— ${record.action}`,
+      }));
       out(pipe);
     }
     if (result.failed.length > 0) {
-      active("Failed — retry these commands");
-      for (const record of result.failed) {
-        item(`${retryCommand(record)} (status ${record.status})`, C.red);
-      }
+      active("Failed");
+      skillList(operationSkillRows(result.failed), ({ name, record }) => skillItem({
+        name,
+        suffix: `— ${record.action} failed (status ${record.status})`,
+        markerColor: C.red,
+        suffixColor: C.red,
+      }));
+      out(pipe);
+    }
+    const replacementRetryRecords = incompleteReplacements.map((record) => ({
+      action: "install",
+      source: record.source,
+      skills: [record.skill],
+    }));
+    const retryCommands = uniqueRetryCommands([
+      ...replacementRetryRecords,
+      ...result.failed,
+    ]);
+    if (retryCommands.length > 0) {
+      active("Retry commands");
+      for (const command of retryCommands) item(command, C.red);
     }
     listEnd();
   }

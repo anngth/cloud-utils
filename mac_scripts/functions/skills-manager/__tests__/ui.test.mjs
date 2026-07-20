@@ -362,8 +362,14 @@ test("execution summary renders aggregate results and exact retry batches", () =
   const rendered = stdout.read();
   assert.match(rendered, /1 succeeded/i);
   assert.match(rendered, /2 failed/i);
+  for (const name of ["three", "one", "two", "blocked"]) {
+    assert.ok(rendered.includes(paint("92", name)), `${name} is highlighted`);
+  }
+  assert.match(stripAnsi(rendered), /■ one — install failed \(status 2\)\n│\n│  ■ two — install failed \(status 2\)/);
   assert.match(rendered, /npx skills add a\/repo --skill one --skill two/);
   assert.match(rendered, /npx skills remove blocked --yes/);
+  assert.equal(occurrences(rendered, "npx skills add a/repo --skill one --skill two"), 1);
+  assert.equal(occurrences(rendered, "npx skills remove blocked --yes"), 1);
 });
 
 test("execution summary warns when removal succeeded but replacement failed", () => {
@@ -377,9 +383,10 @@ test("execution summary warns when removal succeeded but replacement failed", ()
     }],
   });
   const rendered = stdout.read();
-  assert.match(rendered, /old skill review was removed/i);
-  assert.match(rendered, /replacement.*failed/i);
+  assert.ok(rendered.includes(paint("92", "review")));
+  assert.match(stripAnsi(rendered), /review — old version removed; replacement from a\/repo failed \(status 7\)/i);
   assert.match(rendered, /npx skills add a\/repo --skill review/);
+  assert.equal(occurrences(rendered, "npx skills add a/repo --skill review"), 1);
 });
 
 test("execution retry guidance redacts unsafe persisted source text", () => {
