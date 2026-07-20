@@ -250,14 +250,20 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     listEnd();
   }
 
-  const requirementText = ({ skill, source, profiles = [] }) => (
-    `${skill} — ${redactSource(source)}${profiles.length > 0 ? ` — required by ${profiles.join(", ")}` : ""}`
+  const requirementSuffix = ({ source, profiles = [] }) => (
+    `— ${redactSource(source)}`
+      + `${profiles.length > 0 ? ` — required by ${profiles.join(", ")}` : ""}`
   );
 
   function requirementSection(label, values, color = C.green) {
     active(label);
     if (values.length === 0) item("None", C.gray);
-    for (const value of values) item(requirementText(value), color);
+    skillList(values, (value) => skillItem({
+      name: value.skill,
+      suffix: requirementSuffix(value),
+      markerColor: color,
+      suffixColor: color,
+    }));
     out(pipe);
   }
 
@@ -271,18 +277,22 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     requirementSection("Untracked", result.untracked, C.red);
     active("Extra");
     if (result.extras.length === 0) item("None", C.gray);
-    for (const extra of result.extras) {
-      item(`${extra.name}${extra.source ? ` — ${redactSource(extra.source)}` : ""}`, C.yellow);
-    }
+    skillList(result.extras, (extra) => skillItem({
+      name: extra.name,
+      suffix: extra.source ? `— ${redactSource(extra.source)}` : "",
+      markerColor: C.yellow,
+      suffixColor: C.yellow,
+    }));
     out(pipe);
     active("Desired-source conflict");
     if (result.desiredConflicts.length === 0) item("None", C.gray);
-    for (const conflict of result.desiredConflicts) {
-      item(
-        `${conflict.skill} — ${conflict.sources.map(redactSource).join(" vs ")} — required by ${conflict.profiles.join(", ")}`,
-        C.red,
-      );
-    }
+    skillList(result.desiredConflicts, (conflict) => skillItem({
+      name: conflict.skill,
+      suffix: `— ${conflict.sources.map(redactSource).join(" vs ")}`
+        + ` — required by ${conflict.profiles.join(", ")}`,
+      markerColor: C.red,
+      suffixColor: C.red,
+    }));
     listEnd();
   }
 
@@ -296,15 +306,21 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     requirementSection("Conflict", plan.conflicts, C.red);
     active("Extra");
     if (plan.extras.length === 0) item("None", C.gray);
-    for (const extra of plan.extras) {
-      item(`${extra.name}${extra.source ? ` — ${redactSource(extra.source)}` : ""}`, C.gray);
-    }
+    skillList(plan.extras, (extra) => skillItem({
+      name: extra.name,
+      suffix: extra.source ? `— ${redactSource(extra.source)}` : "",
+      markerColor: C.gray,
+      suffixColor: C.gray,
+    }));
     out(pipe);
     active("Desired-source conflict");
     if (plan.desiredConflicts.length === 0) item("None", C.gray);
-    for (const conflict of plan.desiredConflicts) {
-      item(`${conflict.skill} — ${conflict.sources.map(redactSource).join(" vs ")}`, C.red);
-    }
+    skillList(plan.desiredConflicts, (conflict) => skillItem({
+      name: conflict.skill,
+      suffix: `— ${conflict.sources.map(redactSource).join(" vs ")}`,
+      markerColor: C.red,
+      suffixColor: C.red,
+    }));
     listEnd();
   }
 

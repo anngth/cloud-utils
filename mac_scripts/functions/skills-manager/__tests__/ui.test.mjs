@@ -214,12 +214,14 @@ const requirement = (source, skill, profiles = ["frontend"]) => ({
 
 test("status renders every classification and contributing profiles", () => {
   const { stdout, ui } = makeUi();
+  const missingA = requirement("a/repo", "missing-a", ["quality"]);
+  const missingB = requirement("b/repo", "missing-b", ["frontend"]);
   ui.status({
     projectRoot: "/repo/app",
     profileNames: ["frontend", "quality"],
     status: {
       installed: [requirement("a/repo", "ready")],
-      missing: [requirement("a/repo", "missing", ["quality"])],
+      missing: [missingA, missingB],
       mismatches: [requirement("a/repo", "wrong-source", ["frontend", "quality"])],
       untracked: [requirement("a/repo", "unknown", ["quality"])],
       extras: [{ name: "other", source: "x/repo", provenance: "tracked" }],
@@ -246,6 +248,15 @@ test("status renders every classification and contributing profiles", () => {
     "other",
     "ambiguous",
   ]) assert.match(rendered, new RegExp(text.replace("/", "\\/"), "i"));
+  assert.ok(rendered.includes(`\u001b[33m■\u001b[39m ${paint("92", "missing-a")}`));
+  assert.ok(rendered.includes(`${paint("92", "missing-a")} ${paint("33", "— a/repo — required by quality")}`));
+  assert.match(
+    stripAnsi(rendered),
+    /│  ■ missing-a — a\/repo — required by quality\n│\n│  ■ missing-b — b\/repo — required by frontend/,
+  );
+  for (const name of ["ready", "missing-a", "wrong-source", "unknown", "other", "ambiguous"]) {
+    assert.ok(rendered.includes(paint("92", name)), `${name} is a highlighted skill`);
+  }
 });
 
 test("install plan labels dry runs and all operation classes", () => {
@@ -255,7 +266,10 @@ test("install plan labels dry runs and all operation classes", () => {
     profileNames: ["frontend"],
     dryRun: true,
     plan: {
-      install: [requirement("a/repo", "missing")],
+      install: [
+        requirement("a/repo", "missing"),
+        requirement("b/repo", "also-missing", ["quality"]),
+      ],
       replace: [requirement("a/repo", "replace-me")],
       skip: [requirement("a/repo", "ready")],
       conflicts: [requirement("a/repo", "blocked")],
@@ -277,6 +291,9 @@ test("install plan labels dry runs and all operation classes", () => {
     "blocked",
     "other",
   ]) assert.match(rendered, new RegExp(text, "i"));
+  assert.ok(rendered.includes(paint("92", "missing")));
+  assert.ok(rendered.includes(paint("92", "also-missing")));
+  assert.match(stripAnsi(rendered), /■ missing[^\n]*\n│\n│  ■ also-missing/);
 });
 
 test("uninstall plan renders removal, retention, absence, conflict, and unlink sections", () => {
@@ -288,7 +305,10 @@ test("uninstall plan renders removal, retention, absence, conflict, and unlink s
     force: true,
     keepLink: false,
     plan: {
-      remove: [requirement("a/repo", "remove-me")],
+      remove: [
+        requirement("a/repo", "remove-me"),
+        requirement("b/repo", "also-remove", ["quality"]),
+      ],
       retain: [requirement("a/repo", "shared", ["quality"])],
       absent: [requirement("a/repo", "gone")],
       conflicts: [requirement("a/repo", "blocked")],
@@ -308,6 +328,10 @@ test("uninstall plan renders removal, retention, absence, conflict, and unlink s
     "frontend",
   ]) assert.match(rendered, new RegExp(text, "i"));
   assert.match(rendered, /force/i);
+  assert.ok(rendered.includes(paint("92", "remove-me")));
+  assert.ok(rendered.includes(paint("92", "shared")));
+  assert.ok(!rendered.includes(paint("92", "frontend")));
+  assert.match(stripAnsi(rendered), /■ remove-me[^\n]*\n│\n│  ■ also-remove/);
 });
 
 test("uninstall keep-link plan omits the unlink section", () => {
