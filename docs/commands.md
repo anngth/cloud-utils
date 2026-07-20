@@ -11,11 +11,12 @@ bud              # brew update/upgrade + sync desired casks
 bud --exclude postman        # exclude cask(s) from upgrade this run
 bud -e postman spotify       # short form
 bud list         # desired vs installed (alias: bud ls)
-bud add <name>   # auto-detect cask or formula
+bud add <name>   # auto-detect cask or formula (tap formulae by short name when tap is installed)
 bud remove <name>
 bud add --cask <name>
 bud add --formula <name>
 bud add <user/repo>          # tap (e.g. mongodb/brew)
+bud add <user/repo>/<formula> # tap formula (adds tap + formula, e.g. atlassian/acli/acli)
 bud add --tap <user/repo>
 bud remove <user/repo>       # remove from taps list
 ```

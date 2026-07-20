@@ -340,16 +340,51 @@ bud() {
     brew info --${brew_type} "$pkg" 2>/dev/null | sed -n '1s/^==> \([^: (]*\).*/\1/p'
   }
 
+  # Core tokens match exactly; tap packages match by short name (e.g. acli → atlassian/acli/acli).
+  _bud_brew_token_matches_name() {
+    local token="$1" name="$2"
+    [[ -n "$token" && ( "$token" == "$name" || "${token##*/}" == "$name" ) ]]
+  }
+
+  _bud_is_tap_formula_spec() {
+    [[ "$1" == */*/* ]]
+  }
+
+  _bud_tap_from_formula_spec() {
+    echo "${1%/*}"
+  }
+
+  _bud_formula_name_from_spec() {
+    echo "${1##*/}"
+  }
+
+  _bud_tap_for_installed_formula() {
+    local name="$1" token
+    token=$(_bud_brew_token formula "$name") || return 1
+    [[ "$token" == */* ]] || return 1
+    echo "${token%/*}"
+  }
+
+  _bud_add_line_to_list() {
+    local file="$1" line="$2"
+    if grep -q "^$line$" "$file" 2>/dev/null; then
+      return 1
+    fi
+    echo "$line" >> "$file"
+    sort -o "$file" "$file"
+    return 0
+  }
+
   _bud_detect_brew_type() {
     local name="$1"
     local is_cask=0 is_formula=0
     local cask_token formula_token
 
     formula_token=$(_bud_brew_token formula "$name")
-    [[ -n "$formula_token" && "$formula_token" == "$name" ]] && is_formula=1
+    _bud_brew_token_matches_name "$formula_token" "$name" && is_formula=1
 
     cask_token=$(_bud_brew_token cask "$name")
-    [[ -n "$cask_token" && "$cask_token" == "$name" ]] && is_cask=1
+    _bud_brew_token_matches_name "$cask_token" "$name" && is_cask=1
 
     if (( is_cask && is_formula )); then
       print -P "%F{yellow}⚠️  '$name' exists as both cask and formula%f" >&2
@@ -508,20 +543,40 @@ bud() {
           fi
 
           local pkg_type="$force_type"
+          local list_name="$pkg_name"
+          local tap_for_formula=""
+
           if [[ -z "$pkg_type" ]]; then
-            if [[ "$pkg_name" == */* ]]; then
+            if _bud_is_tap_formula_spec "$pkg_name"; then
+              pkg_type=formula
+              list_name=$(_bud_formula_name_from_spec "$pkg_name")
+              tap_for_formula=$(_bud_tap_from_formula_spec "$pkg_name")
+            elif [[ "$pkg_name" == */* ]]; then
               pkg_type=tap
             else
               pkg_type=$(_bud_detect_brew_type "$pkg_name") || { failed=1; continue; }
             fi
           elif [[ "$pkg_type" == tap ]]; then
-            if [[ "$pkg_name" != */* ]]; then
+            if [[ "$pkg_name" != */* ]] || _bud_is_tap_formula_spec "$pkg_name"; then
               print -P "%F{yellow}⚠️  Tap name must be user/repo (e.g. mongodb/brew)%f"
               failed=1
               continue
             fi
+          elif [[ "$pkg_type" == formula ]] && _bud_is_tap_formula_spec "$pkg_name"; then
+            list_name=$(_bud_formula_name_from_spec "$pkg_name")
+            tap_for_formula=$(_bud_tap_from_formula_spec "$pkg_name")
           elif ! brew info --${pkg_type} "$pkg_name" >/dev/null 2>&1; then
             print -P "%F{yellow}⚠️  '$pkg_name' not found as a Homebrew $(_bud_label_for_type "$pkg_type")%f"
+            failed=1
+            continue
+          fi
+
+          if [[ "$pkg_type" == formula && -z "$tap_for_formula" ]]; then
+            tap_for_formula=$(_bud_tap_for_installed_formula "$pkg_name" 2>/dev/null) || true
+          fi
+
+          if [[ "$pkg_type" == formula ]] && ! brew info --formula "$pkg_name" >/dev/null 2>&1; then
+            print -P "%F{yellow}⚠️  '$pkg_name' not found as a Homebrew formula%f"
             failed=1
             continue
           fi
@@ -529,10 +584,16 @@ bud() {
           local target_file="$(_bud_list_file_for_type "$pkg_type")"
           local label="$(_bud_label_for_type "$pkg_type")"
 
-          if grep -q "^$pkg_name$" "$target_file" 2>/dev/null; then
-            print -P "%F{yellow}⚠️  '$pkg_name' already exists in ${label}s list%f"
+          if grep -q "^$list_name$" "$target_file" 2>/dev/null; then
+            print -P "%F{yellow}⚠️  '$list_name' already exists in ${label}s list%f"
             failed=1
             continue
+          fi
+
+          if [[ -n "$tap_for_formula" ]]; then
+            if _bud_add_line_to_list "$taps_file" "$tap_for_formula"; then
+              print -P "%F{green}✅ Added%f %F{cyan}'$tap_for_formula'%F{green} to taps list%f"
+            fi
           fi
 
           if [[ "$pkg_type" == cask ]]; then
@@ -550,10 +611,10 @@ bud() {
             fi
           fi
 
-          echo "$pkg_name" >> "$target_file"
+          echo "$list_name" >> "$target_file"
           sort -o "$target_file" "$target_file"
-          succeeded+=("$pkg_name")
-          print -P "%F{green}✅ Added%f %F{cyan}'$pkg_name'%F{green} to ${label}s list%f"
+          succeeded+=("$list_name")
+          print -P "%F{green}✅ Added%f %F{cyan}'$list_name'%F{green} to ${label}s list%f"
         done
 
         if (( ${#succeeded[@]} )); then
