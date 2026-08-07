@@ -63,6 +63,70 @@ export async function projectExists(
   return { ok: false, error: resultError(result, "glab API request failed") };
 }
 
+export async function groupExists(
+  group,
+  { runGlab: runGlabDependency = runGlab } = {},
+) {
+  const path = `groups/${encodeURIComponent(group)}`;
+  const result = await runGlabDependency(["api", path]);
+  if (result.status === 0) return { ok: true, exists: true };
+
+  const detail = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  if (/404|not found/i.test(detail)) return { ok: true, exists: false };
+
+  return { ok: false, error: resultError(result, "glab API request failed") };
+}
+
+export async function createPrivateGroup(
+  group,
+  { runGlab: runGlabDependency = runGlab } = {},
+) {
+  // Private top-level group for backup projects (created on demand).
+  const result = await runGlabDependency([
+    "api",
+    "--method",
+    "POST",
+    "groups",
+    "-f",
+    `name=${group}`,
+    "-f",
+    `path=${group}`,
+    "-f",
+    "visibility=private",
+  ]);
+  if (result.status !== 0) {
+    return { ok: false, error: resultError(result, "failed to create GitLab group") };
+  }
+
+  return { ok: true, stdout: result.stdout, stderr: result.stderr };
+}
+
+/**
+ * Ensure the backup namespace/group exists; create it as private if missing.
+ * @returns {Promise<{ ok: true, created: boolean } | { ok: false, error: string }>}
+ */
+export async function ensureBackupGroup(
+  group,
+  {
+    runGlab: runGlabDependency = runGlab,
+    groupExists: groupExistsDependency = groupExists,
+    createPrivateGroup: createPrivateGroupDependency = createPrivateGroup,
+  } = {},
+) {
+  const existing = await groupExistsDependency(group, { runGlab: runGlabDependency });
+  if (!existing.ok) {
+    return { ok: false, error: existing.error || "could not check GitLab group" };
+  }
+  if (existing.exists) return { ok: true, created: false };
+
+  const created = await createPrivateGroupDependency(group, { runGlab: runGlabDependency });
+  if (!created.ok) {
+    return { ok: false, error: created.error || "failed to create GitLab group" };
+  }
+
+  return { ok: true, created: true };
+}
+
 export async function createPrivateProject(
   group,
   name,
