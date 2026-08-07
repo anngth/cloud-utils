@@ -84,6 +84,7 @@ export async function runPushCommand(_args, context = {}) {
   }
 
   if (pushResult.stdout.trim()) ui.status(pushResult.stdout.trim());
+  if (pushResult.stderr.trim()) ui.status(pushResult.stderr.trim());
   ui.status("✅ Force push successful");
   ui.status("⬇️ Fetching...");
   const fetchResult = await git(["fetch"]);

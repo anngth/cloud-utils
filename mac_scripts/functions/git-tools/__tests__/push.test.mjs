@@ -64,7 +64,7 @@ test("prunes stale remote ref, force pushes, and fetches after success", async (
       case "fetch upstream --prune":
         return { status: 0, stdout: "", stderr: "" };
       case "push --force-with-lease upstream HEAD:feature":
-        return { status: 0, stdout: "ok\n", stderr: "" };
+        return { status: 0, stdout: "", stderr: "To origin\n * [new branch] HEAD -> feature\n" };
       case "fetch":
         return { status: 0, stdout: "", stderr: "" };
       default:
@@ -76,6 +76,7 @@ test("prunes stale remote ref, force pushes, and fetches after success", async (
   const code = await runPushCommand([], { cwd: "/repo", runGit, ui: h.ui });
 
   assert.equal(code, 0);
+  assert.match(h.messages.statuses.join("\n"), /To origin\n \* \[new branch\] HEAD -> feature/);
   assert.deepEqual(calls, [
     ["rev-parse", "--git-dir"],
     ["rev-parse", "--abbrev-ref", "HEAD"],
