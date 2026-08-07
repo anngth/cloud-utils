@@ -2,6 +2,14 @@ import { mkdtempSync as mkdtempSyncDefault, rmSync as rmSyncDefault } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import {
+  addBackupRepo as addBackupRepoDefault,
+  removeBackupRepo as removeBackupRepoDefault,
+} from "./backup-list.mjs";
+import {
+  readBackupsDocument as readBackupsDocumentDefault,
+  resolveGtPaths as resolveGtPathsDefault,
+} from "./config.mjs";
 import { runGit as runGitDefault } from "./git.mjs";
 import {
   BACKUP_GROUP,
@@ -14,10 +22,12 @@ import {
   projectWebUrl,
   setDefaultBranch as setDefaultBranchDefault,
 } from "./gitlab.mjs";
+import { runSelector as runSelectorDefault } from "./selector.mjs";
 import { parseSshGitUrl } from "./ssh-url.mjs";
 import { createUi } from "./ui.mjs";
 
 const RED = "\u001b[31m";
+const ADD_HINT = "Use `gt backup add <ssh-url>` to add a repo first.";
 
 function defaultHasCommand(name) {
   return spawnSync("which", [name], { stdio: "ignore" }).status === 0;
@@ -28,6 +38,7 @@ function resolveContext(context = {}) {
     cwd = process.cwd(),
     env = process.env,
     stdout = process.stdout,
+    stdin = process.stdin,
     ui = createUi({ stdout, stderr: context.stderr ?? process.stderr }),
     hasCommand = defaultHasCommand,
     assertGlabReady = assertGlabReadyDefault,
@@ -39,11 +50,18 @@ function resolveContext(context = {}) {
     runGit = runGitDefault,
     mkdtempSync = mkdtempSyncDefault,
     rmSync = rmSyncDefault,
+    resolveGtPaths = resolveGtPathsDefault,
+    addBackupRepo = addBackupRepoDefault,
+    removeBackupRepo = removeBackupRepoDefault,
+    readBackupsDocument = readBackupsDocumentDefault,
+    runSelector = runSelectorDefault,
   } = context;
 
   return {
     cwd,
     env,
+    stdout,
+    stdin,
     ui,
     hasCommand,
     assertGlabReady,
@@ -55,6 +73,11 @@ function resolveContext(context = {}) {
     runGit,
     mkdtempSync,
     rmSync,
+    resolveGtPaths,
+    addBackupRepo,
+    removeBackupRepo,
+    readBackupsDocument,
+    runSelector,
   };
 }
 
@@ -226,15 +249,125 @@ export async function runBackupBatch(urls, context = {}) {
 }
 
 /**
- * Temporary stub until Task 5 rewires CLI dispatch.
- * @param {string[]} _args
+ * Load the backups list; empty/missing → error + add hint.
+ * @returns {{ ok: true, repos: string[] } | { ok: false }}
+ */
+function loadReposOrError(paths, { readBackupsDocument, ui }) {
+  const read = readBackupsDocument(paths.backupsFile);
+  if (!read.ok) {
+    if (read.missing) {
+      ui.error(`No backups list found. ${ADD_HINT}`);
+      return { ok: false };
+    }
+    ui.error(read.error);
+    return { ok: false };
+  }
+  if (read.document.repos.length === 0) {
+    ui.error(`Backups list is empty. ${ADD_HINT}`);
+    return { ok: false };
+  }
+  return { ok: true, repos: read.document.repos };
+}
+
+/**
+ * CLI dispatcher for `gt backup` subcommands and interactive / `--all` modes.
+ * @param {string[]} args
  * @param {Record<string, unknown>} context
  * @returns {Promise<number>}
  */
-export async function runBackupCommand(_args, context = {}) {
-  const { ui } = resolveContext(context);
-  ui.error(
-    "gt backup one-shot URL is retired; use gt backup add / gt backup / gt backup --all",
-  );
-  return 1;
+export async function runBackupCommand(args = [], context = {}) {
+  const resolved = resolveContext(context);
+  const {
+    env,
+    ui,
+    stdin,
+    resolveGtPaths,
+    addBackupRepo,
+    removeBackupRepo,
+    readBackupsDocument,
+    runSelector,
+  } = resolved;
+  const paths = resolveGtPaths(env);
+
+  if (args[0] === "add") {
+    const sshUrl = args[1];
+    if (!sshUrl || args.length !== 2) {
+      ui.error("Usage: gt backup add <ssh-url>");
+      return 1;
+    }
+    const result = addBackupRepo(paths, sshUrl);
+    if (!result.ok) {
+      ui.error(result.error);
+      return 1;
+    }
+    ui.success(`Added ${result.document.repos[result.index - 1]} at index ${result.index}`);
+    ui.item(paths.backupsFile);
+    ui.listEnd();
+    return 0;
+  }
+
+  if (args[0] === "remove") {
+    const token = args[1];
+    if (!token || args.length !== 2) {
+      ui.error("Usage: gt backup remove <index|ssh-url>");
+      return 1;
+    }
+    const result = removeBackupRepo(paths, token);
+    if (!result.ok) {
+      ui.error(result.error);
+      return 1;
+    }
+    ui.success(`Removed ${result.removed}`);
+    return 0;
+  }
+
+  let all = false;
+  for (const arg of args) {
+    if (arg === "--all") {
+      all = true;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      ui.error(`Unknown flag: ${arg}`);
+      return 1;
+    }
+    ui.error(
+      "gt backup one-shot URL is retired; use gt backup add / gt backup / gt backup --all",
+    );
+    return 1;
+  }
+
+  const loaded = loadReposOrError(paths, { readBackupsDocument, ui });
+  if (!loaded.ok) return 1;
+
+  if (all) {
+    return runBackupBatch(loaded.repos, context);
+  }
+
+  if (!stdin.isTTY) {
+    ui.error(
+      "A terminal is required to select repos interactively. Use `gt backup --all` to back up every listed repo without selecting.",
+    );
+    return 1;
+  }
+
+  const items = loaded.repos.map((url) => ({ label: url, value: url }));
+  const heading = "Select repos to backup";
+  const selection = await runSelector({
+    items,
+    multiple: true,
+    input: stdin,
+    render: (state) => ui.renderBackupSelector(heading, state),
+  });
+
+  if (selection.type === "cancel") {
+    return 1;
+  }
+
+  if (!selection.selected || selection.selected.length === 0) {
+    ui.error("No repos selected");
+    return 1;
+  }
+
+  return runBackupBatch(selection.selected, context);
 }

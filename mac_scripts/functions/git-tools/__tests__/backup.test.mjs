@@ -1,12 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { backupOneRepo, runBackupBatch } from "../backup.mjs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { backupOneRepo, runBackupBatch, runBackupCommand } from "../backup.mjs";
+import { resolveGtPaths } from "../config.mjs";
 import { BACKUP_GROUP, projectSshUrl, projectWebUrl } from "../gitlab.mjs";
 
 const SOURCE = "git@github.com:org/app.git";
 const SOURCE_B = "git@github.com:org/other.git";
 const BASE_NAME = "org-app";
 const BASE_NAME_B = "org-other";
+
+function tempPaths() {
+  const configDir = mkdtempSync(join(tmpdir(), "gt-backup-cmd-"));
+  return resolveGtPaths({ CLOUD_UTILS_CONFIG_DIR: configDir, HOME: "/Users/me" });
+}
+
+function seedRepos(paths, repos) {
+  mkdirSync(paths.gtDir, { recursive: true });
+  writeFileSync(
+    paths.backupsFile,
+    `${JSON.stringify({ version: 1, repos }, null, 2)}\n`,
+    "utf8",
+  );
+}
 
 function uiHarness() {
   const messages = { errors: [], lines: [], statuses: [], warnings: [], ends: [], items: [] };
@@ -305,4 +323,110 @@ test("runBackupBatch returns 0 when all succeed", async () => {
     h.messages.items.join("\n"),
     new RegExp(`ok\\s+${SOURCE}\\s+→\\s+${projectWebUrl(BACKUP_GROUP, BASE_NAME)}`),
   );
+});
+
+test("runBackupCommand add then --all backs up listed repos", async () => {
+  const paths = tempPaths();
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+  });
+
+  const addCode = await runBackupCommand(["add", SOURCE], context);
+  assert.equal(addCode, 0);
+  assert.match(h.messages.statuses.join("\n") + h.messages.lines.join("\n"), /1/);
+
+  const allCode = await runBackupCommand(["--all"], context);
+  assert.equal(allCode, 0);
+  assert.match(
+    h.messages.items.join("\n"),
+    new RegExp(`ok\\s+${SOURCE}\\s+→\\s+${projectWebUrl(BACKUP_GROUP, BASE_NAME)}`),
+  );
+});
+
+test("runBackupCommand remove by index", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE, SOURCE_B]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+  });
+
+  const code = await runBackupCommand(["remove", "1"], context);
+  assert.equal(code, 0);
+  assert.match(h.messages.statuses.join("\n") + h.messages.lines.join("\n"), new RegExp(SOURCE));
+
+  const leftover = await runBackupCommand(["--all"], context);
+  assert.equal(leftover, 0);
+  assert.match(h.messages.items.join("\n"), new RegExp(SOURCE_B));
+  assert.doesNotMatch(h.messages.items.join("\n"), new RegExp(`ok\\s+${SOURCE}\\s+→`));
+});
+
+test("runBackupCommand interactive mock submit backs up selected", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE, SOURCE_B]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    stdin: { isTTY: true },
+    runSelector: async ({ items }) => ({
+      type: "submit",
+      selected: [items[1].value],
+    }),
+  });
+
+  const code = await runBackupCommand([], context);
+  assert.equal(code, 0);
+  assert.match(h.messages.items.join("\n"), new RegExp(SOURCE_B));
+  assert.doesNotMatch(h.messages.items.join("\n"), new RegExp(`ok\\s+${SOURCE}\\s+→`));
+});
+
+test("runBackupCommand empty select errors No repos selected", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    stdin: { isTTY: true },
+    runSelector: async () => ({ type: "submit", selected: [] }),
+  });
+
+  const code = await runBackupCommand([], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /No repos selected/i);
+});
+
+test("runBackupCommand non-TTY without --all mentions terminal and --all", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    stdin: { isTTY: false },
+  });
+
+  const code = await runBackupCommand([], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /terminal/i);
+  assert.match(h.messages.errors.join("\n"), /--all/);
+});
+
+test("runBackupCommand unknown flag errors", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+  });
+
+  const code = await runBackupCommand(["--new"], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /unknown|invalid|flag/i);
+});
+
+test("runBackupCommand empty list errors with add hint", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, []);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+  });
+
+  const code = await runBackupCommand(["--all"], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /empty|no repos|not found|missing/i);
+  assert.match(h.messages.errors.join("\n"), /gt backup add|backup add/i);
 });
