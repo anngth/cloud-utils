@@ -137,6 +137,9 @@ export async function runBackupCommand(args, context = {}) {
       ui.step(`Updating existing backup ${group}/${targetName}`);
     }
   } else {
+    if (existsResult.inactive) {
+      ui.step(`Previous backup pending deletion (inactive); creating ${projectPath}`);
+    }
     const created = await createPrivateProject(group, targetName);
     if (!created.ok) {
       ui.error(created.error || "failed to create GitLab project");

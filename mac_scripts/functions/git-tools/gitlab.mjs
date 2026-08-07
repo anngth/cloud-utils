@@ -48,6 +48,25 @@ export async function assertGlabReady({
   return { ok: true };
 }
 
+const DELETION_PATH_RE = /-(deletion_scheduled|deleted)-\d+$/;
+
+/**
+ * Soft-deleted / pending-deletion projects still resolve via the original path
+ * on GitLab.com even after rename. Treat them as not live for backup collision.
+ */
+export function isInactiveGitLabProject(project, requestedName) {
+  if (!project || typeof project !== "object") return false;
+  if (project.marked_for_deletion_on || project.marked_for_deletion_at) {
+    return true;
+  }
+  const path = project.path;
+  return (
+    typeof path === "string"
+    && path !== requestedName
+    && DELETION_PATH_RE.test(path)
+  );
+}
+
 export async function projectExists(
   group,
   name,
@@ -55,7 +74,18 @@ export async function projectExists(
 ) {
   const path = `projects/${encodeURIComponent(`${group}/${name}`)}`;
   const result = await runGlabDependency(["api", path]);
-  if (result.status === 0) return { ok: true, exists: true };
+  if (result.status === 0) {
+    let project;
+    try {
+      project = JSON.parse(result.stdout || "{}");
+    } catch {
+      return { ok: false, error: "could not parse GitLab project response" };
+    }
+    if (isInactiveGitLabProject(project, name)) {
+      return { ok: true, exists: false, inactive: true };
+    }
+    return { ok: true, exists: true };
+  }
 
   const detail = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
   if (/404|not found/i.test(detail)) return { ok: true, exists: false };

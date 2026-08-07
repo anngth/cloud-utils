@@ -254,6 +254,27 @@ test("existing project without --new updates in place", async () => {
   assert.deepEqual(created, []); // no new project
 });
 
+test("inactive pending-deletion project creates a new backup at the base name", async () => {
+  const created = [];
+  const { h, context } = baseContext({
+    projectExists: async () => ({ ok: true, exists: false, inactive: true }),
+    createPrivateProject: async (_g, name) => {
+      created.push(name);
+      return { ok: true };
+    },
+  });
+
+  const code = await runBackupCommand([SOURCE], context);
+
+  assert.equal(code, 0);
+  assert.deepEqual(created, [BASE_NAME]);
+  assert.match(
+    h.messages.statuses.join("\n"),
+    /pending deletion|inactive/i,
+  );
+  assert.match(h.messages.statuses.join("\n"), /Created /);
+});
+
 test("existing project with --new creates suffixed project", async () => {
   const created = [];
   const { context } = baseContext({

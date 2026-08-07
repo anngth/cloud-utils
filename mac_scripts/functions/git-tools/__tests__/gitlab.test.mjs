@@ -54,7 +54,11 @@ test("projectExists returns true for a successful API response", async () => {
   const result = await projectExists("team name", "my app", {
     runGlab: async (args) => {
       received = args;
-      return { status: 0, stdout: "{}", stderr: "" };
+      return {
+        status: 0,
+        stdout: JSON.stringify({ path: "my app", marked_for_deletion_on: null }),
+        stderr: "",
+      };
     },
   });
 
@@ -70,6 +74,80 @@ test("projectExists maps a not-found API response to exists false", async () => 
   assert.deepEqual(result, { ok: true, exists: false });
 });
 
+test("projectExists treats marked_for_deletion_on as inactive (not live)", async () => {
+  const result = await projectExists(GROUP, "vinova-project-sit-sit-be", {
+    runGlab: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        path: "vinova-project-sit-sit-be-deletion_scheduled-85217875",
+        marked_for_deletion_on: "2026-08-07",
+      }),
+      stderr: "",
+    }),
+  });
+
+  assert.deepEqual(result, { ok: true, exists: false, inactive: true });
+});
+
+test("projectExists treats marked_for_deletion_at as inactive", async () => {
+  const result = await projectExists(GROUP, "my-app", {
+    runGlab: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        path: "my-app",
+        marked_for_deletion_at: "2026-08-07",
+        marked_for_deletion_on: null,
+      }),
+      stderr: "",
+    }),
+  });
+
+  assert.deepEqual(result, { ok: true, exists: false, inactive: true });
+});
+
+test("projectExists treats deletion_scheduled path rename as inactive without marked field", async () => {
+  const result = await projectExists(GROUP, "my-app", {
+    runGlab: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        path: "my-app-deletion_scheduled-99",
+      }),
+      stderr: "",
+    }),
+  });
+
+  assert.deepEqual(result, { ok: true, exists: false, inactive: true });
+});
+
+test("projectExists treats -deleted-<id> path rename as inactive", async () => {
+  const result = await projectExists(GROUP, "my-app", {
+    runGlab: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        path: "my-app-deleted-42",
+      }),
+      stderr: "",
+    }),
+  });
+
+  assert.deepEqual(result, { ok: true, exists: false, inactive: true });
+});
+
+test("projectExists keeps scheduled path lookup inactive via marked even when path matches request", async () => {
+  const result = await projectExists(GROUP, "my-app-deletion_scheduled-99", {
+    runGlab: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        path: "my-app-deletion_scheduled-99",
+        marked_for_deletion_on: "2026-08-07",
+      }),
+      stderr: "",
+    }),
+  });
+
+  assert.deepEqual(result, { ok: true, exists: false, inactive: true });
+});
+
 test("projectExists returns an error for unrelated API failures", async () => {
   const result = await projectExists(GROUP, "broken", {
     runGlab: async () => ({ status: 1, stdout: "", stderr: "connection refused" }),
@@ -77,6 +155,15 @@ test("projectExists returns an error for unrelated API failures", async () => {
 
   assert.equal(result.ok, false);
   assert.match(result.error, /connection refused/i);
+});
+
+test("projectExists returns an error when project JSON is invalid", async () => {
+  const result = await projectExists(GROUP, "broken-json", {
+    runGlab: async () => ({ status: 0, stdout: "not-json", stderr: "" }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /parse/i);
 });
 
 test("groupExists uses encoded nested group path", async () => {
