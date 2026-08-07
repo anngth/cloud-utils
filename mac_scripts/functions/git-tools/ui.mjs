@@ -1,6 +1,7 @@
 const C = {
   cyan: "\u001b[36m",
   green: "\u001b[32m",
+  brightGreen: "\u001b[92m",
   red: "\u001b[31m",
   yellow: "\u001b[33m",
   black: "\u001b[30m",
@@ -29,6 +30,11 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out(pipe);
   }
 
+  function success(text) {
+    out(`${fg(C.green, "◇")}  ${fg(C.brightGreen, text)}`);
+    out(pipe);
+  }
+
   function active(text) {
     out(`${fg(C.cyan, "◆")}  ${text}`);
   }
@@ -42,7 +48,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   }
 
   function listEnd(text = "") {
-    out(`${fg(C.cyan, "└")}${text ? `  ${text}` : ""}`);
+    out(`${fg(C.cyan, "└")}${text ? `  ${fg(C.brightGreen, text)}` : ""}`);
   }
 
   function usage() {
@@ -80,6 +86,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     line,
     title,
     step,
+    success,
     active,
     item,
     warn,
