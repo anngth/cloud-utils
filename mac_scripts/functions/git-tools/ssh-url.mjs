@@ -24,7 +24,7 @@ export function buildProjectName(owner, repo) {
 
 /**
  * @param {string} input
- * @returns {{ ok: true, owner: string, repo: string, projectName: string }
+ * @returns {{ ok: true, host: string, owner: string, repo: string, projectName: string }
  *   | { ok: false, error: string }}
  */
 export function parseSshGitUrl(input) {
@@ -43,12 +43,32 @@ export function parseSshGitUrl(input) {
     return { ok: false, error: "Invalid SSH URL" };
   }
 
-  const [, , owner, repo] = match;
+  const [, host, owner, repo] = match;
 
   return {
     ok: true,
+    host,
     owner,
     repo,
     projectName: buildProjectName(owner, repo),
+  };
+}
+
+/**
+ * @param {string} input
+ * @returns {{ ok: true, canonical: string, sshUrl: string }
+ *   | { ok: false, error: string }}
+ */
+export function canonicalizeSshGitUrl(input) {
+  const parsed = parseSshGitUrl(input);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const canonical = `git@${parsed.host.toLowerCase()}:${parsed.owner}/${parsed.repo}`;
+  return {
+    ok: true,
+    canonical,
+    sshUrl: `${canonical}.git`,
   };
 }
