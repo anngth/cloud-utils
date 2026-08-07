@@ -8,8 +8,9 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out("Usage: gt <command>");
     out();
     out("Commands:");
-    out("  push   Force push (safe with --force-with-lease)");
-    out("  fetch  Fetch/sync; optional upstream->origin sync when on main");
+    out("  push              Force push (safe --force-with-lease)");
+    out("  fetch [--sync-upstream]");
+    out("  backup <ssh-url>  Mirror repo to gitlab.com/anngth-backups");
     out();
     out("Run 'gt --help' for this message.");
   }

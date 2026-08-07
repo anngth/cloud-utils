@@ -26,12 +26,17 @@ Secrets: `VPS_CONFIGS`, `POSTGRES_SOURCES`, `POSTGRES_TARGETS`, `MONGO_SOURCES`,
 
 ## gt
 
-Git workflow helpers (`push`, `fetch`). Implemented in Node under `mac_scripts/functions/git-tools/`.
+Git workflow helpers (`push`, `fetch`, `backup`). Implemented in Node under `mac_scripts/functions/git-tools/`.
 
 ```bash
 gt fetch
 gt push
+gt backup git@github.com:org/my-app.git
 ```
+
+- **backup** — mirrors a repo to private `anngth-backups/<owner>-<repo>` on GitLab. If the project already exists, prompts to update, create a new suffixed project (`-2`, `-3`, …), or cancel.
+- Requires `git`, `glab` (logged in), and SSH access to both the source and GitLab.
+- Mirror push can delete refs on the GitLab side that no longer exist on the source.
 
 ## 2fa
 

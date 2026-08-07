@@ -3,6 +3,7 @@
 import { pathToFileURL } from "node:url";
 import { runFetchCommand as runFetchCommandDefault } from "./fetch.mjs";
 import { runPushCommand as runPushCommandDefault } from "./push.mjs";
+import { runBackupCommand as runBackupCommandDefault } from "./backup.mjs";
 import { createUi } from "./ui.mjs";
 
 export async function runCli(argv, dependencies = {}) {
@@ -13,6 +14,7 @@ export async function runCli(argv, dependencies = {}) {
     stderr = process.stderr,
     runPushCommand = runPushCommandDefault,
     runFetchCommand = runFetchCommandDefault,
+    runBackupCommand = runBackupCommandDefault,
     ui = createUi({ stdout, stderr }),
   } = dependencies;
 
@@ -33,6 +35,7 @@ export async function runCli(argv, dependencies = {}) {
 
   if (action === "push") return runPushCommand(args, context);
   if (action === "fetch") return runFetchCommand(args, context);
+  if (action === "backup") return runBackupCommand(args, context);
 
   ui.error(`Unknown command: ${action}`);
   ui.usage();
