@@ -34,7 +34,7 @@ gt push
 gt backup git@github.com:org/my-app.git
 ```
 
-- **backup** — mirrors a repo to private `anngth-dev/backups/<owner>-<repo>` on GitLab. If the project already exists, prompts to update, create a new suffixed project (`-2`, `-3`, …), or cancel. Creates the private `anngth-dev/backups` subgroup when it is missing (parent `anngth-dev` must already exist).
+- **backup** — mirrors a repo to private `anngth-dev/backups/<owner>-<repo>` on GitLab. If the project already exists, prompts to update, create a new suffixed project (`-2`, `-3`, …), or cancel. Creates the private `anngth-dev/backups` subgroup when it is missing (parent `anngth-dev` must already exist). After push, sets the GitLab default branch to `main` if present, otherwise `develop`.
 - Requires `git`, `glab` (logged in), and SSH access to both the source and GitLab.
 - Backup pushes all branches and tags (not GitLab hidden refs like `refs/environments/*`). `--prune` can delete remote branches/tags that no longer exist on the source.
 

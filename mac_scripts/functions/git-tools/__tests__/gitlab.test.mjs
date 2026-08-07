@@ -9,9 +9,11 @@ import {
   groupExists,
   nextAvailableName,
   nextSuffixedName,
+  pickPreferredDefaultBranch,
   projectExists,
   projectSshUrl,
   projectWebUrl,
+  setDefaultBranch,
 } from "../gitlab.mjs";
 
 const GROUP = "anngth-dev/backups";
@@ -207,4 +209,60 @@ test("URL helpers use nested backup group and fixed GitLab host", () => {
     projectWebUrl(BACKUP_GROUP, "my-app"),
     "https://gitlab.com/anngth-dev/backups/my-app",
   );
+});
+
+test("setDefaultBranch updates the GitLab project default branch", async () => {
+  let received;
+  const result = await setDefaultBranch(GROUP, "my-app", "main", {
+    runGlab: async (args) => {
+      received = args;
+      return { status: 0, stdout: "{}", stderr: "" };
+    },
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(received, [
+    "api",
+    "--method",
+    "PUT",
+    `projects/${encodeURIComponent(`${GROUP}/my-app`)}`,
+    "-f",
+    "default_branch=main",
+  ]);
+});
+
+test("pickPreferredDefaultBranch prefers main over develop", async () => {
+  const checked = [];
+  const branch = await pickPreferredDefaultBranch("/mirror.git", {
+    runGit: async (args, { cwd }) => {
+      checked.push([args.at(-1), cwd]);
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+
+  assert.equal(branch, "main");
+  assert.deepEqual(checked[0], ["refs/heads/main", "/mirror.git"]);
+});
+
+test("pickPreferredDefaultBranch falls back to develop", async () => {
+  const branch = await pickPreferredDefaultBranch("/mirror.git", {
+    runGit: async (args) => {
+      const ref = args.at(-1);
+      return {
+        status: ref === "refs/heads/develop" ? 0 : 1,
+        stdout: "",
+        stderr: "",
+      };
+    },
+  });
+
+  assert.equal(branch, "develop");
+});
+
+test("pickPreferredDefaultBranch returns null when neither exists", async () => {
+  const branch = await pickPreferredDefaultBranch("/mirror.git", {
+    runGit: async () => ({ status: 1, stdout: "", stderr: "" }),
+  });
+
+  assert.equal(branch, null);
 });

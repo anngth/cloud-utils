@@ -10,9 +10,11 @@ import {
   createPrivateProject as createPrivateProjectDefault,
   ensureBackupGroup as ensureBackupGroupDefault,
   nextSuffixedName as nextSuffixedNameDefault,
+  pickPreferredDefaultBranch as pickPreferredDefaultBranchDefault,
   projectExists as projectExistsDefault,
   projectSshUrl,
   projectWebUrl,
+  setDefaultBranch as setDefaultBranchDefault,
 } from "./gitlab.mjs";
 import { parseSshGitUrl } from "./ssh-url.mjs";
 import { createUi } from "./ui.mjs";
@@ -96,6 +98,8 @@ export async function runBackupCommand(args, context = {}) {
     projectExists = projectExistsDefault,
     createPrivateProject = createPrivateProjectDefault,
     nextSuffixedName = nextSuffixedNameDefault,
+    pickPreferredDefaultBranch = pickPreferredDefaultBranchDefault,
+    setDefaultBranch = setDefaultBranchDefault,
     chooseCollisionAction: chooseCollision = chooseCollisionAction,
     runGit = runGitDefault,
     mkdtempSync = mkdtempSyncDefault,
@@ -220,6 +224,18 @@ export async function runBackupCommand(args, context = {}) {
     if (pushResult.status !== 0) {
       ui.error(pushResult.stderr?.trim() || pushResult.stdout?.trim() || "git push failed");
       return 1;
+    }
+
+    const preferred = await pickPreferredDefaultBranch(mirrorDir, { runGit });
+    if (preferred) {
+      const setDefault = await setDefaultBranch(group, targetName, preferred);
+      if (!setDefault.ok) {
+        ui.status(
+          `⚠️ Could not set default branch to ${preferred}: ${setDefault.error || "unknown error"}`,
+        );
+      } else {
+        ui.status(`Default branch set to ${preferred}`);
+      }
     }
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });

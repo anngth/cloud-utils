@@ -48,6 +48,8 @@ function baseContext(overrides = {}) {
         return { ok: true };
       },
       nextSuffixedName: async () => ({ ok: true, name: `${BASE_NAME}-2` }),
+      pickPreferredDefaultBranch: async () => "main",
+      setDefaultBranch: async () => ({ ok: true }),
       chooseCollisionAction: async () => "cancel",
       runGit: async () => ({ status: 0, stdout: "", stderr: "" }),
       mkdtempSync: (prefix) => {
@@ -164,6 +166,23 @@ test("creates private project and mirrors when missing", async () => {
     ),
   );
   assert.ok(removed.length >= 1);
+});
+
+test("sets preferred default branch after push", async () => {
+  const defaults = [];
+  const { h, context } = baseContext({
+    pickPreferredDefaultBranch: async () => "develop",
+    setDefaultBranch: async (group, name, branch) => {
+      defaults.push([group, name, branch]);
+      return { ok: true };
+    },
+  });
+
+  const code = await runBackupCommand([SOURCE], context);
+
+  assert.equal(code, 0);
+  assert.deepEqual(defaults, [[BACKUP_GROUP, BASE_NAME, "develop"]]);
+  assert.ok(h.messages.statuses.some((m) => /default branch set to develop/i.test(m)));
 });
 
 test("collision cancel does not create or push", async () => {

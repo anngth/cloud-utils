@@ -231,3 +231,41 @@ export function projectSshUrl(group, name) {
 export function projectWebUrl(group, name) {
   return `https://${GITLAB_HOST}/${group}/${name}`;
 }
+
+/**
+ * Prefer main, then develop, based on refs present in a local (mirror) repo.
+ * @returns {Promise<string|null>}
+ */
+export async function pickPreferredDefaultBranch(repoDir, { runGit } = {}) {
+  const git = runGit;
+  if (!git) return null;
+  for (const branch of ["main", "develop"]) {
+    const result = await git(
+      ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+      { cwd: repoDir },
+    );
+    if (result.status === 0) return branch;
+  }
+  return null;
+}
+
+export async function setDefaultBranch(
+  group,
+  name,
+  branch,
+  { runGlab: runGlabDependency = runGlab } = {},
+) {
+  const path = `projects/${encodeURIComponent(`${group}/${name}`)}`;
+  const result = await runGlabDependency([
+    "api",
+    "--method",
+    "PUT",
+    path,
+    "-f",
+    `default_branch=${branch}`,
+  ]);
+  if (result.status !== 0) {
+    return { ok: false, error: resultError(result, "failed to set default branch") };
+  }
+  return { ok: true };
+}
