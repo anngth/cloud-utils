@@ -207,8 +207,8 @@ test("prints concise progress including clone path", async () => {
   const statuses = h.messages.statuses.join("\n");
   assert.match(statuses, new RegExp(`${SOURCE} → ${BACKUP_GROUP}/${BASE_NAME}`));
   assert.match(statuses, /Created /);
-  assert.match(statuses, /Cloning to \/tmp\/gt-backup-test\/mirror\.git/);
-  assert.match(statuses, /Pushing to /);
+  assert.match(statuses, /Cloning source to \/tmp\/gt-backup-test\/mirror\.git/);
+  assert.match(statuses, /Pushing all branches \+ tags → /);
   assert.doesNotMatch(statuses, /Checking backup group|Mirror clone complete|Cleaning up|Backup finished/);
 });
 

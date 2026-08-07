@@ -176,7 +176,7 @@ export async function runBackupCommand(args, context = {}) {
 
     if (action === "update") {
       targetName = baseName;
-      ui.step(`Updating ${group}/${targetName}`);
+      ui.step(`Updating existing backup ${group}/${targetName}`);
     } else if (action === "new") {
       const nextName = await nextSuffixedName(group, baseName);
       if (!nextName.ok) {
@@ -208,7 +208,7 @@ export async function runBackupCommand(args, context = {}) {
   const mirrorDir = join(tempRoot, "mirror.git");
 
   try {
-    ui.step(`Cloning to ${mirrorDir}`);
+    ui.step(`Cloning source to ${mirrorDir}`);
     const cloneResult = await runGit(
       ["clone", "--mirror", sourceUrl, mirrorDir],
       { cwd, env },
@@ -219,7 +219,7 @@ export async function runBackupCommand(args, context = {}) {
     }
     ui.success("Clone complete");
 
-    ui.step(`Pushing to ${group}/${targetName}`);
+    ui.step(`Pushing all branches + tags → ${group}/${targetName}`);
     const pushResult = await runGit(
       [
         "push",
@@ -234,7 +234,7 @@ export async function runBackupCommand(args, context = {}) {
       ui.error(pushResult.stderr?.trim() || pushResult.stdout?.trim() || "git push failed");
       return 1;
     }
-    ui.success("Push complete");
+    ui.success("Pushed all branches + tags");
 
     const preferred = await pickPreferredDefaultBranch(mirrorDir, { runGit });
     if (preferred) {
