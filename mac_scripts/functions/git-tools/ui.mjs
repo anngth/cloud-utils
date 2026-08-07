@@ -6,6 +6,7 @@ const C = {
   yellow: "\u001b[33m",
   black: "\u001b[30m",
   gray: "\u001b[90m",
+  white: "\u001b[97m",
   bgCyan: "\u001b[46m",
   fgReset: "\u001b[39m",
   bgReset: "\u001b[49m",
@@ -78,6 +79,24 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out(message);
   }
 
+  function renderBackupSelector(heading, state) {
+    stdout.write("\u001b[2J\u001b[H");
+    title("GT");
+    step(String(heading));
+    active(`Select repos ${fg(C.white, "(space to toggle, enter to start, q to quit)")}`);
+    out(pipe);
+    state.items.forEach((entry, index) => {
+      const label = typeof entry === "string" ? entry : entry.label;
+      const selected = state.selected.has(index);
+      const box = selected ? "■" : "□";
+      const boxColor = selected ? C.brightGreen : C.gray;
+      const labelColor = index === state.cursor ? C.white : C.gray;
+      const number = String(index + 1);
+      out(`${pipe}  ${number}  ${boxColor}${box}${C.reset}  ${fg(labelColor, label)}`);
+    });
+    listEnd();
+  }
+
   return {
     usage,
     error,
@@ -91,5 +110,6 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     item,
     warn,
     listEnd,
+    renderBackupSelector,
   };
 }

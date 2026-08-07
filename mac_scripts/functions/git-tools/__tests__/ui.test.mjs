@@ -58,3 +58,27 @@ test("success renders text in green", () => {
   assert.match(stdout, /\u001b\[92mPush complete/);
   assert.match(stdout, /◇/);
 });
+
+test("renderBackupSelector shows 1-based numbers with □/■ and hint", () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (value) => { stdout += value; } },
+    stderr: { write() {} },
+  });
+
+  ui.renderBackupSelector("Select repos to backup", {
+    items: [
+      { value: "git@github.com:org/a.git", label: "git@github.com:org/a.git" },
+      { value: "git@gitlab.com:acme/b.git", label: "git@gitlab.com:acme/b.git" },
+    ],
+    cursor: 1,
+    selected: new Set([0]),
+  });
+
+  assert.match(stdout, /\u001b\[2J\u001b\[H/);
+  assert.match(stdout, /Select repos to backup/);
+  assert.match(stdout, /space to toggle, enter to start, q to quit/);
+  assert.match(stdout, /1\s+.*■.*git@github\.com:org\/a\.git/);
+  assert.match(stdout, /2\s+.*□.*git@gitlab\.com:acme\/b\.git/);
+  assert.match(stdout, /└/);
+});
