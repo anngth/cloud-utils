@@ -26,6 +26,8 @@ Secrets: `VPS_CONFIGS`, `POSTGRES_SOURCES`, `POSTGRES_TARGETS`, `MONGO_SOURCES`,
 
 ## gt
 
+Git workflow helpers (`push`, `fetch`). Implemented in Node under `mac_scripts/functions/git-tools/`.
+
 ```bash
 gt fetch
 gt push
