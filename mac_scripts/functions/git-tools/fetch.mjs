@@ -236,7 +236,7 @@ export async function runFetchCommand(args, context = {}) {
     return 1;
   }
 
-  ui.status("⬇️ Fetching and syncing repository ---");
+  ui.status("⬇️ Fetching and syncing repository");
 
   await refreshPrimaryRemoteRefs(git, ui);
 

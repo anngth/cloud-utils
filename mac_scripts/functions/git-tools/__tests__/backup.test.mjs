@@ -7,7 +7,7 @@ const SOURCE = "git@github.com:org/app.git";
 const BASE_NAME = "org-app";
 
 function uiHarness() {
-  const messages = { errors: [], lines: [], statuses: [] };
+  const messages = { errors: [], lines: [], statuses: [], warnings: [], ends: [] };
   return {
     messages,
     ui: {
@@ -20,6 +20,18 @@ function uiHarness() {
       },
       status(message) {
         messages.statuses.push(message);
+      },
+      step(message) {
+        messages.statuses.push(message);
+      },
+      title() {},
+      active() {},
+      item() {},
+      warn(message) {
+        messages.warnings.push(message);
+      },
+      listEnd(message = "") {
+        messages.ends.push(message);
       },
       line(message = "") {
         messages.lines.push(message);
@@ -160,11 +172,7 @@ test("creates private project and mirrors when missing", async () => {
   assert.ok(pushCall.includes("+refs/heads/*:refs/heads/*"));
   assert.ok(pushCall.includes("+refs/tags/*:refs/tags/*"));
   assert.ok(pushCall.includes(projectSshUrl(BACKUP_GROUP, BASE_NAME)));
-  assert.ok(
-    h.messages.lines.concat(h.messages.statuses).some((m) =>
-      String(m).includes(projectWebUrl(BACKUP_GROUP, BASE_NAME))
-    ),
-  );
+  assert.ok(h.messages.ends.some((m) => String(m).includes(projectWebUrl(BACKUP_GROUP, BASE_NAME))));
   assert.ok(removed.length >= 1);
 });
 
@@ -278,11 +286,7 @@ test("collision new uses nextSuffixedName then creates and pushes", async () => 
   assert.deepEqual(created, [newName]);
   const pushCall = gitCalls.find((a) => a[0] === "push");
   assert.ok(pushCall.includes(projectSshUrl(BACKUP_GROUP, newName)));
-  assert.ok(
-    h.messages.lines.concat(h.messages.statuses).some((m) =>
-      String(m).includes(projectWebUrl(BACKUP_GROUP, newName))
-    ),
-  );
+  assert.ok(h.messages.ends.some((m) => String(m).includes(projectWebUrl(BACKUP_GROUP, newName))));
 });
 
 test("collision new exits 1 when nextSuffixedName fails mid-walk", async () => {

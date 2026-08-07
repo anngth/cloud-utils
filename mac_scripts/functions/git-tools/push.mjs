@@ -20,7 +20,7 @@ export async function runPushCommand(_args, context = {}) {
   const branchResult = await git(["rev-parse", "--abbrev-ref", "HEAD"]);
   const currentBranch = branchResult.stdout.trim();
   if (branchResult.status !== 0 || !currentBranch || currentBranch === "HEAD") {
-    ui.error("--- ❌ Cannot push from detached HEAD");
+    ui.error("Cannot push from detached HEAD");
     return 1;
   }
   ui.status(`🌿 Current branch: ${currentBranch}`);
