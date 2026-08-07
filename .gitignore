@@ -60,3 +60,5 @@ StirlingPDF/
 
 # Mac scripts secrets
 dbt_secrets
+# Git worktrees
+.worktrees/
