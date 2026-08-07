@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chooseCollisionAction, runBackupCommand } from "../backup.mjs";
+import { parseBackupArgs, runBackupCommand } from "../backup.mjs";
 import { BACKUP_GROUP, projectSshUrl, projectWebUrl } from "../gitlab.mjs";
 
 const SOURCE = "git@github.com:org/app.git";
@@ -65,7 +65,6 @@ function baseContext(overrides = {}) {
       nextSuffixedName: async () => ({ ok: true, name: `${BASE_NAME}-2` }),
       pickPreferredDefaultBranch: async () => "main",
       setDefaultBranch: async () => ({ ok: true }),
-      chooseCollisionAction: async () => "cancel",
       runGit: async () => ({ status: 0, stdout: "", stderr: "" }),
       mkdtempSync: (prefix) => {
         const dir = `/tmp/${prefix.replace(/-$/, "")}-${++tempCounter}`;
@@ -81,6 +80,34 @@ function baseContext(overrides = {}) {
     },
   };
 }
+
+test("parseBackupArgs accepts url only (createNew false)", () => {
+  const r = parseBackupArgs(["git@github.com:org/app.git"]);
+  assert.deepEqual(r, {
+    ok: true,
+    sshUrl: "git@github.com:org/app.git",
+    createNew: false,
+  });
+});
+
+test("parseBackupArgs accepts -n and --new before or after url", () => {
+  for (const args of [
+    ["-n", "git@github.com:org/app.git"],
+    ["--new", "git@github.com:org/app.git"],
+    ["git@github.com:org/app.git", "-n"],
+  ]) {
+    const r = parseBackupArgs(args);
+    assert.equal(r.ok, true);
+    assert.equal(r.createNew, true);
+    assert.equal(r.sshUrl, "git@github.com:org/app.git");
+  }
+});
+
+test("parseBackupArgs rejects unknown flags and bad arity", () => {
+  assert.equal(parseBackupArgs(["--update", "git@x:o/r.git"]).ok, false);
+  assert.equal(parseBackupArgs([]).ok, false);
+  assert.equal(parseBackupArgs(["git@x:o/r.git", "git@x:o/r2.git"]).ok, false);
+});
 
 test("missing arg exits 1 with usage hint", async () => {
   const { h, context } = baseContext();
@@ -212,85 +239,34 @@ test("prints concise progress including clone path", async () => {
   assert.doesNotMatch(statuses, /Checking backup group|Mirror clone complete|Cleaning up|Backup finished/);
 });
 
-test("collision cancel does not create or push", async () => {
-  const gitCalls = [];
+test("existing project without --new updates in place", async () => {
   const created = [];
   const { context } = baseContext({
     projectExists: async () => ({ ok: true, exists: true }),
-    createPrivateProject: async (_group, name) => {
+    createPrivateProject: async (_g, name) => {
       created.push(name);
       return { ok: true };
     },
-    chooseCollisionAction: async () => "cancel",
-    runGit: async (args) => {
-      gitCalls.push(args);
-      return { status: 0, stdout: "", stderr: "" };
-    },
+    stdin: { isTTY: false }, // must still succeed — no prompt
   });
-
   const code = await runBackupCommand([SOURCE], context);
-
-  assert.equal(code, 1);
-  assert.deepEqual(created, []);
-  assert.deepEqual(gitCalls, []);
+  assert.equal(code, 0);
+  assert.deepEqual(created, []); // no new project
 });
 
-test("collision update mirror-pushes existing project without create", async () => {
-  const gitCalls = [];
+test("existing project with --new creates suffixed project", async () => {
   const created = [];
   const { context } = baseContext({
     projectExists: async () => ({ ok: true, exists: true }),
-    createPrivateProject: async (_group, name) => {
+    nextSuffixedName: async () => ({ ok: true, name: `${BASE_NAME}-2` }),
+    createPrivateProject: async (_g, name) => {
       created.push(name);
       return { ok: true };
     },
-    chooseCollisionAction: async () => "update",
-    runGit: async (args) => {
-      gitCalls.push(args);
-      return { status: 0, stdout: "", stderr: "" };
-    },
   });
-
-  const code = await runBackupCommand([SOURCE], context);
-
+  const code = await runBackupCommand([SOURCE, "--new"], context);
   assert.equal(code, 0);
-  assert.deepEqual(created, []);
-  assert.ok(gitCalls.some((a) => a[0] === "clone" && a.includes("--mirror")));
-  const pushCall = gitCalls.find((a) => a[0] === "push");
-  assert.ok(pushCall);
-  assert.ok(pushCall.includes(projectSshUrl(BACKUP_GROUP, BASE_NAME)));
-});
-
-test("collision new uses nextSuffixedName then creates and pushes", async () => {
-  const gitCalls = [];
-  const created = [];
-  let nextArgs;
-  const newName = `${BASE_NAME}-2`;
-  const { h, context } = baseContext({
-    projectExists: async () => ({ ok: true, exists: true }),
-    nextSuffixedName: async (group, baseName) => {
-      nextArgs = { group, baseName };
-      return { ok: true, name: newName };
-    },
-    createPrivateProject: async (_group, name) => {
-      created.push(name);
-      return { ok: true };
-    },
-    chooseCollisionAction: async () => "new",
-    runGit: async (args) => {
-      gitCalls.push(args);
-      return { status: 0, stdout: "", stderr: "" };
-    },
-  });
-
-  const code = await runBackupCommand([SOURCE], context);
-
-  assert.equal(code, 0);
-  assert.deepEqual(nextArgs, { group: BACKUP_GROUP, baseName: BASE_NAME });
-  assert.deepEqual(created, [newName]);
-  const pushCall = gitCalls.find((a) => a[0] === "push");
-  assert.ok(pushCall.includes(projectSshUrl(BACKUP_GROUP, newName)));
-  assert.ok(h.messages.ends.some((m) => String(m).includes(projectWebUrl(BACKUP_GROUP, newName))));
+  assert.deepEqual(created, [`${BASE_NAME}-2`]);
 });
 
 test("collision new exits 1 when nextSuffixedName fails mid-walk", async () => {
@@ -302,10 +278,9 @@ test("collision new exits 1 when nextSuffixedName fails mid-walk", async () => {
       created.push(name);
       return { ok: true };
     },
-    chooseCollisionAction: async () => "new",
   });
 
-  const code = await runBackupCommand([SOURCE], context);
+  const code = await runBackupCommand([SOURCE, "--new"], context);
 
   assert.equal(code, 1);
   assert.deepEqual(created, []);
@@ -334,70 +309,4 @@ test("clone failure still removes temp dir", async () => {
 
   assert.equal(code, 1);
   assert.ok(removed.some((r) => r.path === tempDir && r.opts?.recursive === true));
-});
-
-test("collision required but non-TTY exits 1 with TTY message", async () => {
-  const created = [];
-  const gitCalls = [];
-  const { h, context } = baseContext({
-    projectExists: async () => ({ ok: true, exists: true }),
-    createPrivateProject: async (_group, name) => {
-      created.push(name);
-      return { ok: true };
-    },
-    chooseCollisionAction: async () => "update",
-    runGit: async (args) => {
-      gitCalls.push(args);
-      return { status: 0, stdout: "", stderr: "" };
-    },
-    stdin: { isTTY: false },
-  });
-
-  const code = await runBackupCommand([SOURCE], context);
-
-  assert.equal(code, 1);
-  assert.match(h.messages.errors.join("\n"), /tty|interactive|terminal/i);
-  assert.deepEqual(created, []);
-  assert.deepEqual(gitCalls, []);
-});
-
-test("chooseCollisionAction accepts numbered and named choices", async () => {
-  const cases = [
-    ["1\n", "update"],
-    ["update\n", "update"],
-    ["2\n", "new"],
-    ["new\n", "new"],
-    ["3\n", "cancel"],
-    ["cancel\n", "cancel"],
-  ];
-
-  for (const [input, expected] of cases) {
-    const chunks = [input];
-    const stdin = {
-      isTTY: true,
-      [Symbol.asyncIterator]: async function* () {
-        yield* chunks;
-      },
-    };
-    const written = [];
-    const stdout = {
-      write(chunk) {
-        written.push(String(chunk));
-      },
-    };
-
-    const action = await chooseCollisionAction({
-      projectPath: `${BACKUP_GROUP}/${BASE_NAME}`,
-      baseName: BASE_NAME,
-      stdin,
-      stdout,
-      isTTY: true,
-    });
-
-    assert.equal(action, expected);
-    assert.match(written.join(""), /1\)\s*update/);
-    assert.match(written.join(""), /2\)\s*new/);
-    assert.match(written.join(""), /3\)\s*cancel/);
-    assert.match(written.join(""), /Choose \[1\/2\/3\]:/);
-  }
 });
