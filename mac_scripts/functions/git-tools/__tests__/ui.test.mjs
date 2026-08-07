@@ -36,11 +36,11 @@ test("title and listEnd frame output like skm", () => {
     stderr: { write() {} },
   });
 
-  ui.title("GT BACKUP");
+  ui.title("REPO BACKUP");
   ui.step("Done");
   ui.listEnd("https://gitlab.com/example");
 
-  assert.match(stdout, /GT BACKUP/);
+  assert.match(stdout, /REPO BACKUP/);
   assert.match(stdout, /◇/);
   assert.match(stdout, /└/);
   assert.match(stdout, /https:\/\/gitlab\.com\/example/);

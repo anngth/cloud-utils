@@ -133,7 +133,7 @@ export async function runBackupCommand(args, context = {}) {
   const projectPath = `${group}/${baseName}`;
   const sourceUrl = args[0].trim();
 
-  ui.title("GT BACKUP");
+  ui.title("REPO BACKUP");
   ui.step(`${sourceUrl} → ${projectPath}`);
 
   const groupReady = await ensureBackupGroup(group);
