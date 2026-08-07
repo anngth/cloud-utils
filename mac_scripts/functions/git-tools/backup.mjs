@@ -55,10 +55,14 @@ export async function chooseCollisionAction({
     return null;
   };
 
-  const lines =
-    typeof stdin[Symbol.asyncIterator] === "function"
-      ? stdin
-      : createInterface({ input: stdin, crlfDelay: Infinity });
+  // Real Node streams are async-iterable by chunk, not by line — prefer readline
+  // when EventEmitter APIs exist. Tests may inject a line async-iterable stub.
+  const useLineIterator =
+    typeof stdin[Symbol.asyncIterator] === "function" &&
+    typeof stdin.on !== "function";
+  const lines = useLineIterator
+    ? stdin
+    : createInterface({ input: stdin, crlfDelay: Infinity });
 
   try {
     for await (const line of lines) {
