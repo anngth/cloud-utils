@@ -99,7 +99,7 @@ test("nextAvailableName returns the base name when it is free", async () => {
     projectExists: async () => ({ ok: true, exists: false }),
   });
 
-  assert.equal(result, "my-app");
+  assert.deepEqual(result, { ok: true, name: "my-app" });
 });
 
 test("nextSuffixedName starts at suffix two and skips taken names", async () => {
@@ -109,7 +109,7 @@ test("nextSuffixedName starts at suffix two and skips taken names", async () => 
     projectExists: async (_group, name) => ({ ok: true, exists: taken.has(name) }),
   });
 
-  assert.equal(result, "my-app-4");
+  assert.deepEqual(result, { ok: true, name: "my-app-4" });
 });
 
 test("nextSuffixedName does not return the base name when it is free", async () => {
@@ -117,7 +117,19 @@ test("nextSuffixedName does not return the base name when it is free", async () 
     projectExists: async () => ({ ok: true, exists: false }),
   });
 
-  assert.equal(result, "my-app-2");
+  assert.deepEqual(result, { ok: true, name: "my-app-2" });
+});
+
+test("nextSuffixedName returns structured error on mid-walk API failure", async () => {
+  const result = await nextSuffixedName("anngth-backups", "my-app", {
+    projectExists: async (_group, name) => {
+      if (name === "my-app-2") return { ok: true, exists: true };
+      return { ok: false, error: "connection refused" };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /connection refused/i);
 });
 
 test("URL helpers use the fixed GitLab host", () => {

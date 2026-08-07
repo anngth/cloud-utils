@@ -89,8 +89,10 @@ async function findName(group, baseName, projectExistsDependency, start) {
   for (let suffix = start; ; suffix += 1) {
     const name = suffix === 0 ? baseName : `${baseName}-${suffix}`;
     const result = await projectExistsDependency(group, name);
-    if (!result.ok) throw new Error(result.error || "could not check GitLab project");
-    if (!result.exists) return name;
+    if (!result.ok) {
+      return { ok: false, error: result.error || "could not check GitLab project" };
+    }
+    if (!result.exists) return { ok: true, name };
   }
 }
 

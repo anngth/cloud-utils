@@ -158,7 +158,12 @@ export async function runBackupCommand(args, context = {}) {
     if (action === "update") {
       targetName = baseName;
     } else if (action === "new") {
-      targetName = await nextSuffixedName(group, baseName);
+      const nextName = await nextSuffixedName(group, baseName);
+      if (!nextName.ok) {
+        ui.error(nextName.error || "could not find available backup name");
+        return 1;
+      }
+      targetName = nextName.name;
       const created = await createPrivateProject(group, targetName);
       if (!created.ok) {
         ui.error(created.error || "failed to create GitLab project");

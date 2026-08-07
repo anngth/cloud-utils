@@ -46,7 +46,7 @@ function baseContext(overrides = {}) {
         created.push(name);
         return { ok: true };
       },
-      nextSuffixedName: async () => `${BASE_NAME}-2`,
+      nextSuffixedName: async () => ({ ok: true, name: `${BASE_NAME}-2` }),
       chooseCollisionAction: async () => "cancel",
       runGit: async () => ({ status: 0, stdout: "", stderr: "" }),
       mkdtempSync: (prefix) => {
@@ -182,7 +182,7 @@ test("collision new uses nextSuffixedName then creates and pushes", async () => 
     projectExists: async () => ({ ok: true, exists: true }),
     nextSuffixedName: async (group, baseName) => {
       nextArgs = { group, baseName };
-      return newName;
+      return { ok: true, name: newName };
     },
     createPrivateProject: async (_group, name) => {
       created.push(name);
@@ -207,6 +207,25 @@ test("collision new uses nextSuffixedName then creates and pushes", async () => 
       String(m).includes(projectWebUrl(BACKUP_GROUP, newName))
     ),
   );
+});
+
+test("collision new exits 1 when nextSuffixedName fails mid-walk", async () => {
+  const created = [];
+  const { h, context } = baseContext({
+    projectExists: async () => ({ ok: true, exists: true }),
+    nextSuffixedName: async () => ({ ok: false, error: "connection refused" }),
+    createPrivateProject: async (_group, name) => {
+      created.push(name);
+      return { ok: true };
+    },
+    chooseCollisionAction: async () => "new",
+  });
+
+  const code = await runBackupCommand([SOURCE], context);
+
+  assert.equal(code, 1);
+  assert.deepEqual(created, []);
+  assert.match(h.messages.errors.join("\n"), /connection refused/i);
 });
 
 test("clone failure still removes temp dir", async () => {
