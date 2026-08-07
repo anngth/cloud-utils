@@ -1,13 +1,7 @@
 #!/bin/zsh
-
-# File: mac_scripts/gt
-# Git tool with the following commands:
-#   gt push              - Force push (safe with --force-with-lease)
-#   gt fetch [--sync-upstream] - Fetch/sync; optional upstream->origin sync when on main
-
-# Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-
-# Source and run with arguments
-source "$SCRIPT_DIR/functions/git-tools"
-gt "$@"
+if ! command -v node >/dev/null 2>&1; then
+  print -P "%F{red}❌ node is required to run gt%f" >&2
+  exit 1
+fi
+exec node "$SCRIPT_DIR/functions/git-tools/cli.mjs" "$@"
