@@ -4,7 +4,7 @@
 
 ```bash
 mkdir -p ~/Documents
-git clone https://github.com/nguyenthanhan/cloud-utils.git ~/Documents/cloud-utils
+git clone https://github.com/anngth/cloud-utils.git ~/Documents/cloud-utils
 ```
 
 ## Command line tools (first-time Mac)
@@ -71,11 +71,11 @@ Layout:
     └── projects.json
 ```
 
-| Tool  | Config | Template/reference in repo |
-| ----- | ------ | -------------------------- |
-| `bud` | `bud/casks.txt`, `bud/formulas.txt`, `bud/taps.txt` | `mac_scripts/functions/brew-desired-update/*.example` |
-| `skm` | `skm/profiles.json`, `skm/projects.json` | `mac_scripts/functions/skills-manager/profiles.json.example` (reference only) |
-| `dbt` | `dbt/secrets` | `mac_scripts/functions/db-tools/secrets.example` |
+| Tool  | Config                                              | Template/reference in repo                                                    |
+| ----- | --------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `bud` | `bud/casks.txt`, `bud/formulas.txt`, `bud/taps.txt` | `mac_scripts/functions/brew-desired-update/*.example`                         |
+| `skm` | `skm/profiles.json`, `skm/projects.json`            | `mac_scripts/functions/skills-manager/profiles.json.example` (reference only) |
+| `dbt` | `dbt/secrets`                                       | `mac_scripts/functions/db-tools/secrets.example`                              |
 
 On first run, `bud` and `dbt` bootstrap missing files from legacy paths or
 `*.example`. SKM creates its live files automatically; an existing
