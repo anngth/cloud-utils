@@ -45,3 +45,16 @@ test("title and listEnd frame output like skm", () => {
   assert.match(stdout, /└/);
   assert.match(stdout, /https:\/\/gitlab\.com\/example/);
 });
+
+test("success renders text in green", () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (value) => { stdout += value; } },
+    stderr: { write() {} },
+  });
+
+  ui.success("Push complete");
+
+  assert.match(stdout, /\u001b\[92mPush complete/);
+  assert.match(stdout, /◇/);
+});

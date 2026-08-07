@@ -142,7 +142,7 @@ export async function runBackupCommand(args, context = {}) {
     return 1;
   }
   if (groupReady.created) {
-    ui.step(`Created group ${group}`);
+    ui.success(`Created group ${group}`);
   }
 
   const existsResult = await projectExists(group, baseName);
@@ -189,7 +189,7 @@ export async function runBackupCommand(args, context = {}) {
         ui.error(created.error || "failed to create GitLab project");
         return 1;
       }
-      ui.step(`Created ${group}/${targetName}`);
+      ui.success(`Created ${group}/${targetName}`);
     } else {
       ui.error("Backup cancelled.");
       return 1;
@@ -200,7 +200,7 @@ export async function runBackupCommand(args, context = {}) {
       ui.error(created.error || "failed to create GitLab project");
       return 1;
     }
-    ui.step(`Created ${projectPath}`);
+    ui.success(`Created ${projectPath}`);
   }
 
   const destUrl = projectSshUrl(group, targetName);
@@ -217,6 +217,7 @@ export async function runBackupCommand(args, context = {}) {
       ui.error(cloneResult.stderr?.trim() || cloneResult.stdout?.trim() || "git clone --mirror failed");
       return 1;
     }
+    ui.success("Clone complete");
 
     ui.step(`Pushing to ${group}/${targetName}`);
     const pushResult = await runGit(
@@ -233,6 +234,7 @@ export async function runBackupCommand(args, context = {}) {
       ui.error(pushResult.stderr?.trim() || pushResult.stdout?.trim() || "git push failed");
       return 1;
     }
+    ui.success("Push complete");
 
     const preferred = await pickPreferredDefaultBranch(mirrorDir, { runGit });
     if (preferred) {
@@ -242,7 +244,7 @@ export async function runBackupCommand(args, context = {}) {
           `Could not set default branch to ${preferred}: ${setDefault.error || "unknown error"}`,
         );
       } else {
-        ui.step(`Default branch ${preferred}`);
+        ui.success(`Default branch ${preferred}`);
       }
     }
   } finally {

@@ -24,6 +24,9 @@ function uiHarness() {
       step(message) {
         messages.statuses.push(message);
       },
+      success(message) {
+        messages.statuses.push(message);
+      },
       title() {},
       active() {},
       item() {},
