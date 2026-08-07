@@ -8,7 +8,6 @@ import {
   assertGlabReady as assertGlabReadyDefault,
   createPrivateProject as createPrivateProjectDefault,
   ensureBackupGroup as ensureBackupGroupDefault,
-  nextSuffixedName as nextSuffixedNameDefault,
   pickPreferredDefaultBranch as pickPreferredDefaultBranchDefault,
   projectExists as projectExistsDefault,
   projectSshUrl,
@@ -18,39 +17,13 @@ import {
 import { parseSshGitUrl } from "./ssh-url.mjs";
 import { createUi } from "./ui.mjs";
 
+const RED = "\u001b[31m";
+
 function defaultHasCommand(name) {
   return spawnSync("which", [name], { stdio: "ignore" }).status === 0;
 }
 
-/**
- * @returns {{ ok: true, sshUrl: string, createNew: boolean }
- *   | { ok: false, error: string }}
- */
-export function parseBackupArgs(args) {
-  let createNew = false;
-  const positionals = [];
-  for (const arg of args ?? []) {
-    if (arg === "-n" || arg === "--new") {
-      createNew = true;
-      continue;
-    }
-    if (arg.startsWith("-")) {
-      return { ok: false, error: `Unknown option: ${arg}` };
-    }
-    positionals.push(arg);
-  }
-  if (positionals.length !== 1) {
-    return { ok: false, error: "Usage: gt backup [-n|--new] <ssh-url>" };
-  }
-  return { ok: true, sshUrl: positionals[0].trim(), createNew };
-}
-
-/**
- * @param {string[]} args
- * @param {Record<string, unknown>} context
- * @returns {Promise<number>}
- */
-export async function runBackupCommand(args, context = {}) {
+function resolveContext(context = {}) {
   const {
     cwd = process.cwd(),
     env = process.env,
@@ -61,7 +34,6 @@ export async function runBackupCommand(args, context = {}) {
     ensureBackupGroup = ensureBackupGroupDefault,
     projectExists = projectExistsDefault,
     createPrivateProject = createPrivateProjectDefault,
-    nextSuffixedName = nextSuffixedNameDefault,
     pickPreferredDefaultBranch = pickPreferredDefaultBranchDefault,
     setDefaultBranch = setDefaultBranchDefault,
     runGit = runGitDefault,
@@ -69,81 +41,94 @@ export async function runBackupCommand(args, context = {}) {
     rmSync = rmSyncDefault,
   } = context;
 
-  const parsedArgs = parseBackupArgs(args);
-  if (!parsedArgs.ok) {
-    ui.error(parsedArgs.error);
-    return 1;
-  }
+  return {
+    cwd,
+    env,
+    ui,
+    hasCommand,
+    assertGlabReady,
+    ensureBackupGroup,
+    projectExists,
+    createPrivateProject,
+    pickPreferredDefaultBranch,
+    setDefaultBranch,
+    runGit,
+    mkdtempSync,
+    rmSync,
+  };
+}
 
-  const { sshUrl: sourceUrl, createNew } = parsedArgs;
+/**
+ * Mirror one source SSH URL into the GitLab backup group.
+ * Always updates live projects, recreates inactive ones, and creates missing ones.
+ * Never uses suffix / --new naming.
+ *
+ * @param {string} sourceUrl
+ * @param {Record<string, unknown>} context
+ * @returns {Promise<
+ *   | { ok: true, webUrl: string, projectPath: string }
+ *   | { ok: false, error: string }
+ * >}
+ */
+export async function backupOneRepo(sourceUrl, context = {}) {
+  const {
+    cwd,
+    env,
+    ui,
+    hasCommand,
+    assertGlabReady,
+    ensureBackupGroup,
+    projectExists,
+    createPrivateProject,
+    pickPreferredDefaultBranch,
+    setDefaultBranch,
+    runGit,
+    mkdtempSync,
+    rmSync,
+  } = resolveContext(context);
 
   const parsed = parseSshGitUrl(sourceUrl);
   if (!parsed.ok) {
-    ui.error(parsed.error);
-    return 1;
+    return { ok: false, error: parsed.error };
   }
 
   if (!(await hasCommand("git"))) {
-    ui.error("git is not installed or not available on PATH");
-    return 1;
+    return { ok: false, error: "git is not installed or not available on PATH" };
   }
 
   const glabReady = await assertGlabReady({ hasCommand, env });
   if (!glabReady.ok) {
-    ui.error(glabReady.error);
-    return 1;
+    return { ok: false, error: glabReady.error };
   }
 
-  const baseName = parsed.projectName;
+  const targetName = parsed.projectName;
   const group = BACKUP_GROUP;
-  const projectPath = `${group}/${baseName}`;
+  const projectPath = `${group}/${targetName}`;
 
-  ui.title("REPO BACKUP");
   ui.step(`${sourceUrl} → ${projectPath}`);
 
   const groupReady = await ensureBackupGroup(group);
   if (!groupReady.ok) {
-    ui.error(groupReady.error || "could not ensure GitLab backup group");
-    return 1;
+    return { ok: false, error: groupReady.error || "could not ensure GitLab backup group" };
   }
   if (groupReady.created) {
     ui.success(`Created group ${group}`);
   }
 
-  const existsResult = await projectExists(group, baseName);
+  const existsResult = await projectExists(group, targetName);
   if (!existsResult.ok) {
-    ui.error(existsResult.error || "could not check GitLab project");
-    return 1;
+    return { ok: false, error: existsResult.error || "could not check GitLab project" };
   }
 
-  let targetName = baseName;
-
   if (existsResult.exists) {
-    if (createNew) {
-      const nextName = await nextSuffixedName(group, baseName);
-      if (!nextName.ok) {
-        ui.error(nextName.error || "could not find available backup name");
-        return 1;
-      }
-      targetName = nextName.name;
-      const created = await createPrivateProject(group, targetName);
-      if (!created.ok) {
-        ui.error(created.error || "failed to create GitLab project");
-        return 1;
-      }
-      ui.success(`Created ${group}/${targetName}`);
-    } else {
-      targetName = baseName;
-      ui.step(`Updating existing backup ${group}/${targetName}`);
-    }
+    ui.step(`Updating existing backup ${projectPath}`);
   } else {
     if (existsResult.inactive) {
       ui.step(`Previous backup pending deletion (inactive); creating ${projectPath}`);
     }
     const created = await createPrivateProject(group, targetName);
     if (!created.ok) {
-      ui.error(created.error || "failed to create GitLab project");
-      return 1;
+      return { ok: false, error: created.error || "failed to create GitLab project" };
     }
     ui.success(`Created ${projectPath}`);
   }
@@ -159,12 +144,14 @@ export async function runBackupCommand(args, context = {}) {
       { cwd, env },
     );
     if (cloneResult.status !== 0) {
-      ui.error(cloneResult.stderr?.trim() || cloneResult.stdout?.trim() || "git clone --mirror failed");
-      return 1;
+      return {
+        ok: false,
+        error: cloneResult.stderr?.trim() || cloneResult.stdout?.trim() || "git clone --mirror failed",
+      };
     }
     ui.success("Clone complete");
 
-    ui.step(`Pushing all branches + tags → ${group}/${targetName}`);
+    ui.step(`Pushing all branches + tags → ${projectPath}`);
     const pushResult = await runGit(
       [
         "push",
@@ -176,8 +163,10 @@ export async function runBackupCommand(args, context = {}) {
       { cwd: mirrorDir, env },
     );
     if (pushResult.status !== 0) {
-      ui.error(pushResult.stderr?.trim() || pushResult.stdout?.trim() || "git push failed");
-      return 1;
+      return {
+        ok: false,
+        error: pushResult.stderr?.trim() || pushResult.stdout?.trim() || "git push failed",
+      };
     }
     ui.success("Pushed all branches + tags");
 
@@ -196,6 +185,56 @@ export async function runBackupCommand(args, context = {}) {
     rmSync(tempRoot, { recursive: true, force: true });
   }
 
-  ui.listEnd(projectWebUrl(group, targetName));
-  return 0;
+  return {
+    ok: true,
+    webUrl: projectWebUrl(group, targetName),
+    projectPath,
+  };
+}
+
+/**
+ * Run backups sequentially; continue after failures; print summary.
+ *
+ * @param {string[]} urls
+ * @param {Record<string, unknown>} context
+ * @returns {Promise<number>} 0 if all ok, else 1
+ */
+export async function runBackupBatch(urls, context = {}) {
+  const { ui } = resolveContext(context);
+  const successes = [];
+  const failures = [];
+
+  for (const url of urls ?? []) {
+    const result = await backupOneRepo(url, context);
+    if (result.ok) {
+      successes.push({ url, webUrl: result.webUrl, projectPath: result.projectPath });
+    } else {
+      failures.push({ url, error: result.error });
+    }
+  }
+
+  ui.step("Backup summary");
+  for (const s of successes) {
+    ui.item(`ok  ${s.url} → ${s.webUrl}`);
+  }
+  for (const f of failures) {
+    ui.item(`fail  ${f.url} — ${f.error}`, RED);
+  }
+  ui.listEnd();
+
+  return failures.length === 0 ? 0 : 1;
+}
+
+/**
+ * Temporary stub until Task 5 rewires CLI dispatch.
+ * @param {string[]} _args
+ * @param {Record<string, unknown>} context
+ * @returns {Promise<number>}
+ */
+export async function runBackupCommand(_args, context = {}) {
+  const { ui } = resolveContext(context);
+  ui.error(
+    "gt backup one-shot URL is retired; use gt backup add / gt backup / gt backup --all",
+  );
+  return 1;
 }
