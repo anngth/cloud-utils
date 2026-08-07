@@ -185,6 +185,21 @@ test("sets preferred default branch after push", async () => {
   assert.ok(h.messages.statuses.some((m) => /default branch set to develop/i.test(m)));
 });
 
+test("prints progress status through backup steps", async () => {
+  const { h, context } = baseContext();
+
+  const code = await runBackupCommand([SOURCE], context);
+
+  assert.equal(code, 0);
+  const statuses = h.messages.statuses.join("\n");
+  assert.match(statuses, /Backing up/);
+  assert.match(statuses, /Checking backup group/);
+  assert.match(statuses, /Creating private project|Updating existing project/);
+  assert.match(statuses, /Cloning mirror/);
+  assert.match(statuses, /Pushing branches and tags/);
+  assert.match(statuses, /Backup finished/);
+});
+
 test("collision cancel does not create or push", async () => {
   const gitCalls = [];
   const created = [];
