@@ -8,6 +8,7 @@ import {
   BACKUP_GROUP,
   assertGlabReady as assertGlabReadyDefault,
   createPrivateProject as createPrivateProjectDefault,
+  ensureBackupGroup as ensureBackupGroupDefault,
   nextSuffixedName as nextSuffixedNameDefault,
   projectExists as projectExistsDefault,
   projectSshUrl,
@@ -91,6 +92,7 @@ export async function runBackupCommand(args, context = {}) {
     ui = createUi({ stdout, stderr: context.stderr ?? process.stderr }),
     hasCommand = defaultHasCommand,
     assertGlabReady = assertGlabReadyDefault,
+    ensureBackupGroup = ensureBackupGroupDefault,
     projectExists = projectExistsDefault,
     createPrivateProject = createPrivateProjectDefault,
     nextSuffixedName = nextSuffixedNameDefault,
@@ -125,6 +127,15 @@ export async function runBackupCommand(args, context = {}) {
   const baseName = parsed.projectName;
   const group = BACKUP_GROUP;
   const projectPath = `${group}/${baseName}`;
+
+  const groupReady = await ensureBackupGroup(group);
+  if (!groupReady.ok) {
+    ui.error(groupReady.error || "could not ensure GitLab backup group");
+    return 1;
+  }
+  if (groupReady.created) {
+    ui.status(`Created private group ${group}`);
+  }
 
   const existsResult = await projectExists(group, baseName);
   if (!existsResult.ok) {

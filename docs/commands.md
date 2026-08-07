@@ -34,7 +34,7 @@ gt push
 gt backup git@github.com:org/my-app.git
 ```
 
-- **backup** — mirrors a repo to private `anngth-backups/<owner>-<repo>` on GitLab. If the project already exists, prompts to update, create a new suffixed project (`-2`, `-3`, …), or cancel.
+- **backup** — mirrors a repo to private `anngth-dev/backups/<owner>-<repo>` on GitLab. If the project already exists, prompts to update, create a new suffixed project (`-2`, `-3`, …), or cancel. Creates the private `anngth-dev/backups` subgroup when it is missing (parent `anngth-dev` must already exist).
 - Requires `git`, `glab` (logged in), and SSH access to both the source and GitLab.
 - Mirror push can delete refs on the GitLab side that no longer exist on the source.
 

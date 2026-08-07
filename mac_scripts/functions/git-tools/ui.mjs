@@ -10,7 +10,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out("Commands:");
     out("  push              Force push (safe --force-with-lease)");
     out("  fetch [--sync-upstream]");
-    out("  backup <ssh-url>  Mirror repo to gitlab.com/anngth-backups");
+    out("  backup <ssh-url>  Mirror repo to gitlab.com/anngth-dev/backups");
     out();
     out("Run 'gt --help' for this message.");
   }

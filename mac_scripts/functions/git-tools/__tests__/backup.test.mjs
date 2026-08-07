@@ -41,6 +41,7 @@ function baseContext(overrides = {}) {
     context: {
       hasCommand: (name) => name === "git" || name === "glab",
       assertGlabReady: async () => ({ ok: true }),
+      ensureBackupGroup: async () => ({ ok: true, created: false }),
       projectExists: async () => ({ ok: true, exists: false }),
       createPrivateProject: async (_group, name) => {
         created.push(name);
@@ -91,6 +92,43 @@ test("git missing exits 1", async () => {
 
   assert.equal(code, 1);
   assert.match(h.messages.errors.join("\n"), /git/i);
+});
+
+test("ensureBackupGroup failure exits 1 before project create", async () => {
+  const created = [];
+  const { h, context } = baseContext({
+    ensureBackupGroup: async () => ({ ok: false, error: "failed to create GitLab subgroup" }),
+    createPrivateProject: async (_group, name) => {
+      created.push(name);
+      return { ok: true };
+    },
+  });
+
+  const code = await runBackupCommand([SOURCE], context);
+
+  assert.equal(code, 1);
+  assert.deepEqual(created, []);
+  assert.match(h.messages.errors.join("\n"), /group|subgroup/i);
+});
+
+test("ensures backup group before checking project", async () => {
+  const steps = [];
+  const { context } = baseContext({
+    ensureBackupGroup: async (group) => {
+      steps.push(["ensure", group]);
+      return { ok: true, created: true };
+    },
+    projectExists: async (group, name) => {
+      steps.push(["exists", group, name]);
+      return { ok: true, exists: false };
+    },
+  });
+
+  const code = await runBackupCommand([SOURCE], context);
+
+  assert.equal(code, 0);
+  assert.deepEqual(steps[0], ["ensure", BACKUP_GROUP]);
+  assert.equal(steps[1][0], "exists");
 });
 
 test("creates private project and mirrors when missing", async () => {

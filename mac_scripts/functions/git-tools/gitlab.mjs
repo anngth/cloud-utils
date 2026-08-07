@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 
-export const BACKUP_GROUP = "anngth-backups";
+export const BACKUP_GROUP = "anngth-dev/backups";
 export const GITLAB_HOST = "gitlab.com";
 
 function defaultHasCommand(name) {
@@ -61,6 +61,118 @@ export async function projectExists(
   if (/404|not found/i.test(detail)) return { ok: true, exists: false };
 
   return { ok: false, error: resultError(result, "glab API request failed") };
+}
+
+export async function groupExists(
+  group,
+  { runGlab: runGlabDependency = runGlab } = {},
+) {
+  const path = `groups/${encodeURIComponent(group)}`;
+  const result = await runGlabDependency(["api", path]);
+  if (result.status === 0) return { ok: true, exists: true };
+
+  const detail = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  if (/404|not found/i.test(detail)) return { ok: true, exists: false };
+
+  return { ok: false, error: resultError(result, "glab API request failed") };
+}
+
+/**
+ * Create a private group. Nested paths (parent/leaf) are created as a subgroup
+ * under the parent (top-level group create is often forbidden by token scopes).
+ */
+export async function createPrivateGroup(
+  group,
+  { runGlab: runGlabDependency = runGlab } = {},
+) {
+  const slash = group.lastIndexOf("/");
+  if (slash === -1) {
+    const result = await runGlabDependency([
+      "api",
+      "--method",
+      "POST",
+      "groups",
+      "-f",
+      `name=${group}`,
+      "-f",
+      `path=${group}`,
+      "-f",
+      "visibility=private",
+    ]);
+    if (result.status !== 0) {
+      return { ok: false, error: resultError(result, "failed to create GitLab group") };
+    }
+    return { ok: true, stdout: result.stdout, stderr: result.stderr };
+  }
+
+  const parentPath = group.slice(0, slash);
+  const leaf = group.slice(slash + 1);
+  const parentResult = await runGlabDependency([
+    "api",
+    `groups/${encodeURIComponent(parentPath)}`,
+  ]);
+  if (parentResult.status !== 0) {
+    return {
+      ok: false,
+      error: resultError(parentResult, `parent group ${parentPath} not found`),
+    };
+  }
+
+  let parentId;
+  try {
+    parentId = JSON.parse(parentResult.stdout).id;
+  } catch {
+    return { ok: false, error: `could not parse parent group id for ${parentPath}` };
+  }
+  if (parentId == null) {
+    return { ok: false, error: `parent group ${parentPath} has no id` };
+  }
+
+  const result = await runGlabDependency([
+    "api",
+    "--method",
+    "POST",
+    "groups",
+    "-f",
+    `name=${leaf}`,
+    "-f",
+    `path=${leaf}`,
+    "-f",
+    `parent_id=${parentId}`,
+    "-f",
+    "visibility=private",
+  ]);
+  if (result.status !== 0) {
+    return { ok: false, error: resultError(result, "failed to create GitLab subgroup") };
+  }
+
+  return { ok: true, stdout: result.stdout, stderr: result.stderr };
+}
+
+/**
+ * Ensure the backup namespace/group exists; create it as private if missing.
+ * @returns {Promise<{ ok: true, created: boolean } | { ok: false, error: string }>}
+ */
+export async function ensureBackupGroup(
+  group,
+  {
+    runGlab: runGlabDependency = runGlab,
+    groupExists: groupExistsDependency = groupExists,
+    createPrivateGroup: createPrivateGroupDependency = createPrivateGroup,
+  } = {},
+) {
+  const existing = await groupExistsDependency(group, { runGlab: runGlabDependency });
+  if (!existing.ok) {
+    return { ok: false, error: existing.error || "could not check GitLab group" };
+  }
+  if (existing.exists) return { ok: true, created: false };
+
+  const created = await createPrivateGroupDependency(group, { runGlab: runGlabDependency });
+  if (!created.ok) {
+    return { ok: false, error: created.error || "failed to create GitLab group" };
+  }
+
+  return { ok: true, created: true };
 }
 
 export async function createPrivateProject(

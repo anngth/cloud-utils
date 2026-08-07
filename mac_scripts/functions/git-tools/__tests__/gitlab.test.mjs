@@ -5,12 +5,16 @@ import {
   GITLAB_HOST,
   assertGlabReady,
   createPrivateProject,
+  ensureBackupGroup,
+  groupExists,
   nextAvailableName,
   nextSuffixedName,
   projectExists,
   projectSshUrl,
   projectWebUrl,
 } from "../gitlab.mjs";
+
+const GROUP = "anngth-dev/backups";
 
 test("assertGlabReady fails when glab is missing", async () => {
   const result = await assertGlabReady({ hasCommand: () => false });
@@ -57,7 +61,7 @@ test("projectExists returns true for a successful API response", async () => {
 });
 
 test("projectExists maps a not-found API response to exists false", async () => {
-  const result = await projectExists("anngth-backups", "missing", {
+  const result = await projectExists(GROUP, "missing", {
     runGlab: async () => ({ status: 1, stdout: "", stderr: "404 Not Found" }),
   });
 
@@ -65,7 +69,7 @@ test("projectExists maps a not-found API response to exists false", async () => 
 });
 
 test("projectExists returns an error for unrelated API failures", async () => {
-  const result = await projectExists("anngth-backups", "broken", {
+  const result = await projectExists(GROUP, "broken", {
     runGlab: async () => ({ status: 1, stdout: "", stderr: "connection refused" }),
   });
 
@@ -73,9 +77,69 @@ test("projectExists returns an error for unrelated API failures", async () => {
   assert.match(result.error, /connection refused/i);
 });
 
+test("groupExists uses encoded nested group path", async () => {
+  let received;
+  const result = await groupExists(GROUP, {
+    runGlab: async (args) => {
+      received = args;
+      return { status: 0, stdout: "{}", stderr: "" };
+    },
+  });
+
+  assert.deepEqual(result, { ok: true, exists: true });
+  assert.deepEqual(received, ["api", "groups/anngth-dev%2Fbackups"]);
+});
+
+test("ensureBackupGroup creates nested backups subgroup when missing", async () => {
+  const calls = [];
+  const result = await ensureBackupGroup(GROUP, {
+    runGlab: async (args) => {
+      calls.push(args);
+      if (args[0] === "api" && args[1] === "groups/anngth-dev%2Fbackups") {
+        return { status: 1, stdout: "", stderr: "404 Group Not Found" };
+      }
+      if (args[0] === "api" && args[1] === "groups/anngth-dev") {
+        return { status: 0, stdout: JSON.stringify({ id: 136327837 }), stderr: "" };
+      }
+      return { status: 0, stdout: "{}", stderr: "" };
+    },
+  });
+
+  assert.deepEqual(result, { ok: true, created: true });
+  assert.deepEqual(calls[0], ["api", "groups/anngth-dev%2Fbackups"]);
+  assert.deepEqual(calls[1], ["api", "groups/anngth-dev"]);
+  assert.deepEqual(calls[2], [
+    "api",
+    "--method",
+    "POST",
+    "groups",
+    "-f",
+    "name=backups",
+    "-f",
+    "path=backups",
+    "-f",
+    "parent_id=136327837",
+    "-f",
+    "visibility=private",
+  ]);
+});
+
+test("ensureBackupGroup skips create when the group already exists", async () => {
+  const calls = [];
+  const result = await ensureBackupGroup(GROUP, {
+    runGlab: async (args) => {
+      calls.push(args);
+      return { status: 0, stdout: "{}", stderr: "" };
+    },
+  });
+
+  assert.deepEqual(result, { ok: true, created: false });
+  assert.equal(calls.length, 1);
+});
+
 test("createPrivateProject uses a private empty-project glab command", async () => {
   let received;
-  const result = await createPrivateProject("anngth-backups", "my-app", {
+  const result = await createPrivateProject(GROUP, "my-app", {
     runGlab: async (args) => {
       received = args;
       return { status: 0, stdout: "created", stderr: "" };
@@ -88,14 +152,14 @@ test("createPrivateProject uses a private empty-project glab command", async () 
     "create",
     "my-app",
     "--group",
-    "anngth-backups",
+    GROUP,
     "--private",
     "--skipGitInit",
   ]);
 });
 
 test("nextAvailableName returns the base name when it is free", async () => {
-  const result = await nextAvailableName("anngth-backups", "my-app", {
+  const result = await nextAvailableName(GROUP, "my-app", {
     projectExists: async () => ({ ok: true, exists: false }),
   });
 
@@ -105,7 +169,7 @@ test("nextAvailableName returns the base name when it is free", async () => {
 test("nextSuffixedName starts at suffix two and skips taken names", async () => {
   const taken = new Set(["my-app", "my-app-2", "my-app-3"]);
 
-  const result = await nextSuffixedName("anngth-backups", "my-app", {
+  const result = await nextSuffixedName(GROUP, "my-app", {
     projectExists: async (_group, name) => ({ ok: true, exists: taken.has(name) }),
   });
 
@@ -113,7 +177,7 @@ test("nextSuffixedName starts at suffix two and skips taken names", async () => 
 });
 
 test("nextSuffixedName does not return the base name when it is free", async () => {
-  const result = await nextSuffixedName("anngth-backups", "my-app", {
+  const result = await nextSuffixedName(GROUP, "my-app", {
     projectExists: async () => ({ ok: true, exists: false }),
   });
 
@@ -121,7 +185,7 @@ test("nextSuffixedName does not return the base name when it is free", async () 
 });
 
 test("nextSuffixedName returns structured error on mid-walk API failure", async () => {
-  const result = await nextSuffixedName("anngth-backups", "my-app", {
+  const result = await nextSuffixedName(GROUP, "my-app", {
     projectExists: async (_group, name) => {
       if (name === "my-app-2") return { ok: true, exists: true };
       return { ok: false, error: "connection refused" };
@@ -132,9 +196,15 @@ test("nextSuffixedName returns structured error on mid-walk API failure", async 
   assert.match(result.error, /connection refused/i);
 });
 
-test("URL helpers use the fixed GitLab host", () => {
-  assert.equal(BACKUP_GROUP, "anngth-backups");
+test("URL helpers use nested backup group and fixed GitLab host", () => {
+  assert.equal(BACKUP_GROUP, "anngth-dev/backups");
   assert.equal(GITLAB_HOST, "gitlab.com");
-  assert.equal(projectSshUrl("group", "my-app"), "git@gitlab.com:group/my-app.git");
-  assert.equal(projectWebUrl("group", "my-app"), "https://gitlab.com/group/my-app");
+  assert.equal(
+    projectSshUrl(BACKUP_GROUP, "my-app"),
+    "git@gitlab.com:anngth-dev/backups/my-app.git",
+  );
+  assert.equal(
+    projectWebUrl(BACKUP_GROUP, "my-app"),
+    "https://gitlab.com/anngth-dev/backups/my-app",
+  );
 });
