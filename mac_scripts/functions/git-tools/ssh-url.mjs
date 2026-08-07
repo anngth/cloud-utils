@@ -1,4 +1,5 @@
-const SSH_RE = /^git@([^:]+):([^/]+)\/([^/]+?)(?:\.git)?$/i;
+// Last path segment is the repo; preceding segments (groups/subgroups) are owner.
+const SSH_RE = /^git@([^:]+):(.+)\/([^/]+?)(?:\.git)?$/i;
 
 /**
  * @param {string} value

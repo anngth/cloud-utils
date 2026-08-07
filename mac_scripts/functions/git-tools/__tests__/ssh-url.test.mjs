@@ -16,6 +16,14 @@ test("parses gitlab ssh url without .git", () => {
   assert.equal(r.projectName, "acme-api");
 });
 
+test("parses nested group path", () => {
+  const r = parseSshGitUrl("git@gitlab.vinova.sg:vinova/project-sit/sit-be.git");
+  assert.equal(r.ok, true);
+  assert.equal(r.owner, "vinova/project-sit");
+  assert.equal(r.repo, "sit-be");
+  assert.equal(r.projectName, "vinova-project-sit-sit-be");
+});
+
 test("rejects https urls", () => {
   const r = parseSshGitUrl("https://github.com/org/my-app.git");
   assert.equal(r.ok, false);
