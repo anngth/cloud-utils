@@ -392,6 +392,27 @@ test("runBackupCommand empty select errors No repos selected", async () => {
   assert.match(h.messages.errors.join("\n"), /No repos selected/i);
 });
 
+test("runBackupCommand cancel exits 1 without backing up", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE, SOURCE_B]);
+  const created = [];
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    stdin: { isTTY: true },
+    runSelector: async () => ({ type: "cancel", selected: [] }),
+    createPrivateProject: async (_group, name) => {
+      created.push(name);
+      return { ok: true };
+    },
+  });
+
+  const code = await runBackupCommand([], context);
+  assert.equal(code, 1);
+  assert.deepEqual(created, []);
+  assert.doesNotMatch(h.messages.statuses.join("\n"), /Backup summary/);
+  assert.equal(h.messages.items.length, 0);
+});
+
 test("runBackupCommand non-TTY without --all mentions terminal and --all", async () => {
   const paths = tempPaths();
   seedRepos(paths, [SOURCE]);
