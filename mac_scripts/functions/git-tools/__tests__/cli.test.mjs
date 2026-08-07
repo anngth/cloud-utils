@@ -78,7 +78,7 @@ test("help mentions backup", async () => {
     ui: createUi({ stdout: { write: (v) => { stdout += v; } }, stderr: { write: () => {} } }),
   });
   assert.equal(code, 0);
-  assert.match(stdout, /backup/i);
+  assert.match(stdout, /backup \[-n\|--new\] <ssh-url>  Mirror repo to gitlab\.com\/anngth-dev\/backups/);
 });
 
 test("unknown command exits 1", async () => {

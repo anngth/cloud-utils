@@ -57,7 +57,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     active("Commands");
     item("push              Force push (safe --force-with-lease)");
     item("fetch [--sync-upstream]");
-    item("backup <ssh-url>  Mirror repo to gitlab.com/anngth-dev/backups");
+    item("backup [-n|--new] <ssh-url>  Mirror repo to gitlab.com/anngth-dev/backups");
     listEnd("Run 'gt --help' for this message.");
   }
 
