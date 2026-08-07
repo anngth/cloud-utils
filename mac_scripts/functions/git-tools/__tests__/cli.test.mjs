@@ -65,7 +65,7 @@ test("routes backup", async () => {
   assert.deepEqual(h.calls, [["backup", ["git@github.com:o/r.git"]]]);
 });
 
-test("help mentions backup", async () => {
+test("help mentions managed backup list commands", async () => {
   let stdout = "";
   const code = await runCli(["--help"], {
     cwd: "/repo",
@@ -78,7 +78,12 @@ test("help mentions backup", async () => {
     ui: createUi({ stdout: { write: (v) => { stdout += v; } }, stderr: { write: () => {} } }),
   });
   assert.equal(code, 0);
-  assert.match(stdout, /backup \[-n\|--new\] <ssh-url>  Mirror repo to gitlab\.com\/anngth-dev\/backups/);
+  assert.match(stdout, /\bbackup\b/);
+  assert.match(stdout, /backup --all/);
+  assert.match(stdout, /backup add <ssh-url>/);
+  assert.match(stdout, /backup remove <index\|ssh-url>/);
+  assert.doesNotMatch(stdout, /-n|--new/);
+  assert.doesNotMatch(stdout, /backup <ssh-url>/);
 });
 
 test("unknown command exits 1", async () => {

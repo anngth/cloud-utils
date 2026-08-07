@@ -2,6 +2,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createUi } from "../ui.mjs";
 
+test("usage documents managed backup list without -n/--new or one-shot URL", () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (value) => { stdout += value; } },
+    stderr: { write() {} },
+  });
+
+  ui.usage();
+
+  assert.match(stdout, /\bbackup\b/);
+  assert.match(stdout, /backup --all/);
+  assert.match(stdout, /backup add <ssh-url>/);
+  assert.match(stdout, /backup remove <index\|ssh-url>/);
+  assert.doesNotMatch(stdout, /-n|--new/);
+  assert.doesNotMatch(stdout, /backup <ssh-url>/);
+});
+
 test("status uses skm-style step marker instead of --- prefix", () => {
   let stdout = "";
   const ui = createUi({

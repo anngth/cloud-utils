@@ -58,7 +58,10 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     active("Commands");
     item("push              Force push (safe --force-with-lease)");
     item("fetch [--sync-upstream]");
-    item("backup [-n|--new] <ssh-url>  Mirror repo to gitlab.com/anngth-dev/backups");
+    item("backup              Interactive select from managed list");
+    item("backup --all         Backup every repo in the list");
+    item("backup add <ssh-url>  Add SSH URL to managed list");
+    item("backup remove <index|ssh-url>  Remove by 1-based index or URL");
     listEnd("Run 'gt --help' for this message.");
   }
 
