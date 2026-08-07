@@ -3,7 +3,7 @@ import test from "node:test";
 import { runFetchCommand } from "../fetch.mjs";
 
 function uiHarness() {
-  const messages = { errors: [], statuses: [] };
+  const messages = { errors: [], statuses: [], lines: [] };
   return {
     messages,
     ui: {
@@ -11,6 +11,7 @@ function uiHarness() {
       status(message) { messages.statuses.push(message); },
       usage() {},
       usageLine(message) { messages.errors.push(message); },
+      line(message = "") { messages.lines.push(message); },
     },
   };
 }
@@ -52,25 +53,31 @@ test("rejects an unknown flag with usage and exits 1", async () => {
   assert.deepEqual(calls, []);
 });
 
-test("--help exits 0 with usage matching zsh", async () => {
+test("--help exits 0 with plain usage matching zsh (no --- prefix)", async () => {
   const { runGit, calls } = makeGit();
   const h = uiHarness();
 
   const code = await runFetchCommand(["--help"], { cwd: "/repo", runGit, ui: h.ui });
 
   assert.equal(code, 0);
-  assert.match(h.messages.statuses.join("\n"), /Usage: gt fetch \[--sync-upstream\]/);
+  assert.deepEqual(h.messages.lines, [
+    "Usage: gt fetch [--sync-upstream]",
+    "  --sync-upstream  Merge upstream/main into local main and push origin/main (main only)",
+  ]);
+  assert.ok(h.messages.lines.every((line) => !line.startsWith("---")));
+  assert.equal(h.messages.statuses.length, 0);
   assert.deepEqual(calls, []);
 });
 
-test("-h exits 0 with usage", async () => {
+test("-h exits 0 with plain usage (no --- prefix)", async () => {
   const { runGit } = makeGit();
   const h = uiHarness();
 
   const code = await runFetchCommand(["-h"], { cwd: "/repo", runGit, ui: h.ui });
 
   assert.equal(code, 0);
-  assert.match(h.messages.statuses.join("\n"), /Usage: gt fetch \[--sync-upstream\]/);
+  assert.match(h.messages.lines.join("\n"), /Usage: gt fetch \[--sync-upstream\]/);
+  assert.ok(h.messages.lines.every((line) => !line.startsWith("---")));
 });
 
 test("rejects when not a git repository", async () => {

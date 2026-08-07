@@ -206,8 +206,8 @@ function parseArgs(args, ui) {
       continue;
     }
     if (arg === "-h" || arg === "--help") {
-      ui.status(FETCH_USAGE);
-      ui.status("--sync-upstream  Merge upstream/main into local main and push origin/main (main only)");
+      ui.line(FETCH_USAGE);
+      ui.line("  --sync-upstream  Merge upstream/main into local main and push origin/main (main only)");
       return { help: true };
     }
     ui.error(`❌ Unknown option for fetch: ${arg}`);

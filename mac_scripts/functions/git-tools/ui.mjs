@@ -26,5 +26,9 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out(`--- ${message}`);
   }
 
-  return { usage, error, usageLine, status };
+  function line(message = "") {
+    out(message);
+  }
+
+  return { usage, error, usageLine, status, line };
 }
