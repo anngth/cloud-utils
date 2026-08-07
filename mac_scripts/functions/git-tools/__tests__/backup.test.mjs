@@ -151,8 +151,12 @@ test("creates private project and mirrors when missing", async () => {
   assert.equal(code, 0);
   assert.deepEqual(created, [BASE_NAME]);
   assert.ok(gitCalls.some((a) => a[0] === "clone" && a.includes("--mirror")));
-  assert.ok(gitCalls.some((a) => a[0] === "push" && a.includes("--mirror")));
   const pushCall = gitCalls.find((a) => a[0] === "push");
+  assert.ok(pushCall);
+  assert.ok(!pushCall.includes("--mirror"));
+  assert.ok(pushCall.includes("--prune"));
+  assert.ok(pushCall.includes("+refs/heads/*:refs/heads/*"));
+  assert.ok(pushCall.includes("+refs/tags/*:refs/tags/*"));
   assert.ok(pushCall.includes(projectSshUrl(BACKUP_GROUP, BASE_NAME)));
   assert.ok(
     h.messages.lines.concat(h.messages.statuses).some((m) =>

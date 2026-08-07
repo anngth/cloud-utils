@@ -208,11 +208,17 @@ export async function runBackupCommand(args, context = {}) {
     }
 
     const pushResult = await runGit(
-      ["push", "--mirror", destUrl],
+      [
+        "push",
+        "--prune",
+        destUrl,
+        "+refs/heads/*:refs/heads/*",
+        "+refs/tags/*:refs/tags/*",
+      ],
       { cwd: mirrorDir, env },
     );
     if (pushResult.status !== 0) {
-      ui.error(pushResult.stderr?.trim() || pushResult.stdout?.trim() || "git push --mirror failed");
+      ui.error(pushResult.stderr?.trim() || pushResult.stdout?.trim() || "git push failed");
       return 1;
     }
   } finally {
