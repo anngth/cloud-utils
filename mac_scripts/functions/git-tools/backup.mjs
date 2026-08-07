@@ -134,22 +134,17 @@ export async function runBackupCommand(args, context = {}) {
   const sourceUrl = args[0].trim();
 
   ui.title("GT BACKUP");
-  ui.step(`Backing up ${sourceUrl}`);
-  ui.step(`Target project ${projectPath}`);
+  ui.step(`${sourceUrl} → ${projectPath}`);
 
-  ui.step(`Checking backup group ${group}...`);
   const groupReady = await ensureBackupGroup(group);
   if (!groupReady.ok) {
     ui.error(groupReady.error || "could not ensure GitLab backup group");
     return 1;
   }
   if (groupReady.created) {
-    ui.step(`Created private group ${group}`);
-  } else {
-    ui.step(`Using existing group ${group}`);
+    ui.step(`Created group ${group}`);
   }
 
-  ui.step(`Checking whether ${projectPath} already exists...`);
   const existsResult = await projectExists(group, baseName);
   if (!existsResult.ok) {
     ui.error(existsResult.error || "could not check GitLab project");
@@ -159,7 +154,6 @@ export async function runBackupCommand(args, context = {}) {
   let targetName = baseName;
 
   if (existsResult.exists) {
-    ui.step(`Project ${projectPath} already exists`);
     if (!stdin.isTTY) {
       ui.error(
         `Project ${projectPath} already exists. Re-run on a TTY to choose update / new / cancel.`,
@@ -182,34 +176,31 @@ export async function runBackupCommand(args, context = {}) {
 
     if (action === "update") {
       targetName = baseName;
-      ui.step(`Updating existing project ${group}/${targetName}`);
+      ui.step(`Updating ${group}/${targetName}`);
     } else if (action === "new") {
-      ui.step("Finding next available project name...");
       const nextName = await nextSuffixedName(group, baseName);
       if (!nextName.ok) {
         ui.error(nextName.error || "could not find available backup name");
         return 1;
       }
       targetName = nextName.name;
-      ui.step(`Creating private project ${group}/${targetName}...`);
       const created = await createPrivateProject(group, targetName);
       if (!created.ok) {
         ui.error(created.error || "failed to create GitLab project");
         return 1;
       }
-      ui.step(`Created private project ${group}/${targetName}`);
+      ui.step(`Created ${group}/${targetName}`);
     } else {
       ui.error("Backup cancelled.");
       return 1;
     }
   } else {
-    ui.step(`Creating private project ${projectPath}...`);
     const created = await createPrivateProject(group, targetName);
     if (!created.ok) {
       ui.error(created.error || "failed to create GitLab project");
       return 1;
     }
-    ui.step(`Created private project ${projectPath}`);
+    ui.step(`Created ${projectPath}`);
   }
 
   const destUrl = projectSshUrl(group, targetName);
@@ -217,7 +208,7 @@ export async function runBackupCommand(args, context = {}) {
   const mirrorDir = join(tempRoot, "mirror.git");
 
   try {
-    ui.step(`Cloning mirror from ${sourceUrl}...`);
+    ui.step(`Cloning to ${mirrorDir}`);
     const cloneResult = await runGit(
       ["clone", "--mirror", sourceUrl, mirrorDir],
       { cwd, env },
@@ -226,9 +217,8 @@ export async function runBackupCommand(args, context = {}) {
       ui.error(cloneResult.stderr?.trim() || cloneResult.stdout?.trim() || "git clone --mirror failed");
       return 1;
     }
-    ui.step("Mirror clone complete");
 
-    ui.step(`Pushing branches and tags to ${destUrl}...`);
+    ui.step(`Pushing to ${group}/${targetName}`);
     const pushResult = await runGit(
       [
         "push",
@@ -243,9 +233,7 @@ export async function runBackupCommand(args, context = {}) {
       ui.error(pushResult.stderr?.trim() || pushResult.stdout?.trim() || "git push failed");
       return 1;
     }
-    ui.step("Push complete");
 
-    ui.step("Choosing default branch (main, then develop)...");
     const preferred = await pickPreferredDefaultBranch(mirrorDir, { runGit });
     if (preferred) {
       const setDefault = await setDefaultBranch(group, targetName, preferred);
@@ -254,17 +242,13 @@ export async function runBackupCommand(args, context = {}) {
           `Could not set default branch to ${preferred}: ${setDefault.error || "unknown error"}`,
         );
       } else {
-        ui.step(`Default branch set to ${preferred}`);
+        ui.step(`Default branch ${preferred}`);
       }
-    } else {
-      ui.step("No main/develop branch found; leaving GitLab default unchanged");
     }
   } finally {
-    ui.step("Cleaning up temporary mirror...");
     rmSync(tempRoot, { recursive: true, force: true });
   }
 
-  ui.step("Backup finished");
   ui.listEnd(projectWebUrl(group, targetName));
   return 0;
 }

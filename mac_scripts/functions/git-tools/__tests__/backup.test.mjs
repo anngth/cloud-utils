@@ -190,22 +190,23 @@ test("sets preferred default branch after push", async () => {
 
   assert.equal(code, 0);
   assert.deepEqual(defaults, [[BACKUP_GROUP, BASE_NAME, "develop"]]);
-  assert.ok(h.messages.statuses.some((m) => /default branch set to develop/i.test(m)));
+  assert.ok(h.messages.statuses.some((m) => /default branch develop/i.test(m)));
 });
 
-test("prints progress status through backup steps", async () => {
-  const { h, context } = baseContext();
+test("prints concise progress including clone path", async () => {
+  const { h, context } = baseContext({
+    mkdtempSync: () => "/tmp/gt-backup-test",
+  });
 
   const code = await runBackupCommand([SOURCE], context);
 
   assert.equal(code, 0);
   const statuses = h.messages.statuses.join("\n");
-  assert.match(statuses, /Backing up/);
-  assert.match(statuses, /Checking backup group/);
-  assert.match(statuses, /Creating private project|Updating existing project/);
-  assert.match(statuses, /Cloning mirror/);
-  assert.match(statuses, /Pushing branches and tags/);
-  assert.match(statuses, /Backup finished/);
+  assert.match(statuses, new RegExp(`${SOURCE} → ${BACKUP_GROUP}/${BASE_NAME}`));
+  assert.match(statuses, /Created /);
+  assert.match(statuses, /Cloning to \/tmp\/gt-backup-test\/mirror\.git/);
+  assert.match(statuses, /Pushing to /);
+  assert.doesNotMatch(statuses, /Checking backup group|Mirror clone complete|Cleaning up|Backup finished/);
 });
 
 test("collision cancel does not create or push", async () => {
