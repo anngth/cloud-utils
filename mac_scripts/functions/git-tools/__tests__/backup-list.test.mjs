@@ -9,11 +9,22 @@ import {
   recordLastBackupAt,
   recordLastCheckedAt,
   removeBackupRepo,
+  setSelectedLast,
 } from "../backup-list.mjs";
 
 function tempPaths() {
   const configDir = mkdtempSync(join(tmpdir(), "gt-bl-"));
   return resolveGtPaths({ CLOUD_UTILS_CONFIG_DIR: configDir, HOME: "/Users/me" });
+}
+
+function repo(url, overrides = {}) {
+  return {
+    url,
+    lastBackupAt: null,
+    lastCheckedAt: null,
+    selectedLast: false,
+    ...overrides,
+  };
 }
 
 function seedV1(paths, urls) {
@@ -30,23 +41,21 @@ test("addBackupRepo appends objects and migrates v1 file", () => {
   const first = addBackupRepo(paths, "git@GitHub.com:Org/Foo.git");
   assert.equal(first.ok, true);
   assert.deepEqual(first.document.repos, [
-    {
-      url: "git@github.com:Org/Foo.git",
-      lastBackupAt: null,
-      lastCheckedAt: null,
-    },
+    repo("git@github.com:Org/Foo.git"),
   ]);
-  assert.equal(first.document.version, 3);
+  assert.equal(first.document.version, 4);
+});
+
+test("addBackupRepo sets selectedLast false", () => {
+  const paths = tempPaths();
+  const first = addBackupRepo(paths, "git@github.com:Org/Foo.git");
+  assert.equal(first.document.repos[0].selectedLast, false);
 });
 
 test("addBackupRepo includes lastCheckedAt null", () => {
   const paths = tempPaths();
   const first = addBackupRepo(paths, "git@github.com:Org/Foo.git");
-  assert.deepEqual(first.document.repos[0], {
-    url: "git@github.com:Org/Foo.git",
-    lastBackupAt: null,
-    lastCheckedAt: null,
-  });
+  assert.deepEqual(first.document.repos[0], repo("git@github.com:Org/Foo.git"));
 });
 
 test("addBackupRepo appends and rejects duplicates", () => {
@@ -57,11 +66,7 @@ test("addBackupRepo appends and rejects duplicates", () => {
   assert.equal(first.createdFile, true);
   assert.equal(first.index, 1);
   assert.deepEqual(first.document.repos, [
-    {
-      url: "git@github.com:Org/Foo.git",
-      lastBackupAt: null,
-      lastCheckedAt: null,
-    },
+    repo("git@github.com:Org/Foo.git"),
   ]);
 
   const second = addBackupRepo(paths, "git@gitlab.com:acme/bar");
@@ -69,16 +74,8 @@ test("addBackupRepo appends and rejects duplicates", () => {
   assert.equal(second.createdFile, false);
   assert.equal(second.index, 2);
   assert.deepEqual(second.document.repos, [
-    {
-      url: "git@github.com:Org/Foo.git",
-      lastBackupAt: null,
-      lastCheckedAt: null,
-    },
-    {
-      url: "git@gitlab.com:acme/bar.git",
-      lastBackupAt: null,
-      lastCheckedAt: null,
-    },
+    repo("git@github.com:Org/Foo.git"),
+    repo("git@gitlab.com:acme/bar.git"),
   ]);
 
   const dup = addBackupRepo(paths, "git@github.com:Org/Foo");
@@ -87,16 +84,8 @@ test("addBackupRepo appends and rejects duplicates", () => {
 
   const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
   assert.deepEqual(onDisk.repos, [
-    {
-      url: "git@github.com:Org/Foo.git",
-      lastBackupAt: null,
-      lastCheckedAt: null,
-    },
-    {
-      url: "git@gitlab.com:acme/bar.git",
-      lastBackupAt: null,
-      lastCheckedAt: null,
-    },
+    repo("git@github.com:Org/Foo.git"),
+    repo("git@gitlab.com:acme/bar.git"),
   ]);
 });
 
@@ -105,6 +94,25 @@ test("addBackupRepo rejects invalid ssh url", () => {
   const result = addBackupRepo(paths, "https://github.com/org/app.git");
   assert.equal(result.ok, false);
   assert.match(result.error, /HTTPS|Invalid/i);
+});
+
+test("setSelectedLast marks only submitted urls true", () => {
+  const paths = tempPaths();
+  mkdirSync(paths.gtDir, { recursive: true });
+  writeFileSync(paths.backupsFile, JSON.stringify({
+    version: 4,
+    repos: [
+      repo("git@github.com:a/one.git"),
+      repo("git@github.com:b/two.git", { selectedLast: true }),
+    ],
+  }));
+  const result = setSelectedLast(paths, ["git@github.com:a/one.git"]);
+  assert.equal(result.ok, true);
+  assert.equal(result.document.repos[0].selectedLast, true);
+  assert.equal(result.document.repos[1].selectedLast, false);
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.repos[0].selectedLast, true);
+  assert.equal(onDisk.repos[1].selectedLast, false);
 });
 
 test("removeBackupRepo removes by 1-based index 2", () => {
@@ -119,16 +127,8 @@ test("removeBackupRepo removes by 1-based index 2", () => {
   assert.equal(byIndex.ok, true);
   assert.equal(byIndex.removed, "git@github.com:b/two.git");
   assert.deepEqual(byIndex.document.repos, [
-    {
-      url: "git@github.com:a/one.git",
-      lastBackupAt: null,
-      lastCheckedAt: null,
-    },
-    {
-      url: "git@github.com:c/three.git",
-      lastBackupAt: null,
-      lastCheckedAt: null,
-    },
+    repo("git@github.com:a/one.git"),
+    repo("git@github.com:c/three.git"),
   ]);
 });
 
@@ -157,11 +157,9 @@ test("removeBackupRepo returns url string and preserves other timestamps", () =>
   assert.equal(byIndex.ok, true);
   assert.equal(byIndex.removed, "git@github.com:b/two.git");
   assert.deepEqual(byIndex.document.repos, [
-    {
-      url: "git@github.com:a/one.git",
+    repo("git@github.com:a/one.git", {
       lastBackupAt: "2026-01-01T00:00:00.000Z",
-      lastCheckedAt: null,
-    },
+    }),
   ]);
 });
 
@@ -176,11 +174,7 @@ test("removeBackupRepo removes by url (canonical match)", () => {
   assert.equal(byUrl.ok, true);
   assert.equal(byUrl.removed, "git@github.com:c/three.git");
   assert.deepEqual(byUrl.document.repos, [
-    {
-      url: "git@github.com:a/one.git",
-      lastBackupAt: null,
-      lastCheckedAt: null,
-    },
+    repo("git@github.com:a/one.git"),
   ]);
 });
 
@@ -223,7 +217,7 @@ test("recordLastBackupAt sets ISO timestamp for matching url", () => {
   assert.equal(result.ok, true);
   assert.equal(result.document.repos[0].lastBackupAt, "2026-08-08T09:30:00.000Z");
   const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
-  assert.equal(onDisk.version, 3);
+  assert.equal(onDisk.version, 4);
   assert.equal(onDisk.repos[0].lastBackupAt, "2026-08-08T09:30:00.000Z");
 });
 

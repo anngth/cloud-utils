@@ -63,6 +63,7 @@ export function addBackupRepo(paths, sshUrl, { fs } = {}) {
     url: canonicalized.sshUrl,
     lastBackupAt: null,
     lastCheckedAt: null,
+    selectedLast: false,
   });
 
   const written = writeBackupsDocument(paths.backupsFile, document, writeOpts);
@@ -248,6 +249,51 @@ export function recordLastCheckedAt(paths, sshUrl, { now = new Date(), fs } = {}
   document.repos[index] = {
     ...document.repos[index],
     lastCheckedAt: now.toISOString(),
+  };
+
+  const written = writeBackupsDocument(paths.backupsFile, document, writeOpts);
+  if (!written.ok) {
+    return written;
+  }
+
+  return { ok: true, document };
+}
+
+/**
+ * @param {{ backupsFile: string }} paths
+ * @param {string[]} selectedUrls
+ * @param {{ fs?: object }} [options]
+ * @returns {{ ok: true, document: object } | { ok: false, error: string }}
+ */
+export function setSelectedLast(paths, selectedUrls, { fs } = {}) {
+  const loadOpts = fs ? { fs } : {};
+  const writeOpts = fs ? { fs } : {};
+  const load = loadBackupsDocument(paths.backupsFile, loadOpts);
+
+  if (!load.ok) {
+    if (load.missing) {
+      return {
+        ok: false,
+        error: `No backups list found. ${ADD_HINT}`,
+      };
+    }
+    return { ok: false, error: load.error };
+  }
+
+  const selectedKeys = new Set();
+  for (const url of selectedUrls) {
+    const key = canonicalKey(url);
+    if (key !== null) {
+      selectedKeys.add(key);
+    }
+  }
+
+  const document = {
+    version: load.document.version,
+    repos: load.document.repos.map((repo) => ({
+      ...repo,
+      selectedLast: selectedKeys.has(canonicalKey(repo.url)),
+    })),
   };
 
   const written = writeBackupsDocument(paths.backupsFile, document, writeOpts);
