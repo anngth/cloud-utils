@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { backupOneRepo, runBackupBatch, runBackupCommand } from "../backup.mjs";
@@ -19,9 +19,12 @@ function tempPaths() {
 
 function seedRepos(paths, repos) {
   mkdirSync(paths.gtDir, { recursive: true });
+  const normalized = repos.map((r) =>
+    typeof r === "string" ? { url: r, lastBackupAt: null } : r,
+  );
   writeFileSync(
     paths.backupsFile,
-    `${JSON.stringify({ version: 1, repos }, null, 2)}\n`,
+    `${JSON.stringify({ version: 2, repos: normalized }, null, 2)}\n`,
     "utf8",
   );
 }
@@ -384,6 +387,7 @@ test("backupOneRepo clone failure still removes temp dir", async () => {
 test("runBackupBatch continues after a failure and exits 1", async () => {
   const created = [];
   const { h, context } = baseContext({
+    recordLastBackupAt: () => ({ ok: true, document: { version: 2, repos: [] } }),
     projectExists: async (_group, name) => {
       if (name === BASE_NAME) {
         return { ok: false, error: "project lookup failed" };
@@ -412,7 +416,9 @@ test("runBackupBatch continues after a failure and exits 1", async () => {
 });
 
 test("runBackupBatch returns 0 when all succeed", async () => {
-  const { h, context } = baseContext();
+  const { h, context } = baseContext({
+    recordLastBackupAt: () => ({ ok: true, document: { version: 2, repos: [] } }),
+  });
 
   const code = await runBackupBatch([SOURCE], context);
 
@@ -422,6 +428,88 @@ test("runBackupBatch returns 0 when all succeed", async () => {
     h.messages.items.join("\n"),
     new RegExp(`ok\\s+${SOURCE}\\n→\\s+${projectWebUrl(BACKUP_GROUP, BASE_NAME)}`),
   );
+});
+
+test("runBackupBatch records lastBackupAt after success only", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [
+    { url: SOURCE, lastBackupAt: null },
+    { url: SOURCE_B, lastBackupAt: "2020-01-01T00:00:00.000Z" },
+  ]);
+  const fixed = new Date("2026-08-08T09:30:00.000Z");
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => fixed,
+    projectExists: async (_g, name) => {
+      if (name === BASE_NAME) return { ok: false, error: "project lookup failed" };
+      return { ok: true, exists: false };
+    },
+  });
+
+  const code = await runBackupBatch([SOURCE, SOURCE_B], context);
+  assert.equal(code, 1);
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.repos[0].lastBackupAt, null); // failed
+  assert.equal(onDisk.repos[1].lastBackupAt, "2026-08-08T09:30:00.000Z");
+  assert.match(h.messages.items.join("\n"), /fail/);
+});
+
+test("runBackupBatch metadata write failure counts as fail", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    recordLastBackupAt: () => ({ ok: false, error: "disk full" }),
+  });
+  const code = await runBackupBatch([SOURCE], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.items.join("\n"), /fail/);
+  assert.match(
+    h.messages.items.join("\n") + h.messages.statuses.join("\n"),
+    /lastBackupAt|saving/i,
+  );
+});
+
+test("runBackupCommand interactive passes lastBackupAt into selector render", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [
+    { url: SOURCE, lastBackupAt: "2026-08-01T00:00:00.000Z" },
+  ]);
+  let captured;
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    stdin: { isTTY: true },
+    runSelector: async ({ items, render }) => {
+      captured = items;
+      render({ items, cursor: 0, selected: new Set([0]) });
+      return { type: "submit", selected: [items[0].value] };
+    },
+  });
+  h.ui.renderBackupSelector = (_heading, state) => {
+    captured = state.items;
+  };
+  await runBackupCommand([], context);
+  assert.equal(captured[0].lastBackupAt, "2026-08-01T00:00:00.000Z");
+});
+
+test("runBackupCommand --all migrates v1 list on load", async () => {
+  const paths = tempPaths();
+  mkdirSync(paths.gtDir, { recursive: true });
+  writeFileSync(
+    paths.backupsFile,
+    `${JSON.stringify({ version: 1, repos: [SOURCE] }, null, 2)}\n`,
+    "utf8",
+  );
+  const { context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+  });
+
+  const code = await runBackupCommand(["--all"], context);
+  assert.equal(code, 0);
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.version, 2);
+  assert.equal(onDisk.repos[0].url, SOURCE);
+  assert.ok("lastBackupAt" in onDisk.repos[0]);
 });
 
 test("runBackupCommand add then --all backs up listed repos", async () => {

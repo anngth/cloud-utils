@@ -4,11 +4,12 @@ import { basename, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   addBackupRepo as addBackupRepoDefault,
+  recordLastBackupAt as recordLastBackupAtDefault,
   removeBackupRepo as removeBackupRepoDefault,
 } from "./backup-list.mjs";
 import {
   formatDisplayPath,
-  readBackupsDocument as readBackupsDocumentDefault,
+  loadBackupsDocument as loadBackupsDocumentDefault,
   resolveGtPaths as resolveGtPathsDefault,
 } from "./config.mjs";
 import { runGit as runGitDefault } from "./git.mjs";
@@ -56,7 +57,10 @@ function resolveContext(context = {}) {
     resolveGtPaths = resolveGtPathsDefault,
     addBackupRepo = addBackupRepoDefault,
     removeBackupRepo = removeBackupRepoDefault,
-    readBackupsDocument = readBackupsDocumentDefault,
+    recordLastBackupAt = recordLastBackupAtDefault,
+    loadBackupsDocument = loadBackupsDocumentDefault,
+    now = () => new Date(),
+    fs,
     runSelector = runSelectorDefault,
   } = context;
 
@@ -80,7 +84,10 @@ function resolveContext(context = {}) {
     resolveGtPaths,
     addBackupRepo,
     removeBackupRepo,
-    readBackupsDocument,
+    recordLastBackupAt,
+    loadBackupsDocument,
+    now,
+    fs,
     runSelector,
   };
 }
@@ -249,17 +256,33 @@ export async function backupOneRepo(sourceUrl, context = {}) {
  * @returns {Promise<number>} 0 if all ok, else 1
  */
 export async function runBackupBatch(urls, context = {}) {
-  const { ui } = resolveContext(context);
+  const { ui, env, resolveGtPaths, recordLastBackupAt, now, fs } =
+    resolveContext(context);
   const successes = [];
   const failures = [];
+  const paths = resolveGtPaths(env);
+  const recordOpts = fs ? { fs } : {};
 
   for (const url of urls ?? []) {
     const result = await backupOneRepo(url, context);
-    if (result.ok) {
-      successes.push({ url, webUrl: result.webUrl, projectPath: result.projectPath });
-    } else {
+    if (!result.ok) {
       failures.push({ url, error: result.error });
+      continue;
     }
+
+    const recorded = recordLastBackupAt(paths, url, {
+      now: now(),
+      ...recordOpts,
+    });
+    if (!recorded.ok) {
+      failures.push({
+        url,
+        error: `Backup succeeded but failed to save lastBackupAt: ${recorded.error}`,
+      });
+      continue;
+    }
+
+    successes.push({ url, webUrl: result.webUrl, projectPath: result.projectPath });
   }
 
   ui.step("Backup summary");
@@ -278,23 +301,23 @@ export async function runBackupBatch(urls, context = {}) {
 
 /**
  * Load the backups list; empty/missing → error + add hint.
- * @returns {{ ok: true, repos: string[] } | { ok: false }}
+ * @returns {{ ok: true, repos: Array<{ url: string, lastBackupAt: string | null }> } | { ok: false }}
  */
-function loadReposOrError(paths, { readBackupsDocument, ui }) {
-  const read = readBackupsDocument(paths.backupsFile);
-  if (!read.ok) {
-    if (read.missing) {
+function loadReposOrError(paths, { loadBackupsDocument, ui }) {
+  const load = loadBackupsDocument(paths.backupsFile);
+  if (!load.ok) {
+    if (load.missing) {
       ui.error(`No backups list found. ${ADD_HINT}`);
       return { ok: false };
     }
-    ui.error(read.error);
+    ui.error(load.error);
     return { ok: false };
   }
-  if (read.document.repos.length === 0) {
+  if (load.document.repos.length === 0) {
     ui.error(`Backups list is empty. ${ADD_HINT}`);
     return { ok: false };
   }
-  return { ok: true, repos: read.document.repos };
+  return { ok: true, repos: load.document.repos };
 }
 
 /**
@@ -312,7 +335,7 @@ export async function runBackupCommand(args = [], context = {}) {
     resolveGtPaths,
     addBackupRepo,
     removeBackupRepo,
-    readBackupsDocument,
+    loadBackupsDocument,
     runSelector,
   } = resolved;
   const paths = resolveGtPaths(env);
@@ -328,7 +351,8 @@ export async function runBackupCommand(args = [], context = {}) {
       ui.error(result.error);
       return 1;
     }
-    ui.success(`Added ${result.document.repos[result.index - 1]} at index ${result.index}`);
+    const addedUrl = result.document.repos[result.index - 1].url;
+    ui.success(`Added ${addedUrl} at index ${result.index}`);
     ui.item(formatDisplayPath(paths.backupsFile, { home: env.HOME }));
     ui.listEnd();
     return 0;
@@ -367,7 +391,7 @@ export async function runBackupCommand(args = [], context = {}) {
     return 1;
   }
 
-  const loaded = loadReposOrError(paths, { readBackupsDocument, ui });
+  const loaded = loadReposOrError(paths, { loadBackupsDocument, ui });
   if (!loaded.ok) return 1;
 
   const listPath = formatDisplayPath(paths.backupsFile, { home: env.HOME });
@@ -375,7 +399,10 @@ export async function runBackupCommand(args = [], context = {}) {
   if (all) {
     ui.title("REPO BACKUP");
     ui.step(listPath);
-    return runBackupBatch(loaded.repos, context);
+    return runBackupBatch(
+      loaded.repos.map((entry) => entry.url),
+      context,
+    );
   }
 
   if (!stdin.isTTY) {
@@ -385,7 +412,11 @@ export async function runBackupCommand(args = [], context = {}) {
     return 1;
   }
 
-  const items = loaded.repos.map((url) => ({ label: url, value: url }));
+  const items = loaded.repos.map((entry) => ({
+    label: entry.url,
+    value: entry.url,
+    lastBackupAt: entry.lastBackupAt,
+  }));
   const heading = "Select repos to backup";
   const selection = await runSelector({
     items,
