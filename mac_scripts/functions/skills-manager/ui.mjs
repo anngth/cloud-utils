@@ -10,11 +10,20 @@ const C = {
   gray: "\u001b[90m",
   brightGreen: "\u001b[92m",
   white: "\u001b[97m",
+  dim: "\u001b[2m",
   bgCyan: "\u001b[46m",
   fgReset: "\u001b[39m",
   bgReset: "\u001b[49m",
   reset: "\u001b[0m",
 };
+
+export const SELECTOR_DESCRIPTION_COLOR = `${C.dim}${C.gray}`;
+
+export function selectorNameColor({ isCursor, isSelected }) {
+  if (isCursor) return C.brightGreen;
+  if (isSelected) return C.green;
+  return C.gray;
+}
 
 const fg = (color, text) => `${color}${text}${C.fgReset}`;
 const plural = (count, singular, pluralForm = `${singular}s`) => (
@@ -386,7 +395,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     const values = state.items;
     step(String(heading));
     active(mode === "install"
-      ? `Select items ${fg(C.white, "(space to toggle, enter to continue, q to quit)")}`
+      ? `Select items ${fg(C.white, "(space toggle, a all, c clear, enter to continue, q to quit)")}`
       : `Select an item ${fg(C.white, "(enter to continue, q to quit)")}`);
     out(pipe);
     values.forEach((entry, index) => {
@@ -399,10 +408,14 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
       const selected = mode === "install" ? state.selected.has(index) : index === state.cursor;
       const box = selected ? "■" : "□";
       const boxColor = selected ? C.brightGreen : C.gray;
+      const isCursor = index === state.cursor;
       const labelColor = skillEntry
-        ? C.brightGreen
-        : index === state.cursor ? C.white : C.gray;
-      out(`${pipe}  ${boxColor}${box}${C.reset} ${fg(labelColor, label)}${hint ? ` ${fg(C.gray, hint)}` : ""}`);
+        ? selectorNameColor({ isCursor, isSelected: selected })
+        : isCursor ? C.white : C.gray;
+      const hintText = hint
+        ? ` ${SELECTOR_DESCRIPTION_COLOR}${hint}${C.reset}`
+        : "";
+      out(`${pipe}  ${boxColor}${box}${C.reset} ${fg(labelColor, label)}${hintText}`);
     });
     if (cancelled) listEnd(fg(C.red, "Selection cancelled"));
     else listEnd();

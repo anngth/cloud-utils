@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCatalogSelectorItems, createUi } from "../ui.mjs";
+import {
+  buildCatalogSelectorItems,
+  createUi,
+  selectorNameColor,
+  SELECTOR_DESCRIPTION_COLOR,
+} from "../ui.mjs";
 import { requirementKey } from "../planner.mjs";
 
 function memoryStream() {
@@ -415,6 +420,32 @@ test("usage documents every command signature and short flag", () => {
   ]) assert.ok(lines.includes(line), `missing help line: ${line}`);
 });
 
+test("selectorNameColor applies cursor, selected, and unselected ladder", () => {
+  assert.equal(selectorNameColor({ isCursor: true, isSelected: true }), "\u001b[92m");
+  assert.equal(selectorNameColor({ isCursor: true, isSelected: false }), "\u001b[92m");
+  assert.equal(selectorNameColor({ isCursor: false, isSelected: true }), "\u001b[32m");
+  assert.equal(selectorNameColor({ isCursor: false, isSelected: false }), "\u001b[90m");
+  assert.match(SELECTOR_DESCRIPTION_COLOR, /\u001b\[2m/);
+  assert.match(SELECTOR_DESCRIPTION_COLOR, /\u001b\[90m/);
+});
+
+test("renderSelector multi-select uses color ladder and a/c hint", () => {
+  let stdout = "";
+  const ui = createUi({ stdout: { write: (v) => { stdout += v; } }, stderr: { write() {} } });
+  ui.selector("Select skills from demo", {
+    items: [
+      { kind: "skill", value: "a", label: "alpha", hint: "first" },
+      { kind: "skill", value: "b", label: "beta", hint: "second" },
+    ],
+    cursor: 0,
+    selected: new Set([1]),
+  }, { mode: "install" });
+
+  assert.match(stdout, /space toggle, a all, c clear, enter to continue, q to quit/);
+  assert.match(stdout, new RegExp(`\\u001b\\[92malpha`));
+  assert.match(stdout, new RegExp(`\\u001b\\[32mbeta`));
+});
+
 test("selector keeps ANSI output and renders selected items", () => {
   const { stdout, ui } = makeUi();
   ui.selector("Choose profiles", {
@@ -525,7 +556,7 @@ test("skill selectors highlight names and separate rows while profile selectors 
     selected: new Set([0]),
   }, { mode: "install" });
   const skillOutput = skills.stdout.read();
-  assert.ok(skillOutput.includes(paint("92", "brainstorming")));
+  assert.ok(skillOutput.includes(paint("32", "brainstorming")));
   assert.ok(skillOutput.includes(paint("92", "testing")));
   assert.match(stripAnsi(skillOutput), /■ brainstorming Explore\n│\n│  □ testing Verify/);
 
