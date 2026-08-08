@@ -9,6 +9,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import {
+  CatalogError,
+  EMPTY_CATALOG,
+  migrateProfilesToCatalog,
+  validateCatalogDocument,
+} from "./catalog.mjs";
 import { validateProfilesDocument } from "./profiles.mjs";
 import { validateProjectsDocument } from "./projects.mjs";
 import { canonicalizeSource } from "./source-id.mjs";
@@ -82,38 +88,42 @@ function readLegacySources(filePath, fs) {
   }
 }
 
-function bootstrapDocuments(paths, { fs, pid }) {
-  const profilesExists = fs.existsSync(paths.profilesFile);
-  const projectsExists = fs.existsSync(paths.projectsFile);
-
-  if (!profilesExists && projectsExists) {
-    throw new ConfigFileError(`profiles.json is missing while projects.json exists: ${paths.profilesFile}`, {
-      filePath: paths.profilesFile,
-    });
+function wrapCatalogError(cause, filePath) {
+  if (cause instanceof CatalogError) {
+    return new ConfigFileError(cause.message, { cause, filePath });
   }
+  return cause;
+}
 
-  if (!profilesExists) {
-    const sources = fs.existsSync(paths.legacyFile)
-      ? readLegacySources(paths.legacyFile, fs)
-      : [];
-    const profiles = validateProfilesDocument({
-      version: 1,
-      profiles: [{ name: "default", sources: sources.map((source) => ({ source, skills: [] })) }],
-    });
-    writeJsonAtomic(paths.profilesFile, profiles, { fs, pid });
-  } else if (!projectsExists) {
+function bootstrapCatalog(paths, { fs, pid }) {
+  if (fs.existsSync(paths.sourcesFile)) return;
+
+  let catalog;
+  if (fs.existsSync(paths.profilesFile)) {
     try {
-      validateProfilesDocument(readJson(paths.profilesFile, fs));
+      const profiles = validateProfilesDocument(readJson(paths.profilesFile, fs));
+      catalog = migrateProfilesToCatalog(profiles);
     } catch (cause) {
-      if (cause instanceof ConfigFileError) throw cause;
-      throw new ConfigFileError(`Invalid profiles file: ${paths.profilesFile}`, {
-        cause,
-        filePath: paths.profilesFile,
-      });
+      throw wrapCatalogError(cause, paths.sourcesFile) ?? new ConfigFileError(
+        `Invalid profiles file: ${paths.profilesFile}`,
+        { cause, filePath: paths.profilesFile },
+      );
     }
+  } else if (fs.existsSync(paths.legacyFile)) {
+    const sources = readLegacySources(paths.legacyFile, fs);
+    try {
+      catalog = validateCatalogDocument({
+        version: 1,
+        sources: sources.map((source) => ({ source, skills: [] })),
+      });
+    } catch (cause) {
+      throw wrapCatalogError(cause, paths.sourcesFile);
+    }
+  } else {
+    catalog = EMPTY_CATALOG;
   }
 
-  if (!projectsExists) writeJsonAtomic(paths.projectsFile, EMPTY_PROJECTS, { fs, pid });
+  writeJsonAtomic(paths.sourcesFile, catalog, { fs, pid });
 }
 
 function hashFile(filePath, fs) {
@@ -201,25 +211,26 @@ export function initializeConfig({
   const paths = {
     configDir,
     skmDir,
+    sourcesFile: join(skmDir, "sources.json"),
     profilesFile: join(skmDir, "profiles.json"),
     projectsFile: join(skmDir, "projects.json"),
     legacyFile: join(skmDir, "list.json"),
     transactionFile: join(skmDir, ".transaction.json"),
   };
   fs.mkdirSync(skmDir, { recursive: true });
-  recoverConfigTransaction(paths, { fs, pid });
-  bootstrapDocuments(paths, { fs, pid });
+  bootstrapCatalog(paths, { fs, pid });
   return paths;
 }
 
 export function readConfig(paths, { fs = defaultFs } = {}) {
   try {
-    const profiles = validateProfilesDocument(readJson(paths.profilesFile, fs));
-    const names = new Set(profiles.profiles.map((profile) => profile.name));
-    const projects = validateProjectsDocument(readJson(paths.projectsFile, fs), names);
-    return { profiles, projects };
+    const catalog = validateCatalogDocument(readJson(paths.sourcesFile, fs));
+    return { catalog };
   } catch (cause) {
     if (cause instanceof ConfigFileError) throw cause;
+    if (cause instanceof CatalogError) {
+      throw new ConfigFileError(`Invalid sources file: ${paths.sourcesFile}`, { cause, filePath: paths.sourcesFile });
+    }
     throw new ConfigFileError("Invalid SKM configuration", { cause });
   }
 }
@@ -238,6 +249,10 @@ export function writeJsonAtomic(filePath, value, {
     } catch {}
     throw error;
   }
+}
+
+export function writeCatalog(paths, document, options = {}) {
+  writeJsonAtomic(paths.sourcesFile, validateCatalogDocument(document), options);
 }
 
 export function writeConfigTransaction(paths, { profiles, projects }, {

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { EMPTY_CATALOG } from "../catalog.mjs";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 export const MANAGER_DIR = resolve(TEST_DIR, "..");
@@ -16,16 +17,19 @@ function executable(path, body) {
 }
 
 export function makeSandbox(t, {
-  profiles = { version: 1, profiles: [{ name: "default", sources: [] }] },
-  projects = { version: 1, projects: [] },
+  catalog = EMPTY_CATALOG,
+  profiles,
+  projects,
   legacyList,
-  createProfiles = true,
-  createProjects = true,
+  createCatalog = true,
+  createProfiles = profiles !== undefined,
+  createProjects = projects !== undefined,
 } = {}) {
   const root = mkdtempSync(join(tmpdir(), "skm-test-"));
   const configDir = join(root, "config");
   const binDir = join(root, "bin");
   const skmDir = join(configDir, "skm");
+  const sourcesFile = join(skmDir, "sources.json");
   const profilesFile = join(skmDir, "profiles.json");
   const projectsFile = join(skmDir, "projects.json");
   const legacyFile = join(skmDir, "list.json");
@@ -33,8 +37,16 @@ export function makeSandbox(t, {
   const argvLog = join(root, "npx-argv.jsonl");
   mkdirSync(skmDir, { recursive: true });
   mkdirSync(binDir, { recursive: true });
-  if (createProfiles) writeFileSync(profilesFile, `${JSON.stringify(profiles, null, 2)}\n`);
-  if (createProjects) writeFileSync(projectsFile, `${JSON.stringify(projects, null, 2)}\n`);
+  if (createCatalog) writeFileSync(sourcesFile, `${JSON.stringify(catalog, null, 2)}\n`);
+  if (createProfiles) {
+    writeFileSync(profilesFile, `${JSON.stringify(profiles ?? {
+      version: 1,
+      profiles: [{ name: "default", sources: [] }],
+    }, null, 2)}\n`);
+  }
+  if (createProjects) {
+    writeFileSync(projectsFile, `${JSON.stringify(projects ?? { version: 1, projects: [] }, null, 2)}\n`);
+  }
   if (legacyList !== undefined) {
     writeFileSync(legacyFile, `${JSON.stringify(legacyList, null, 2)}\n`);
   }
@@ -57,6 +69,7 @@ process.exit(Number(process.env.SKM_NPX_STATUS || 0));
     root,
     configDir,
     skmDir,
+    sourcesFile,
     profilesFile,
     projectsFile,
     legacyFile,
