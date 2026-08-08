@@ -39,15 +39,16 @@ gt backup remove git@github.com:org/my-app.git
 ```
 
 - **backup** — manages a list of source SSH URLs and mirrors selected repos to private `anngth-dev/backups/<owner>-<repo>` on GitLab.
-  - `gt backup` — interactive multi-select (TTY required); space toggles, enter starts, q cancels.
-  - `gt backup --all` — backup every listed repo (no TTY required).
+  - `gt backup` — interactive multi-select (TTY required); space toggles, enter starts, q cancels; pre-checks repos from the last successful submit.
+  - `gt backup --all` — backup every listed repo (no TTY required); does not read or update `selectedLast`.
   - `gt backup add <ssh-url>` / `gt backup remove <index|ssh-url>` — maintain the list (`index` is 1-based).
 - **Config:** `$CLOUD_UTILS_CONFIG_DIR/gt/backups.json` (same config root as `skm`; default under iCloud Backups when unset).
-  - List file schema version 3: each repo is `{ url, lastBackupAt, lastCheckedAt }` (`lastBackupAt` / `lastCheckedAt` ISO UTC or null).
+  - List file schema version 4: each repo is `{ url, lastBackupAt, lastCheckedAt, selectedLast }` (`lastBackupAt` / `lastCheckedAt` ISO UTC or null; `selectedLast` boolean).
   - `lastBackupAt` — set only after a successful mirror push; unchanged on skip.
   - `lastCheckedAt` — set after a successful check (skip or mirror).
+  - `selectedLast` — per-repo flag for the last interactive submit selection; updated on Enter with ≥1 repo selected (whole list rewritten); cancel / empty submit leave flags unchanged; `add` sets `false`.
   - Interactive selector shows `Last backup: <relative> (<local datetime>)` and `Last checked: …` under repos when those timestamps are set (omit line when null).
-  - v1 string arrays and v2 `{ url, lastBackupAt }` lists migrate to v3 on load (adds `lastCheckedAt: null` for v2).
+  - v1 string arrays, v2 `{ url, lastBackupAt }`, and v3 lists migrate to v4 on load (`lastCheckedAt: null` for v2; `selectedLast: false` for older schemas).
 - **Migration:** old one-shot `gt backup <ssh-url>` / `-n` / `--new` are removed. Use `gt backup add <ssh-url>`, then `gt backup` or `gt backup --all`.
 - Per URL: missing project → create; live → compare `git ls-remote` fingerprints (heads + tags only) — equal → skip mirror, update `lastCheckedAt` only (`skip` in summary, `→ unchanged`); differ → full mirror (all branches + tags); inactive/soft-deleted → recreate at the base name (never skip). Creates the private `anngth-dev/backups` subgroup when missing (parent `anngth-dev` must already exist). After push, sets the GitLab default branch to `main` if present, otherwise `develop`. Protects `main` and/or `develop` when those branches exist (force-push allowed for later mirror updates).
 - Batch summary lists `ok`, `skip`, and `fail` per URL; exit `0` only when there are no `fail` entries (`ok` and `skip` both succeed).
