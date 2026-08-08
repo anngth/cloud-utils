@@ -33,14 +33,18 @@ gt fetch
 gt push
 gt backup add git@github.com:org/my-app.git
 gt backup                          # interactive multi-select
+gt backup -f                       # force re-mirror (skip fingerprint check)
 gt backup --all                    # backup every listed repo
+gt backup --all --force            # force all listed repos
 gt backup remove 1
 gt backup remove git@github.com:org/my-app.git
 ```
 
 - **backup** — manages a list of source SSH URLs and mirrors selected repos to private `anngth-dev/backups/<owner>-<repo>` on GitLab.
   - `gt backup` — interactive multi-select (TTY required); space toggles, enter starts, q cancels; pre-checks repos from the last successful submit.
+  - `gt backup -f` / `gt backup --force` — skip the equal-fingerprint short-circuit; always mirror live repos (still creates missing / recreates inactive).
   - `gt backup --all` — backup every listed repo (no TTY required); does not read or update `selectedLast`.
+  - `gt backup --all -f` / `--force` — same as `--all`, but force every live repo to mirror.
   - `gt backup add <ssh-url>` / `gt backup remove <index|ssh-url>` — maintain the list (`index` is 1-based).
 - **Config:** `$CLOUD_UTILS_CONFIG_DIR/gt/backups.json` (same config root as `skm`; default under iCloud Backups when unset).
   - List file schema version 4: each repo is `{ url, lastBackupAt, lastCheckedAt, selectedLast }` (`lastBackupAt` / `lastCheckedAt` must be UTC ISO-8601 with `Z`, e.g. `2026-08-08T09:30:00.000Z`, or null; `selectedLast` boolean).

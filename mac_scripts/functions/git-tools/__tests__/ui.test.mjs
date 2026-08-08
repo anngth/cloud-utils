@@ -12,7 +12,8 @@ test("usage documents managed backup list without -n/--new or one-shot URL", () 
   ui.usage();
 
   assert.match(stdout, /\bbackup\b/);
-  assert.match(stdout, /backup --all/);
+  assert.match(stdout, /backup \[-f\|--force\]/);
+  assert.match(stdout, /backup --all \[-f\|--force\]/);
   assert.match(stdout, /backup add <ssh-url>/);
   assert.match(stdout, /backup remove <index\|ssh-url>/);
   assert.doesNotMatch(stdout, /-n|--new/);
