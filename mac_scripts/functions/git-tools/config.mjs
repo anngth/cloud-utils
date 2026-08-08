@@ -18,7 +18,7 @@ const defaultFs = {
   writeFileSync,
 };
 
-export const EMPTY_BACKUPS = Object.freeze({ version: 1, repos: [] });
+export const EMPTY_BACKUPS = Object.freeze({ version: 2, repos: [] });
 
 export function defaultConfigDir(env = process.env) {
   return `${env.HOME ?? ""}/Library/Mobile Documents/com~apple~CloudDocs/Backups/cloud-utils`;
@@ -61,7 +61,7 @@ export function formatDisplayPath(filePath, {
   return filePath;
 }
 
-function isValidBackupsDocument(value) {
+export function isValidBackupsDocumentV1(value) {
   return (
     value !== null
     && typeof value === "object"
@@ -70,6 +70,51 @@ function isValidBackupsDocument(value) {
     && Array.isArray(value.repos)
     && value.repos.every((repo) => typeof repo === "string" && repo.length > 0)
   );
+}
+
+export function isValidBackupsDocumentV2(value) {
+  return (
+    value !== null
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && value.version === 2
+    && Array.isArray(value.repos)
+    && value.repos.every(
+      (repo) =>
+        repo !== null
+        && typeof repo === "object"
+        && !Array.isArray(repo)
+        && typeof repo.url === "string"
+        && repo.url.length > 0
+        && (
+          repo.lastBackupAt === null
+          || (typeof repo.lastBackupAt === "string" && repo.lastBackupAt.length > 0)
+        ),
+    )
+  );
+}
+
+function isValidBackupsDocument(value) {
+  return isValidBackupsDocumentV1(value) || isValidBackupsDocumentV2(value);
+}
+
+export function migrateBackupsDocument(document) {
+  if (isValidBackupsDocumentV2(document)) {
+    return { ok: true, document, migrated: false };
+  }
+
+  if (isValidBackupsDocumentV1(document)) {
+    return {
+      ok: true,
+      migrated: true,
+      document: {
+        version: 2,
+        repos: document.repos.map((url) => ({ url, lastBackupAt: null })),
+      },
+    };
+  }
+
+  return { ok: false, error: "Invalid backups document" };
 }
 
 export function readBackupsDocument(filePath, { fs = defaultFs } = {}) {
@@ -98,7 +143,7 @@ export function readBackupsDocument(filePath, { fs = defaultFs } = {}) {
 }
 
 export function writeBackupsDocument(filePath, document, { fs = defaultFs } = {}) {
-  if (!isValidBackupsDocument(document)) {
+  if (!isValidBackupsDocumentV2(document)) {
     return { ok: false, error: "Invalid backups document" };
   }
 
@@ -119,4 +164,29 @@ export function writeBackupsDocument(filePath, document, { fs = defaultFs } = {}
       error: error instanceof Error ? error.message : `Could not write backups file: ${filePath}`,
     };
   }
+}
+
+export function loadBackupsDocument(filePath, { fs = defaultFs } = {}) {
+  const readResult = readBackupsDocument(filePath, { fs });
+  if (!readResult.ok) {
+    return readResult;
+  }
+
+  const migrateResult = migrateBackupsDocument(readResult.document);
+  if (!migrateResult.ok) {
+    return migrateResult;
+  }
+
+  if (migrateResult.migrated) {
+    const writeResult = writeBackupsDocument(filePath, migrateResult.document, { fs });
+    if (!writeResult.ok) {
+      return writeResult;
+    }
+  }
+
+  return {
+    ok: true,
+    document: migrateResult.document,
+    migrated: migrateResult.migrated,
+  };
 }
