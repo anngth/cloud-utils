@@ -150,46 +150,25 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
 
     title();
     step("Usage: skm [command]");
-    command("skm", "Open interactive dashboard");
+    command("skm", "Open interactive catalog selector");
     command("skm (help | -h | --help)", "Show this help");
 
     section("Lifecycle");
-    command("skm status [profile...]", "Compare desired and installed skills");
-    command("skm install [profile...] [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]", "Install selected profile skills");
-    command("skm uninstall [profile...] [(-y | --yes)] [(-f | --force)]");
-    continuation("[(-d | --dry-run)] [(-l | --keep-link)]", "Uninstall selected profile skills");
+    command("skm add <source|index...> [(-a | --all)]");
+    continuation("[(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]", "Install catalog skills for selected sources");
+    command("skm remove <source|index...> [(-a | --all)]");
+    continuation("[(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]", "Uninstall catalog skills for selected sources");
+    command("skm status", "Compare catalog and installed skills");
 
-    section("Profiles");
-    command("skm profile list", "List profiles");
-    command("skm profile show <profile>", "Show one profile");
-    command("skm profile add <profile>", "Create a profile");
-    command("skm profile rename <old> <new>", "Rename a profile");
-    command("skm profile remove <profile> [(-f | --force)]", "Remove a profile");
-
-    section("Sources");
-    command("skm source add <source> [(-p | --profile) <profile>]");
-    continuation("[[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)]", "Add a source and select skills");
-    command("skm source edit <source> [(-p | --profile) <profile>]", "Edit selected source skills");
-    command("skm source remove <source> [(-p | --profile) <profile>]", "Remove a source from a profile");
-    command("skm source show <source>", "Show available source skills");
-
-    section("Skills");
-    command("skm skill add <skill...> (-s | --source) <source>");
-    continuation("(-p | --profile) <profile>", "Add skills to a profile source");
-    command("skm skill remove <skill...> (-s | --source) <source>");
-    continuation("(-p | --profile) <profile>", "Remove skills from a profile source");
-
-    section("Projects");
-    command("skm project link <profile...>", "Link profiles to the current project");
-    command("skm project unlink [profile...]", "Unlink profiles from the current project");
-    command("skm project show", "Show the current project");
-    command("skm project list", "List registered projects");
-    command("skm project remove [project-path]", "Remove a project registration");
+    section("Catalog");
+    command("skm source add <source>");
+    continuation("[[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)] [(-y | --yes)]", "Add or update a catalog source");
+    command("skm source remove <source|index>", "Remove a catalog source");
 
     section("Notes");
-    note("Profile names omitted from lifecycle commands use current project links.");
-    note("Profile, source, skill, and project commands change configuration only.");
-    note("--force permits linked-profile removal or mismatch/untracked skill changes.");
+    note("Source indexes are 1-based, matching the interactive selector and gt backup.");
+    note("source add and source remove change the catalog only; use add/remove to change disk.");
+    note("--force permits mismatch/untracked skill replacement or removal.");
     listEnd();
   }
 

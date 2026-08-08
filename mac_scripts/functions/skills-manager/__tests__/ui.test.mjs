@@ -482,27 +482,23 @@ test("usage documents every command signature and short flag", () => {
 
   assert.equal(lines.find((line) => line.includes("Usage:")), "◇  Usage: skm [command]");
 
-  const sections = ["Lifecycle", "Profiles", "Sources", "Skills", "Projects", "Notes"];
+  const sections = ["Lifecycle", "Catalog", "Notes"];
   const sectionIndexes = sections.map((section) => lines.indexOf(`◆  ${section}`));
   assert.ok(sectionIndexes.every((index) => index >= 0), "all help sections are present");
   assert.deepEqual(sectionIndexes, [...sectionIndexes].sort((left, right) => left - right));
 
   for (const [first, continuation] of [
     [
-      "│  skm uninstall [profile...] [(-y | --yes)] [(-f | --force)]",
-      "│      [(-d | --dry-run)] [(-l | --keep-link)]  Uninstall selected profile skills",
+      "│  skm add <source|index...> [(-a | --all)]",
+      "│      [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]  Install catalog skills for selected sources",
     ],
     [
-      "│  skm source add <source> [(-p | --profile) <profile>]",
-      "│      [[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)]  Add a source and select skills",
+      "│  skm remove <source|index...> [(-a | --all)]",
+      "│      [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]  Uninstall catalog skills for selected sources",
     ],
     [
-      "│  skm skill add <skill...> (-s | --source) <source>",
-      "│      (-p | --profile) <profile>  Add skills to a profile source",
-    ],
-    [
-      "│  skm skill remove <skill...> (-s | --source) <source>",
-      "│      (-p | --profile) <profile>  Remove skills from a profile source",
+      "│  skm source add <source>",
+      "│      [[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)] [(-y | --yes)]  Add or update a catalog source",
     ],
   ]) {
     const index = lines.indexOf(first);
@@ -511,29 +507,13 @@ test("usage documents every command signature and short flag", () => {
   }
 
   for (const line of [
-    "│  skm source edit <source> [(-p | --profile) <profile>]  Edit selected source skills",
-    "│  skm source remove <source> [(-p | --profile) <profile>]  Remove a source from a profile",
-  ]) assert.ok(lines.includes(line), `missing source signature: ${line}`);
-
-  for (const line of [
-    "│  skm  Open interactive dashboard",
+    "│  skm  Open interactive catalog selector",
     "│  skm (help | -h | --help)  Show this help",
-    "│  skm status [profile...]  Compare desired and installed skills",
-    "│  skm install [profile...] [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]  Install selected profile skills",
-    "│  skm profile list  List profiles",
-    "│  skm profile show <profile>  Show one profile",
-    "│  skm profile add <profile>  Create a profile",
-    "│  skm profile rename <old> <new>  Rename a profile",
-    "│  skm profile remove <profile> [(-f | --force)]  Remove a profile",
-    "│  skm source show <source>  Show available source skills",
-    "│  skm project link <profile...>  Link profiles to the current project",
-    "│  skm project unlink [profile...]  Unlink profiles from the current project",
-    "│  skm project show  Show the current project",
-    "│  skm project list  List registered projects",
-    "│  skm project remove [project-path]  Remove a project registration",
-    "│  Profile names omitted from lifecycle commands use current project links.",
-    "│  Profile, source, skill, and project commands change configuration only.",
-    "│  --force permits linked-profile removal or mismatch/untracked skill changes.",
+    "│  skm status  Compare catalog and installed skills",
+    "│  skm source remove <source|index>  Remove a catalog source",
+    "│  Source indexes are 1-based, matching the interactive selector and gt backup.",
+    "│  source add and source remove change the catalog only; use add/remove to change disk.",
+    "│  --force permits mismatch/untracked skill replacement or removal.",
   ]) assert.ok(lines.includes(line), `missing help line: ${line}`);
 });
 

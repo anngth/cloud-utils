@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "source": "anthropics/skills",
+      "skills": []
+    },
+    {
+      "source": "vercel-labs/agent-skills",
+      "skills": []
+    }
+  ]
+}

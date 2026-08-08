@@ -1,5 +1,3 @@
-import { getProfile } from "./profiles.mjs";
-
 export class PlannerError extends Error {
   constructor(message, options) {
     super(message, options);
@@ -37,47 +35,6 @@ export function catalogRequirements(document) {
       skill,
       sources: [...sources.keys()].sort(),
       profiles: [],
-    }));
-
-  return {
-    requirements: [...byKey.values()].sort((a, b) => a.skill.localeCompare(b.skill)),
-    desiredConflicts,
-  };
-}
-
-export function mergeProfileRequirements(document, names) {
-  const byKey = new Map();
-  const bySkill = new Map();
-
-  for (const profileName of names) {
-    const profile = getProfile(document, profileName);
-    for (const entry of profile.sources) {
-      for (const skill of entry.skills) {
-        const key = requirementKey(entry.source, skill);
-        const item = byKey.get(key) ?? {
-          key,
-          source: entry.source,
-          skill,
-          profiles: [],
-        };
-        if (!item.profiles.includes(profileName)) item.profiles.push(profileName);
-        byKey.set(key, item);
-
-        const sources = bySkill.get(skill) ?? new Map();
-        const owners = sources.get(entry.source) ?? [];
-        if (!owners.includes(profileName)) owners.push(profileName);
-        sources.set(entry.source, owners);
-        bySkill.set(skill, sources);
-      }
-    }
-  }
-
-  const desiredConflicts = [...bySkill]
-    .filter(([, sources]) => sources.size > 1)
-    .map(([skill, sources]) => ({
-      skill,
-      sources: [...sources.keys()].sort(),
-      profiles: [...new Set([...sources.values()].flat())].sort(),
     }));
 
   return {

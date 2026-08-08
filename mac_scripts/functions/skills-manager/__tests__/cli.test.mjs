@@ -29,22 +29,18 @@ function cliHarness({ stdinIsTTY = true, stdoutIsTTY = true, hasNpx = true } = {
       hasCommand: () => { npxChecks += 1; return hasNpx; },
       initializeConfig: () => {
         initialized += 1;
-        return { profilesFile: "/profiles", projectsFile: "/projects" };
+        return { sourcesFile: "/sources" };
       },
       readConfig: () => {
         read += 1;
         return {
-          profiles: { version: 1, profiles: [{ name: "default", sources: [] }] },
-          projects: { version: 1, projects: [] },
+          catalog: { version: 1, sources: [] },
         };
       },
-      runProfileCommand: handler("profile"),
       runSourceCommand: handler("source"),
-      runSkillCommand: handler("skill"),
-      runProjectCommand: handler("project"),
       runStatusCommand: handler("status"),
-      runInstallCommand: handler("install"),
-      runUninstallCommand: handler("uninstall"),
+      runAddCommand: handler("add"),
+      runRemoveCommand: handler("remove"),
       runInteractive: async (context) => {
         calls.push(["interactive", [], context]);
         return 0;
@@ -60,13 +56,11 @@ function cliHarness({ stdinIsTTY = true, stdoutIsTTY = true, hasNpx = true } = {
 
 test("dispatches only the new top-level commands", async () => {
   for (const [argv, handler] of [
-    [["profile", "list"], "profile"],
-    [["source", "show", "a/repo"], "source"],
-    [["skill", "remove", "a", "--source", "a/repo", "-p", "default"], "skill"],
-    [["project", "show"], "project"],
+    [["source", "add", "a/repo", "-n"], "source"],
+    [["source", "remove", "1"], "source"],
     [["status"], "status"],
-    [["install", "frontend"], "install"],
-    [["uninstall", "frontend"], "uninstall"],
+    [["add", "1"], "add"],
+    [["remove", "--all"], "remove"],
   ]) {
     const harness = cliHarness();
     assert.equal(await runCli(argv, harness.dependencies), 0);
@@ -75,21 +69,8 @@ test("dispatches only the new top-level commands", async () => {
   }
 });
 
-test("project remove without a path passes grammar validation", async () => {
-  const harness = cliHarness();
-  assert.equal(await runCli(["project", "remove"], harness.dependencies), 0);
-  assert.deepEqual(harness.calls.map(([name]) => name), ["project"]);
-  assert.deepEqual(harness.calls[0][1], ["remove"]);
-});
-
-test("project remove rejects two paths without dispatch", async () => {
-  const harness = cliHarness();
-  assert.equal(await runCli(["project", "remove", "/one", "/two"], harness.dependencies), 1);
-  assert.deepEqual(harness.calls, []);
-});
-
 test("rejects removed legacy commands", async () => {
-  for (const command of ["ls", "list", "add", "remove", "rm", "show"]) {
+  for (const command of ["ls", "list", "rm", "show", "install", "uninstall", "profile", "skill", "project"]) {
     const harness = cliHarness({ hasNpx: false });
     assert.equal(await runCli([command], harness.dependencies), 1);
     assert.match(harness.stderr(), new RegExp(`Unknown command: ${command}`));
@@ -140,22 +121,21 @@ test("no arguments require a TTY and dispatch interactive mode", async () => {
 
 test("valid routes receive initialized paths and validated config", async () => {
   const harness = cliHarness();
-  assert.equal(await runCli(["profile", "list"], harness.dependencies), 0);
+  assert.equal(await runCli(["source", "add", "a/repo", "-n"], harness.dependencies), 0);
   assert.equal(harness.initialized(), 1);
   assert.equal(harness.read(), 1);
   const context = harness.calls[0][2];
-  assert.deepEqual(context.paths, { profilesFile: "/profiles", projectsFile: "/projects" });
-  assert.equal(context.config.profiles.profiles[0].name, "default");
+  assert.deepEqual(context.paths, { sourcesFile: "/sources" });
+  assert.deepEqual(context.config.catalog, { version: 1, sources: [] });
   assert.equal(context.cwd, "/repo");
 });
 
 test("routes that use upstream skills fail early when npx is missing", async () => {
   for (const argv of [
-    ["source", "show", "a/repo"],
-    ["skill", "add", "a", "--source", "a/repo", "-p", "default"],
+    ["source", "add", "a/repo"],
     ["status"],
-    ["install", "frontend"],
-    ["uninstall", "frontend"],
+    ["add", "1"],
+    ["remove", "1"],
   ]) {
     const harness = cliHarness({ hasNpx: false });
     assert.equal(await runCli(argv, harness.dependencies), 1);
@@ -167,7 +147,7 @@ test("routes that use upstream skills fail early when npx is missing", async () 
 test("source add no-skills aliases bypass npx preflight and dispatch equivalently", async () => {
   for (const noSkills of ["-n", "--no-skills"]) {
     const harness = cliHarness({ hasNpx: false });
-    const argv = ["source", "add", "a/repo", "-p", "default", noSkills];
+    const argv = ["source", "add", "a/repo", noSkills];
     assert.equal(await runCli(argv, harness.dependencies), 0, noSkills);
     assert.deepEqual(harness.calls.map(([name]) => name), ["source"], noSkills);
     assert.deepEqual(harness.calls[0][1], argv.slice(1), noSkills);
@@ -178,9 +158,9 @@ test("source add no-skills aliases bypass npx preflight and dispatch equivalentl
 
 test("route grammar errors take precedence over missing npx", async () => {
   for (const [argv, message] of [
-    [["source", "show"], /Usage: skm source show/i],
-    [["source", "add", "a\/repo", "--all", "--no-skills"], /mutually exclusive/i],
-    [["install", "--unsupported"], /Unknown option: --unsupported/i],
+    [["source", "add"], /Usage: skm source add/i],
+    [["source", "add", "a/repo", "--all", "--no-skills"], /mutually exclusive/i],
+    [["add", "--unsupported"], /Unknown option: --unsupported/i],
   ]) {
     const harness = cliHarness({ hasNpx: false });
     assert.equal(await runCli(argv, harness.dependencies), 1);
@@ -194,7 +174,7 @@ test("route grammar errors take precedence over missing npx", async () => {
 test("configuration failures are rendered without dispatch", async () => {
   const harness = cliHarness();
   harness.dependencies.initializeConfig = () => { throw new Error("disk unavailable"); };
-  assert.equal(await runCli(["profile", "list"], harness.dependencies), 1);
+  assert.equal(await runCli(["status"], harness.dependencies), 1);
   assert.match(harness.stderr(), /Could not create config directory/);
   assert.deepEqual(harness.calls, []);
 });

@@ -72,6 +72,22 @@ gt backup remove git@github.com:org/my-app.git
 - Requires `git`, `glab` (logged in), and SSH access to both the source and GitLab.
 - Backup pushes all branches and tags (not GitLab hidden refs like `refs/environments/*`). `--prune` can delete remote branches/tags that no longer exist on the source.
 
+## skm
+
+Source-catalog skill manager (`mac_scripts/functions/skills-manager/`). See [skm.md](skm.md) for full usage.
+
+```bash
+skm
+skm source add vercel-labs/agent-skills -a
+skm add 1
+skm status
+skm remove --all
+```
+
+- **Config:** `$CLOUD_UTILS_CONFIG_DIR/skm/sources.json` (same config root as `gt`; default under iCloud Backups when unset).
+- **Migration:** legacy `profiles.json` / `projects.json` / `list.json` migrate into `sources.json` on first read and are left on disk unchanged.
+- **Indexes:** `add`, `remove`, and `source remove` accept 1-based catalog indexes or source ids (same convention as `gt backup remove`).
+
 ## 2fa
 
 ```bash

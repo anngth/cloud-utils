@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { validateCatalogDocument } from "../catalog.mjs";
 import {
   ProfileConfigError,
   addProfileSource,
@@ -11,23 +12,20 @@ import {
 
 const base = { version: 1, profiles: [{ name: "default", sources: [] }] };
 
-test("ships a current profiles example instead of a legacy list example", () => {
-  const profilesExample = new URL("../profiles.json.example", import.meta.url);
+test("ships a current sources example instead of a legacy list example", () => {
+  const sourcesExample = new URL("../sources.json.example", import.meta.url);
   const legacyExample = new URL("../list.json.example", import.meta.url);
 
-  assert.equal(existsSync(profilesExample), true);
+  assert.equal(existsSync(sourcesExample), true);
   assert.equal(existsSync(legacyExample), false);
   assert.deepEqual(
-    validateProfilesDocument(JSON.parse(readFileSync(profilesExample, "utf8"))),
+    validateCatalogDocument(JSON.parse(readFileSync(sourcesExample, "utf8"))),
     {
       version: 1,
-      profiles: [{
-        name: "default",
-        sources: [
-          { source: "anthropics/skills", skills: [] },
-          { source: "vercel-labs/agent-skills", skills: [] },
-        ],
-      }],
+      sources: [
+        { source: "anthropics/skills", skills: [] },
+        { source: "vercel-labs/agent-skills", skills: [] },
+      ],
     },
   );
 });

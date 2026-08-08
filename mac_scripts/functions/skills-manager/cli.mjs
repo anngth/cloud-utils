@@ -7,8 +7,6 @@ import {
   readConfig as readConfigDefault,
   writeCatalog as writeCatalogDefault,
   writeConfigTransaction as writeConfigTransactionDefault,
-  writeProfiles as writeProfilesDefault,
-  writeProjects as writeProjectsDefault,
 } from "./config.mjs";
 import { runInteractive as runInteractiveDefault } from "./interactive.mjs";
 import { loadInstalledState as loadInstalledStateDefault } from "./installed-state.mjs";
@@ -19,9 +17,6 @@ import {
   validateLifecycleCommandGrammar,
 } from "./lifecycle-commands.mjs";
 import {
-  runProfileCommand as runProfileCommandDefault,
-  runProjectCommand as runProjectCommandDefault,
-  runSkillCommand as runSkillCommandDefault,
   runSourceCommand as runSourceCommandDefault,
   validateManagementCommandGrammar,
 } from "./manage-commands.mjs";
@@ -56,8 +51,6 @@ export async function runCli(argv, dependencies = {}) {
     hasCommand = hasCommandDefault,
     initializeConfig = initializeConfigDefault,
     readConfig = readConfigDefault,
-    writeProfiles = writeProfilesDefault,
-    writeProjects = writeProjectsDefault,
     writeCatalog = writeCatalogDefault,
     writeConfigTransaction = writeConfigTransactionDefault,
     resolveProjectRoot = resolveProjectRootDefault,
@@ -66,10 +59,7 @@ export async function runCli(argv, dependencies = {}) {
     executeInstallPlan = executeInstallPlanDefault,
     executeUninstallPlan = executeUninstallPlanDefault,
     selectorRunner = runSelectorDefault,
-    runProfileCommand = runProfileCommandDefault,
     runSourceCommand = runSourceCommandDefault,
-    runSkillCommand = runSkillCommandDefault,
-    runProjectCommand = runProjectCommandDefault,
     runStatusCommand = runStatusCommandDefault,
     runAddCommand = runAddCommandDefault,
     runRemoveCommand = runRemoveCommandDefault,
@@ -91,10 +81,7 @@ export async function runCli(argv, dependencies = {}) {
   }
 
   const routes = {
-    profile: runProfileCommand,
     source: runSourceCommand,
-    skill: runSkillCommand,
-    project: runProjectCommand,
     status: runStatusCommand,
     add: runAddCommand,
     remove: runRemoveCommand,
@@ -111,8 +98,6 @@ export async function runCli(argv, dependencies = {}) {
   }
   try {
     if (action === "source") {
-      validateManagementCommandGrammar(action, args);
-    } else if (["profile", "skill", "project"].includes(action)) {
       validateManagementCommandGrammar(action, args);
     } else if (["status", "add", "remove"].includes(action)) {
       validateLifecycleCommandGrammar(action, args);
@@ -175,12 +160,9 @@ export async function runCli(argv, dependencies = {}) {
     loadInstalledState: ({ projectRoot }) => loadInstalledState({ projectRoot, env }),
     executeInstallPlan,
     executeUninstallPlan,
-    writeProfiles,
-    writeProjects,
     writeCatalog,
     writeConfigTransaction,
     selectItems: ({ items, ...options }) => select(items, options),
-    selectProfiles: (items, options) => select(items, options),
     selectSkills: (items, options) => select(items, options),
     selectCatalogItems: (items, options = {}) => select(items, {
       ...options,
@@ -197,19 +179,7 @@ export async function runCli(argv, dependencies = {}) {
       ], { multiple: false, title: message });
       return result.type === "submit" && result.selected[0] === true;
     },
-    confirmSaveLinks: async ({ projectRoot, profileNames }) => {
-      const message = `Link ${profileNames.join(", ")} to ${projectRoot}?`;
-      ui.confirm(message);
-      const result = await select([
-        { value: true, label: "Yes" },
-        { value: false, label: "No" },
-      ], { multiple: false, title: message });
-      return result.type === "submit" && result.selected[0] === true;
-    },
-    runProfileCommand,
     runSourceCommand,
-    runSkillCommand,
-    runProjectCommand,
     runStatusCommand,
     runAddCommand,
     runRemoveCommand,

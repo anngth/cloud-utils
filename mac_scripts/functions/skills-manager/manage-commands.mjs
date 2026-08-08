@@ -213,19 +213,3 @@ export async function runSourceCommand(args, context) {
     return reportError(context, error);
   }
 }
-
-async function removedCommand(context, family) {
-  return reportError(context, new CommandUsageError(`${family} commands have been removed`));
-}
-
-export async function runProfileCommand(args, context) {
-  return removedCommand(context, "Profile");
-}
-
-export async function runSkillCommand(args, context) {
-  return removedCommand(context, "Skill");
-}
-
-export async function runProjectCommand(args, context) {
-  return removedCommand(context, "Project");
-}
