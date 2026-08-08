@@ -39,6 +39,10 @@ gt backup -f                       # force re-mirror (skip fingerprint check)
 gt backup --all                    # backup every listed repo
 gt backup --all --dry-run          # preview every listed repo
 gt backup --all --force            # force all listed repos
+gt backup stale                    # interactive select among stale repos (default 7 days)
+gt backup stale --all              # backup every stale repo (no TTY)
+gt backup stale --days 14          # custom staleness threshold
+gt backup stale --all --dry-run    # preview stale repos only
 gt backup remove 1
 gt backup remove git@github.com:org/my-app.git
 ```
@@ -50,6 +54,9 @@ gt backup remove git@github.com:org/my-app.git
   - `gt backup --all` — backup every listed repo (no TTY required); does not read or update `selectedLast`.
   - `gt backup --all --dry-run` — preview every listed repo without mirroring or timestamp writes.
   - `gt backup --all -f` / `--force` — same as `--all`, but force every live repo to mirror.
+  - `gt backup stale` — interactive multi-select among **stale** repos only (TTY required); stale ⇔ `lastCheckedAt` is null or older than 7 days; same selector UX (`a`/`c`/remember); `--days <n>` overrides threshold (positive integer).
+  - `gt backup stale --dry-run` / `-f` / `--force` — same meanings as plain interactive backup, scoped to stale repos.
+  - `gt backup stale --all` — backup every stale repo in list order (no TTY); does not read or update `selectedLast`. Combine with `--days`, `--dry-run`, or `--force` as needed. Empty stale set → `No stale repos`, exit `0`.
   - `gt backup add <ssh-url> [<ssh-url> ...]` / `gt backup remove <index|ssh-url>` — maintain the list (`index` is 1-based). Multi-add processes URLs in order, continues after per-URL failures (invalid or duplicate), writes once if any succeed; exit `0` only when every URL succeeds.
 - **Config:** `$CLOUD_UTILS_CONFIG_DIR/gt/backups.json` (same config root as `skm`; default under iCloud Backups when unset).
   - List file schema version 4: each repo is `{ url, lastBackupAt, lastCheckedAt, selectedLast }` (`lastBackupAt` / `lastCheckedAt` must be UTC ISO-8601 with `Z`, e.g. `2026-08-08T09:30:00.000Z`, or null; `selectedLast` boolean).

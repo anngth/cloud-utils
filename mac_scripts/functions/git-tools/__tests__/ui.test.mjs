@@ -14,6 +14,7 @@ test("usage documents managed backup list without -n/--new or one-shot URL", () 
   assert.match(stdout, /\bbackup\b/);
   assert.match(stdout, /backup \[--dry-run\] \[-f\|--force\]/);
   assert.match(stdout, /backup --all \[--dry-run\] \[-f\|--force\]/);
+  assert.match(stdout, /backup stale \[--days <n>\] \[--all\]/);
   assert.match(stdout, /backup add <ssh-url> \[<ssh-url> \.\.\.\]/);
   assert.match(stdout, /backup remove <index\|ssh-url>/);
   assert.doesNotMatch(stdout, /-n|--new/);

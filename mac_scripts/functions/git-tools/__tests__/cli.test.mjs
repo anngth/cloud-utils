@@ -80,6 +80,7 @@ test("help mentions managed backup list commands", async () => {
   assert.equal(code, 0);
   assert.match(stdout, /\bbackup\b/);
   assert.match(stdout, /backup --all/);
+  assert.match(stdout, /backup stale/);
   assert.match(stdout, /backup add <ssh-url>/);
   assert.match(stdout, /backup remove <index\|ssh-url>/);
   assert.doesNotMatch(stdout, /-n|--new/);
