@@ -35,14 +35,17 @@ import {
   parseLsRemoteFingerprint,
 } from "./refs-fingerprint.mjs";
 import { parseSshGitUrl } from "./ssh-url.mjs";
+import { isStaleRepo } from "./stale.mjs";
 import { createUi } from "./ui.mjs";
 
 const RED = "\u001b[31m";
 const ADD_HINT = "Use `gt backup add <ssh-url>` to add a repo first.";
 const FORCE_ONLY_HINT =
-  "The --force flag is only valid for interactive backup and gt backup --all";
+  "The --force flag is only valid for interactive backup, gt backup --all, and gt backup stale";
 const DRY_RUN_ONLY_HINT =
-  "The --dry-run flag is only valid for interactive backup and gt backup --all";
+  "The --dry-run flag is only valid for interactive backup, gt backup --all, and gt backup stale";
+const STALE_USAGE =
+  "Usage: gt backup stale [--days <n>] [--all] [-f|--force] [--dry-run]";
 
 function isForceFlag(arg) {
   return arg === "-f" || arg === "--force";
@@ -605,6 +608,133 @@ export async function runBackupCommand(args = [], context = {}) {
     ui.item(formatDisplayPath(paths.backupsFile, { home: env.HOME }));
     ui.listEnd();
     return 0;
+  }
+
+  if (args[0] === "stale") {
+    let staleAll = false;
+    let staleDays = 7;
+    let force = false;
+    let dryRun = context.dryRun === true;
+    const staleArgs = args.slice(1);
+
+    for (let i = 0; i < staleArgs.length; i++) {
+      const arg = staleArgs[i];
+      if (arg === "--all") {
+        staleAll = true;
+        continue;
+      }
+      if (arg === "--days") {
+        const value = staleArgs[++i];
+        if (value == null || value.startsWith("-")) {
+          ui.error(STALE_USAGE);
+          return 1;
+        }
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed <= 0) {
+          ui.error(`Invalid --days value: ${value} (must be a positive integer)`);
+          return 1;
+        }
+        staleDays = parsed;
+        continue;
+      }
+      if (isForceFlag(arg)) {
+        force = true;
+        continue;
+      }
+      if (isDryRunFlag(arg)) {
+        dryRun = true;
+        continue;
+      }
+      if (arg.startsWith("-")) {
+        ui.error(`Unknown flag: ${arg}`);
+        return 1;
+      }
+      ui.error(STALE_USAGE);
+      return 1;
+    }
+
+    if (force && dryRun) {
+      ui.error("Cannot combine --force and --dry-run");
+      return 1;
+    }
+
+    const batchContext = {
+      ...context,
+      ...(force && { force: true }),
+      ...(dryRun && { dryRun: true }),
+    };
+
+    const loaded = loadReposOrError(paths, { loadBackupsDocument, ui });
+    if (!loaded.ok) return 1;
+
+    const nowDate = resolved.now();
+    const staleRepos = loaded.repos.filter((entry) =>
+      isStaleRepo(entry, { now: nowDate, days: staleDays }),
+    );
+
+    if (staleRepos.length === 0) {
+      ui.success("No stale repos");
+      return 0;
+    }
+
+    const listPath = formatDisplayPath(paths.backupsFile, { home: env.HOME });
+
+    if (staleAll) {
+      ui.title("REPO BACKUP");
+      ui.step(listPath);
+      return runBackupBatch(
+        staleRepos.map((entry) => entry.url),
+        batchContext,
+      );
+    }
+
+    if (!stdin.isTTY) {
+      ui.error(
+        "A terminal is required to select stale repos interactively. Use `gt backup stale --all` to back up every stale repo without selecting.",
+      );
+      return 1;
+    }
+
+    const items = staleRepos.map((entry) => ({
+      label: entry.url,
+      value: entry.url,
+      lastBackupAt: entry.lastBackupAt,
+      lastCheckedAt: entry.lastCheckedAt,
+    }));
+    const heading = "Select stale repos to backup";
+    const initial = staleRepos
+      .filter((r) => r.selectedLast)
+      .map((r) => r.url);
+    const selection = await runSelector({
+      items,
+      multiple: true,
+      initial,
+      input: stdin,
+      render: (state) => ui.renderBackupSelector(heading, state, { listPath }),
+    });
+
+    if (selection.type === "cancel") {
+      return 1;
+    }
+
+    if (!selection.selected || selection.selected.length === 0) {
+      ui.error("No repos selected");
+      return 1;
+    }
+
+    if (!dryRun) {
+      const saved = setSelectedLast(
+        paths,
+        selection.selected,
+        fs ? { fs } : {},
+      );
+      if (!saved.ok) {
+        ui.error(`Failed to save selection: ${saved.error}`);
+        return 1;
+      }
+    }
+
+    return runBackupBatch(selection.selected, batchContext);
   }
 
   let all = false;

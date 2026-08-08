@@ -1224,3 +1224,190 @@ test("runBackupCommand --all --dry-run plans mirror with ok summary", async () =
   assert.match(items, /would mirror/);
   assert.doesNotMatch(items, new RegExp(`→\\s+${projectWebUrl(BACKUP_GROUP, BASE_NAME)}`));
 });
+
+const FIXED_NOW = new Date("2026-08-08T12:00:00.000Z");
+const RECENT_CHECKED = "2026-08-07T12:00:00.000Z";
+const OLD_CHECKED = "2026-08-01T00:00:00.000Z";
+
+test("runBackupCommand stale with no stale repos prints message and exits 0", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [
+    { url: SOURCE, lastCheckedAt: RECENT_CHECKED },
+    { url: SOURCE_B, lastCheckedAt: RECENT_CHECKED },
+  ]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => FIXED_NOW,
+  });
+  const code = await runBackupCommand(["stale"], context);
+  assert.equal(code, 0);
+  assert.match(h.messages.statuses.join("\n"), /No stale repos/);
+});
+
+test("runBackupCommand stale --all backs up only stale URLs in list order", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [
+    { url: SOURCE, lastCheckedAt: null },
+    { url: SOURCE_B, lastCheckedAt: RECENT_CHECKED },
+  ]);
+  const backedUp = [];
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => FIXED_NOW,
+    recordLastBackupAt: (p, url) => {
+      backedUp.push(url);
+      return { ok: true, document: { version: 4, repos: [] } };
+    },
+  });
+  const code = await runBackupCommand(["stale", "--all"], context);
+  assert.equal(code, 0);
+  assert.deepEqual(backedUp, [SOURCE]);
+  assert.match(h.messages.items.join("\n"), new RegExp(`ok\\s+${SOURCE}`));
+  assert.doesNotMatch(h.messages.items.join("\n"), new RegExp(`ok\\s+${SOURCE_B}`));
+});
+
+test("runBackupCommand stale interactive shows only stale repos", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [
+    { url: SOURCE, lastCheckedAt: null },
+    { url: SOURCE_B, lastCheckedAt: RECENT_CHECKED },
+  ]);
+  let capturedItems;
+  const { context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => FIXED_NOW,
+    stdin: { isTTY: true },
+    runSelector: async ({ items }) => {
+      capturedItems = items;
+      return { type: "submit", selected: [items[0].value] };
+    },
+    setSelectedLast: () => ({ ok: true, document: { version: 4, repos: [] } }),
+    recordLastBackupAt: () => ({ ok: true, document: { version: 4, repos: [] } }),
+  });
+  await runBackupCommand(["stale"], context);
+  assert.equal(capturedItems.length, 1);
+  assert.equal(capturedItems[0].value, SOURCE);
+});
+
+test("runBackupCommand stale submit rewrites selectedLast on full list", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [
+    { url: SOURCE, lastCheckedAt: null, selectedLast: false },
+    { url: SOURCE_B, lastCheckedAt: RECENT_CHECKED, selectedLast: true },
+  ]);
+  const { context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => FIXED_NOW,
+    stdin: { isTTY: true },
+    runSelector: async ({ items }) => ({
+      type: "submit",
+      selected: [items[0].value],
+    }),
+    recordLastBackupAt: () => ({ ok: true, document: { version: 4, repos: [] } }),
+  });
+  await runBackupCommand(["stale"], context);
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.repos[0].selectedLast, true);
+  assert.equal(onDisk.repos[1].selectedLast, false);
+});
+
+test("runBackupCommand stale --days 1 changes stale set", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [
+    { url: SOURCE, lastCheckedAt: "2026-08-07T11:00:00.000Z" },
+    { url: SOURCE_B, lastCheckedAt: RECENT_CHECKED },
+  ]);
+  let capturedItems;
+  const { context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => FIXED_NOW,
+    stdin: { isTTY: true },
+    runSelector: async ({ items }) => {
+      capturedItems = items;
+      return { type: "cancel", selected: [] };
+    },
+  });
+  await runBackupCommand(["stale", "--days", "1"], context);
+  assert.equal(capturedItems.length, 1);
+  assert.equal(capturedItems[0].value, SOURCE);
+});
+
+test("runBackupCommand stale --days invalid errors", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+  });
+  const code = await runBackupCommand(["stale", "--days", "abc"], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /Invalid --days|positive integer/i);
+});
+
+test("runBackupCommand stale --all --force passes force through batch", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [{
+    url: SOURCE,
+    lastBackupAt: "2020-01-01T00:00:00.000Z",
+    lastCheckedAt: null,
+  }]);
+  let cloned = false;
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => FIXED_NOW,
+    projectExists: async () => ({ ok: true, exists: true }),
+    runGit: async (args) => {
+      if (args[0] === "ls-remote") assert.fail("ls-remote should not run when force");
+      if (args[0] === "clone") {
+        cloned = true;
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+  const code = await runBackupCommand(["stale", "--all", "--force"], context);
+  assert.equal(code, 0);
+  assert.equal(cloned, true);
+  assert.match(h.messages.items.join("\n"), /ok/);
+});
+
+test("runBackupCommand stale --all --dry-run plans without writes", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [{ url: SOURCE, lastCheckedAt: null }]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => FIXED_NOW,
+    projectExists: async () => ({ ok: true, exists: false }),
+    runGit: async () => ({ status: 0, stdout: "", stderr: "" }),
+  });
+  const code = await runBackupCommand(["stale", "--all", "--dry-run"], context);
+  assert.equal(code, 0);
+  assert.match(h.messages.statuses.join("\n"), /Dry run/);
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.repos[0].lastBackupAt, null);
+});
+
+test("runBackupCommand stale non-TTY mentions stale --all", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [{ url: SOURCE, lastCheckedAt: null }]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => FIXED_NOW,
+    stdin: { isTTY: false },
+  });
+  const code = await runBackupCommand(["stale"], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /terminal/i);
+  assert.match(h.messages.errors.join("\n"), /stale --all/);
+});
+
+test("runBackupCommand stale rejects --force and --dry-run together", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [{ url: SOURCE, lastCheckedAt: null }]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => FIXED_NOW,
+  });
+  const code = await runBackupCommand(["stale", "--all", "--force", "--dry-run"], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /force.*dry-run|dry-run.*force/i);
+});
