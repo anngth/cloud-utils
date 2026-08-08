@@ -1,6 +1,6 @@
 import {
   EMPTY_BACKUPS,
-  readBackupsDocument,
+  loadBackupsDocument,
   writeBackupsDocument,
 } from "./config.mjs";
 import { canonicalizeSshGitUrl } from "./ssh-url.mjs";
@@ -8,11 +8,11 @@ import { canonicalizeSshGitUrl } from "./ssh-url.mjs";
 const ADD_HINT = "Use `gt backup add <ssh-url>` to add a repo first.";
 
 /**
- * @param {string} stored
+ * @param {string} url
  * @returns {string | null}
  */
-function canonicalKey(stored) {
-  const result = canonicalizeSshGitUrl(stored);
+function canonicalKey(url) {
+  const result = canonicalizeSshGitUrl(url);
   return result.ok ? result.canonical : null;
 }
 
@@ -29,27 +29,29 @@ export function addBackupRepo(paths, sshUrl, { fs } = {}) {
     return canonicalized;
   }
 
-  const readOpts = fs ? { fs } : {};
+  const loadOpts = fs ? { fs } : {};
   const writeOpts = fs ? { fs } : {};
-  const read = readBackupsDocument(paths.backupsFile, readOpts);
+  const load = loadBackupsDocument(paths.backupsFile, loadOpts);
 
   let document;
   let createdFile = false;
 
-  if (read.ok) {
+  if (load.ok) {
     document = {
-      version: read.document.version,
-      repos: [...read.document.repos],
+      version: load.document.version,
+      repos: [...load.document.repos],
     };
-  } else if (read.missing) {
+  } else if (load.missing) {
     document = { version: EMPTY_BACKUPS.version, repos: [] };
     createdFile = true;
   } else {
-    return { ok: false, error: read.error };
+    return { ok: false, error: load.error };
   }
 
   const newKey = canonicalized.canonical;
-  const duplicate = document.repos.some((repo) => canonicalKey(repo) === newKey);
+  const duplicate = document.repos.some(
+    (repo) => canonicalKey(repo.url) === newKey,
+  );
   if (duplicate) {
     return {
       ok: false,
@@ -57,7 +59,7 @@ export function addBackupRepo(paths, sshUrl, { fs } = {}) {
     };
   }
 
-  document.repos.push(canonicalized.sshUrl);
+  document.repos.push({ url: canonicalized.sshUrl, lastBackupAt: null });
 
   const written = writeBackupsDocument(paths.backupsFile, document, writeOpts);
   if (!written.ok) {
@@ -80,21 +82,21 @@ export function addBackupRepo(paths, sshUrl, { fs } = {}) {
  *   | { ok: false, error: string }}
  */
 export function removeBackupRepo(paths, token, { fs } = {}) {
-  const readOpts = fs ? { fs } : {};
+  const loadOpts = fs ? { fs } : {};
   const writeOpts = fs ? { fs } : {};
-  const read = readBackupsDocument(paths.backupsFile, readOpts);
+  const load = loadBackupsDocument(paths.backupsFile, loadOpts);
 
-  if (!read.ok) {
-    if (read.missing) {
+  if (!load.ok) {
+    if (load.missing) {
       return {
         ok: false,
         error: `No backups list found. ${ADD_HINT}`,
       };
     }
-    return { ok: false, error: read.error };
+    return { ok: false, error: load.error };
   }
 
-  if (read.document.repos.length === 0) {
+  if (load.document.repos.length === 0) {
     return {
       ok: false,
       error: `Backups list is empty. ${ADD_HINT}`,
@@ -102,8 +104,8 @@ export function removeBackupRepo(paths, token, { fs } = {}) {
   }
 
   const document = {
-    version: read.document.version,
-    repos: [...read.document.repos],
+    version: load.document.version,
+    repos: [...load.document.repos],
   };
 
   let removeIndex = -1;
@@ -123,7 +125,7 @@ export function removeBackupRepo(paths, token, { fs } = {}) {
       return canonicalized;
     }
     removeIndex = document.repos.findIndex(
-      (repo) => canonicalKey(repo) === canonicalized.canonical,
+      (repo) => canonicalKey(repo.url) === canonicalized.canonical,
     );
     if (removeIndex === -1) {
       return {
@@ -133,11 +135,66 @@ export function removeBackupRepo(paths, token, { fs } = {}) {
     }
   }
 
-  const [removed] = document.repos.splice(removeIndex, 1);
+  const removed = document.repos[removeIndex].url;
+  document.repos.splice(removeIndex, 1);
   const written = writeBackupsDocument(paths.backupsFile, document, writeOpts);
   if (!written.ok) {
     return written;
   }
 
   return { ok: true, removed, document };
+}
+
+/**
+ * @param {{ backupsFile: string }} paths
+ * @param {string} sshUrl
+ * @param {{ now?: Date, fs?: object }} [options]
+ * @returns {{ ok: true, document: object } | { ok: false, error: string }}
+ */
+export function recordLastBackupAt(paths, sshUrl, { now = new Date(), fs } = {}) {
+  const canonicalized = canonicalizeSshGitUrl(sshUrl);
+  if (!canonicalized.ok) {
+    return canonicalized;
+  }
+
+  const loadOpts = fs ? { fs } : {};
+  const writeOpts = fs ? { fs } : {};
+  const load = loadBackupsDocument(paths.backupsFile, loadOpts);
+
+  if (!load.ok) {
+    if (load.missing) {
+      return {
+        ok: false,
+        error: `No backups list found. ${ADD_HINT}`,
+      };
+    }
+    return { ok: false, error: load.error };
+  }
+
+  const document = {
+    version: load.document.version,
+    repos: [...load.document.repos],
+  };
+
+  const index = document.repos.findIndex(
+    (repo) => canonicalKey(repo.url) === canonicalized.canonical,
+  );
+  if (index === -1) {
+    return {
+      ok: false,
+      error: `Repo not found in backups list: ${sshUrl}`,
+    };
+  }
+
+  document.repos[index] = {
+    ...document.repos[index],
+    lastBackupAt: now.toISOString(),
+  };
+
+  const written = writeBackupsDocument(paths.backupsFile, document, writeOpts);
+  if (!written.ok) {
+    return written;
+  }
+
+  return { ok: true, document };
 }
