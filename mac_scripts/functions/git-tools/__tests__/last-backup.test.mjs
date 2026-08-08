@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatLastBackupLabel } from "../last-backup.mjs";
+import {
+  formatLastBackupLabel,
+  formatLastCheckedLabel,
+} from "../last-backup.mjs";
 
 test("formatLastBackupLabel uses relative + local datetime", () => {
   const now = new Date("2026-08-08T10:00:00.000Z");
@@ -31,5 +34,19 @@ test("formatLastBackupLabel singular minute and day", () => {
   assert.match(
     formatLastBackupLabel("2026-08-07T10:00:00.000Z", now),
     /1 day ago/,
+  );
+});
+
+test("formatLastCheckedLabel uses Last checked prefix", () => {
+  const now = new Date("2026-08-08T10:00:00.000Z");
+  const label = formatLastCheckedLabel("2026-08-08T08:00:00.000Z", now);
+  assert.match(label, /^Last checked: 2 hours ago \(/);
+});
+
+test("formatLastBackupLabel still works", () => {
+  const now = new Date("2026-08-08T10:00:00.000Z");
+  assert.match(
+    formatLastBackupLabel("2026-08-08T08:00:00.000Z", now),
+    /^Last backup: 2 hours ago \(/,
   );
 });

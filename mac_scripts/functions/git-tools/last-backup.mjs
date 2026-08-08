@@ -1,4 +1,7 @@
-export function formatLastBackupLabel(isoString, now = new Date()) {
+export function formatTimestampLabel(
+  isoString,
+  { prefix = "Last backup", now = new Date() } = {},
+) {
   const then = new Date(isoString);
   if (Number.isNaN(then.getTime())) {
     throw new TypeError(`Invalid lastBackupAt: ${isoString}`);
@@ -22,5 +25,13 @@ export function formatLastBackupLabel(isoString, now = new Date()) {
   const d = String(then.getDate()).padStart(2, "0");
   const h = String(then.getHours()).padStart(2, "0");
   const mi = String(then.getMinutes()).padStart(2, "0");
-  return `Last backup: ${relative} (${y}-${mo}-${d} ${h}:${mi})`;
+  return `${prefix}: ${relative} (${y}-${mo}-${d} ${h}:${mi})`;
+}
+
+export function formatLastBackupLabel(isoString, now = new Date()) {
+  return formatTimestampLabel(isoString, { prefix: "Last backup", now });
+}
+
+export function formatLastCheckedLabel(isoString, now = new Date()) {
+  return formatTimestampLabel(isoString, { prefix: "Last checked", now });
 }
