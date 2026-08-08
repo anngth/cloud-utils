@@ -445,6 +445,27 @@ test("backupOneRepo never skips when project missing", async () => {
   assert.equal(sawLsRemote, false);
 });
 
+test("backupOneRepo fails when ls-remote fails on live project", async () => {
+  let cloned = false;
+  const { context } = baseContext({
+    projectExists: async () => ({ ok: true, exists: true }),
+    runGit: async (args) => {
+      if (args[0] === "ls-remote") {
+        return { status: 128, stdout: "", stderr: "remote error" };
+      }
+      if (args[0] === "clone") {
+        cloned = true;
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+  const result = await backupOneRepo(SOURCE, context);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /remote error|ls-remote/i);
+  assert.equal(cloned, false);
+});
+
 test("runBackupBatch skip updates lastCheckedAt only and exits 0", async () => {
   const paths = tempPaths();
   seedRepos(paths, [{
@@ -470,6 +491,33 @@ test("runBackupBatch skip updates lastCheckedAt only and exits 0", async () => {
   const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
   assert.equal(onDisk.repos[0].lastBackupAt, "2020-01-01T00:00:00.000Z");
   assert.equal(onDisk.repos[0].lastCheckedAt, "2026-08-08T12:00:00.000Z");
+});
+
+test("runBackupBatch skip metadata write failure counts as fail", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [{
+    url: SOURCE,
+    lastBackupAt: "2020-01-01T00:00:00.000Z",
+    lastCheckedAt: null,
+  }]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    projectExists: async () => ({ ok: true, exists: true }),
+    runGit: async (args) => {
+      if (args[0] === "ls-remote") {
+        return { status: 0, stdout: "abc\trefs/heads/main\n", stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    },
+    recordLastCheckedAt: () => ({ ok: false, error: "disk full" }),
+  });
+  const code = await runBackupBatch([SOURCE], context);
+  assert.equal(code, 1);
+  const items = h.messages.items.join("\n");
+  assert.match(items, /fail/);
+  assert.match(items, /lastCheckedAt|saving/i);
+  assert.doesNotMatch(items, new RegExp(`ok\\s+${SOURCE}`));
+  assert.doesNotMatch(items, new RegExp(`skip\\s+${SOURCE}`));
 });
 
 test("backupOneRepo clone failure still removes temp dir", async () => {
