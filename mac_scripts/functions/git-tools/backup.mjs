@@ -487,6 +487,7 @@ export async function runBackupCommand(args = [], context = {}) {
     label: entry.url,
     value: entry.url,
     lastBackupAt: entry.lastBackupAt,
+    lastCheckedAt: entry.lastCheckedAt,
   }));
   const heading = "Select repos to backup";
   const selection = await runSelector({

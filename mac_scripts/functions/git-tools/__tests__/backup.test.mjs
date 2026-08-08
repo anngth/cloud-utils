@@ -631,10 +631,14 @@ test("runBackupBatch metadata write failure counts as fail", async () => {
   );
 });
 
-test("runBackupCommand interactive passes lastBackupAt into selector render", async () => {
+test("runBackupCommand interactive passes lastBackupAt and lastCheckedAt into selector render", async () => {
   const paths = tempPaths();
   seedRepos(paths, [
-    { url: SOURCE, lastBackupAt: "2026-08-01T00:00:00.000Z" },
+    {
+      url: SOURCE,
+      lastBackupAt: "2026-08-01T00:00:00.000Z",
+      lastCheckedAt: "2026-08-08T11:00:00.000Z",
+    },
   ]);
   let captured;
   const { h, context } = baseContext({
@@ -651,6 +655,7 @@ test("runBackupCommand interactive passes lastBackupAt into selector render", as
   };
   await runBackupCommand([], context);
   assert.equal(captured[0].lastBackupAt, "2026-08-01T00:00:00.000Z");
+  assert.equal(captured[0].lastCheckedAt, "2026-08-08T11:00:00.000Z");
 });
 
 test("runBackupCommand --all migrates v1 list on load", async () => {

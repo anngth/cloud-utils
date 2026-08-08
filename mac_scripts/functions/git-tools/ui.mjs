@@ -1,4 +1,4 @@
-import { formatLastBackupLabel } from "./last-backup.mjs";
+import { formatLastBackupLabel, formatLastCheckedLabel } from "./last-backup.mjs";
 
 const C = {
   cyan: "\u001b[36m",
@@ -101,6 +101,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     state.items.forEach((entry, index) => {
       const label = typeof entry === "string" ? entry : entry.label;
       const lastBackupAt = typeof entry === "object" ? entry.lastBackupAt : null;
+      const lastCheckedAt = typeof entry === "object" ? entry.lastCheckedAt : null;
       const selected = state.selected.has(index);
       const box = selected ? "■" : "□";
       const boxColor = selected ? C.brightGreen : C.gray;
@@ -109,6 +110,9 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
       out(`${pipe}  ${number}  ${boxColor}${box}${C.reset}  ${fg(labelColor, label)}`);
       if (lastBackupAt) {
         out(`${pipe}      ${fg(C.gray, formatLastBackupLabel(lastBackupAt, now))}`);
+      }
+      if (lastCheckedAt) {
+        out(`${pipe}      ${fg(C.gray, formatLastCheckedLabel(lastCheckedAt, now))}`);
       }
       out(pipe);
     });
