@@ -49,19 +49,51 @@ test("writeBackupsDocument creates parent dirs and round-trips", () => {
   const dir = mkdtempSync(join(tmpdir(), "gt-cfg-"));
   const file = join(dir, "gt", "backups.json");
   const doc = {
-    version: 3,
+    version: 4,
     repos: [{
       url: "git@github.com:a/b.git",
       lastBackupAt: null,
       lastCheckedAt: null,
+      selectedLast: false,
     }],
   };
   assert.deepEqual(writeBackupsDocument(file, doc), { ok: true });
   assert.deepEqual(readBackupsDocument(file), { ok: true, document: doc });
 });
 
-test("EMPTY_BACKUPS is version 3", () => {
-  assert.deepEqual(EMPTY_BACKUPS, { version: 3, repos: [] });
+test("EMPTY_BACKUPS is version 4", () => {
+  assert.deepEqual(EMPTY_BACKUPS, { version: 4, repos: [] });
+});
+
+test("readBackupsDocument accepts v4 with selectedLast", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gt-cfg-"));
+  const file = join(dir, "backups.json");
+  const doc = {
+    version: 4,
+    repos: [{
+      url: "git@github.com:a/b.git",
+      lastBackupAt: null,
+      lastCheckedAt: null,
+      selectedLast: true,
+    }],
+  };
+  writeFileSync(file, `${JSON.stringify(doc)}\n`);
+  assert.deepEqual(readBackupsDocument(file), { ok: true, document: doc });
+});
+
+test("readBackupsDocument rejects non-boolean selectedLast", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gt-cfg-"));
+  const file = join(dir, "backups.json");
+  writeFileSync(file, JSON.stringify({
+    version: 4,
+    repos: [{
+      url: "git@github.com:a/b.git",
+      lastBackupAt: null,
+      lastCheckedAt: null,
+      selectedLast: "yes",
+    }],
+  }));
+  assert.equal(readBackupsDocument(file).ok, false);
 });
 
 test("readBackupsDocument accepts v2 objects", () => {
@@ -134,7 +166,16 @@ test("writeBackupsDocument rejects v2", () => {
   );
 });
 
-test("migrateBackupsDocument maps v1 strings to v3 objects", () => {
+test("writeBackupsDocument rejects v3", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gt-cfg-"));
+  const file = join(dir, "gt", "backups.json");
+  assert.equal(writeBackupsDocument(file, {
+    version: 3,
+    repos: [{ url: "git@github.com:a/b.git", lastBackupAt: null, lastCheckedAt: null }],
+  }).ok, false);
+});
+
+test("migrateBackupsDocument maps v1 strings to v4 objects", () => {
   const result = migrateBackupsDocument({
     version: 1,
     repos: ["git@github.com:a/b.git"],
@@ -142,16 +183,17 @@ test("migrateBackupsDocument maps v1 strings to v3 objects", () => {
   assert.equal(result.ok, true);
   assert.equal(result.migrated, true);
   assert.deepEqual(result.document, {
-    version: 3,
+    version: 4,
     repos: [{
       url: "git@github.com:a/b.git",
       lastBackupAt: null,
       lastCheckedAt: null,
+      selectedLast: false,
     }],
   });
 });
 
-test("migrateBackupsDocument upgrades v2 with lastCheckedAt null", () => {
+test("migrateBackupsDocument upgrades v2 to v4 with selectedLast false", () => {
   const result = migrateBackupsDocument({
     version: 2,
     repos: [{ url: "git@github.com:a/b.git", lastBackupAt: "2026-01-01T00:00:00.000Z" }],
@@ -159,11 +201,34 @@ test("migrateBackupsDocument upgrades v2 with lastCheckedAt null", () => {
   assert.equal(result.ok, true);
   assert.equal(result.migrated, true);
   assert.deepEqual(result.document, {
+    version: 4,
+    repos: [{
+      url: "git@github.com:a/b.git",
+      lastBackupAt: "2026-01-01T00:00:00.000Z",
+      lastCheckedAt: null,
+      selectedLast: false,
+    }],
+  });
+});
+
+test("migrateBackupsDocument upgrades v3 with selectedLast false", () => {
+  const result = migrateBackupsDocument({
     version: 3,
     repos: [{
       url: "git@github.com:a/b.git",
       lastBackupAt: "2026-01-01T00:00:00.000Z",
       lastCheckedAt: null,
+    }],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.migrated, true);
+  assert.deepEqual(result.document, {
+    version: 4,
+    repos: [{
+      url: "git@github.com:a/b.git",
+      lastBackupAt: "2026-01-01T00:00:00.000Z",
+      lastCheckedAt: null,
+      selectedLast: false,
     }],
   });
 });
@@ -179,27 +244,29 @@ test("loadBackupsDocument migrates v1 and rewrites file", () => {
   const loaded = loadBackupsDocument(file);
   assert.equal(loaded.ok, true);
   assert.equal(loaded.migrated, true);
-  assert.equal(loaded.document.version, 3);
+  assert.equal(loaded.document.version, 4);
   const onDisk = JSON.parse(readFileSync(file, "utf8"));
-  assert.equal(onDisk.version, 3);
+  assert.equal(onDisk.version, 4);
   assert.deepEqual(onDisk.repos[0], {
     url: "git@github.com:a/b.git",
     lastBackupAt: null,
     lastCheckedAt: null,
+    selectedLast: false,
   });
 });
 
-test("loadBackupsDocument migrates v1 to v3 on disk", () => {
+test("loadBackupsDocument migrates v1 to v4 on disk", () => {
   const dir = mkdtempSync(join(tmpdir(), "gt-cfg-"));
   const file = join(dir, "backups.json");
   writeFileSync(file, JSON.stringify({ version: 1, repos: ["git@github.com:a/b.git"] }));
   const loaded = loadBackupsDocument(file);
   assert.equal(loaded.ok, true);
-  assert.equal(loaded.document.version, 3);
+  assert.equal(loaded.document.version, 4);
   assert.deepEqual(loaded.document.repos[0], {
     url: "git@github.com:a/b.git",
     lastBackupAt: null,
     lastCheckedAt: null,
+    selectedLast: false,
   });
 });
 
