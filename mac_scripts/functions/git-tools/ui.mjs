@@ -65,9 +65,10 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     active("Commands");
     item("push              Force push (safe --force-with-lease)");
     item("fetch [--sync-upstream]");
-    item("backup [--dry-run] [-f|--force]       Interactive select; preview or force");
-    item("backup --all [--dry-run] [-f|--force]  Backup or preview every listed repo");
-    item("backup stale [--days <n>] [--all] [--dry-run] [-f|--force]  Stale repos only");
+    item("backup [-f|--force] [--dry-run]       Interactive select; preview or force");
+    detail("Selector: space toggle, a all, c clear, enter start, q quit");
+    item("backup --all [-f|--force] [--dry-run]  Backup or preview every listed repo");
+    item("backup stale [--days <n>] [--all] [-f|--force] [--dry-run]  Stale repos only");
     item("backup add <ssh-url> [<ssh-url> ...]  Add SSH URL(s) to managed list");
     item("backup remove <index|ssh-url>  Remove by 1-based index or URL");
     listEnd("Run 'gt --help' for this message.");
