@@ -52,7 +52,6 @@ export function validateCatalogDocument(value) {
     }
   }
   enforceSkillUniquenessAcrossSources(next.sources);
-  next.sources.sort((a, b) => a.source.localeCompare(b.source));
   return next;
 }
 
@@ -128,7 +127,7 @@ export function migrateProfilesToCatalog(profilesDocument) {
 
   for (const profile of profilesDocument.profiles ?? []) {
     for (const entry of profile.sources ?? []) {
-      const { source } = entry;
+      const source = canonicalizeSource(entry.source);
       let catalogEntry;
       if (sourceIndex.has(source)) {
         catalogEntry = sources[sourceIndex.get(source)];

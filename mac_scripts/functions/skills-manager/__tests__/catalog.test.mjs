@@ -77,3 +77,53 @@ test("migrateProfilesToCatalog fails on skill owned by two sources", () => {
     /dup/,
   );
 });
+
+test("migrateProfilesToCatalog canonicalizes source ids", () => {
+  const migrated = migrateProfilesToCatalog({
+    version: 1,
+    profiles: [
+      {
+        name: "a",
+        sources: [{
+          source: "https://github.com/vercel-labs/agent-skills.git",
+          skills: ["code-review"],
+        }],
+      },
+      {
+        name: "b",
+        sources: [{ source: "vercel-labs/agent-skills", skills: ["frontend-design"] }],
+      },
+    ],
+  });
+  assert.equal(migrated.sources.length, 1);
+  assert.equal(migrated.sources[0].source, "vercel-labs/agent-skills");
+  assert.deepEqual(migrated.sources[0].skills, ["code-review", "frontend-design"]);
+});
+
+test("migrateProfilesToCatalog preserves first-seen source order", () => {
+  const migrated = migrateProfilesToCatalog({
+    version: 1,
+    profiles: [{
+      name: "mixed",
+      sources: [
+        { source: "zeta/last", skills: [] },
+        { source: "alpha/first", skills: [] },
+      ],
+    }],
+  });
+  assert.deepEqual(
+    migrated.sources.map((entry) => entry.source),
+    ["zeta/last", "alpha/first"],
+  );
+});
+
+test("validateCatalogDocument preserves source order", () => {
+  const doc = validateCatalogDocument({
+    version: 1,
+    sources: [
+      { source: "z/repo", skills: [] },
+      { source: "a/repo", skills: [] },
+    ],
+  });
+  assert.deepEqual(doc.sources.map((entry) => entry.source), ["z/repo", "a/repo"]);
+});
