@@ -5,9 +5,13 @@ import { createKeyDecoder, createSelectorState, decodeKeys, reduceSelector, runS
 
 test("decodeKeys recognizes arrows, vim keys, space, enter, q, and Ctrl+C", () => {
   assert.deepEqual(
-    decodeKeys(Buffer.from("\u001b[A\u001b[Bjk \rq\u0003")),
-    ["up", "down", "down", "up", "toggle", "submit", "cancel", "cancel"],
+    decodeKeys(Buffer.from("\u001b[A\u001b[Bjk ac\rq\u0003")),
+    ["up", "down", "down", "up", "toggle", "selectAll", "clear", "submit", "cancel", "cancel"],
   );
+});
+
+test("decodeKeys maps a and c to selectAll and clear", () => {
+  assert.deepEqual(decodeKeys(Buffer.from("ac")), ["selectAll", "clear"]);
 });
 
 test("decodeKeys maps Ctrl+Z to suspend", () => {
@@ -382,6 +386,34 @@ const CATALOG_ITEMS = [
   { kind: "skill", value: '["a/repo","one"]', label: "one", sourceIndex: 1 },
   { kind: "skill", value: '["a/repo","two"]', label: "two", sourceIndex: 1 },
 ];
+
+test("selectAll selects every skill and syncs source rows", () => {
+  let state = createSelectorState([
+    { kind: "source", value: "src:a", label: "a", sourceIndex: 1, childValues: ["k1", "k2"] },
+    { kind: "skill", value: "k1", label: "one", sourceIndex: 1 },
+    { kind: "skill", value: "k2", label: "two", sourceIndex: 1 },
+  ]);
+  state = reduceSelector(state, "selectAll", { multiple: true }).state;
+  assert.ok(state.selected.has(0));
+  assert.ok(state.selected.has(1));
+  assert.ok(state.selected.has(2));
+});
+
+test("clear empties selection", () => {
+  let state = createSelectorState([
+    { kind: "skill", value: "a", label: "a" },
+    { kind: "skill", value: "b", label: "b" },
+  ]);
+  state.selected = new Set([0, 1]);
+  state = reduceSelector(state, "clear", { multiple: true }).state;
+  assert.equal(state.selected.size, 0);
+});
+
+test("single-select ignores selectAll and clear", () => {
+  let state = createSelectorState([{ value: "a" }, { value: "b" }]);
+  state = reduceSelector(state, "selectAll", { multiple: false }).state;
+  assert.equal(state.selected.size, 0);
+});
 
 test("toggle source selects and clears all child skills", () => {
   let state = createSelectorState(CATALOG_ITEMS);

@@ -20,6 +20,8 @@ export function decodeKeys(buffer) {
       if (value === "k") keys.push("up");
       else if (value === "j") keys.push("down");
       else if (value === " ") keys.push("toggle");
+      else if (value === "a") keys.push("selectAll");
+      else if (value === "c") keys.push("clear");
       else if (value === "\r" || value === "\n") keys.push("submit");
       else if (value === "q" || value === "\u0003") keys.push("cancel");
       else if (value === "\u001a") keys.push("suspend");
@@ -97,6 +99,20 @@ export function reduceSelector(state, key, { multiple }) {
       if (item?.kind === "skill") syncSourceForSkill(next, item);
     }
   }
+  if (key === "selectAll" && multiple) {
+    const hasSkills = next.items.some((item) => item?.kind === "skill");
+    if (hasSkills) {
+      next.items.forEach((item, index) => {
+        if (item.kind === "skill") next.selected.add(index);
+      });
+      next.items.forEach((item, index) => {
+        if (item.kind === "source") syncSourceSelection(next, index);
+      });
+    } else {
+      for (let index = 0; index < next.items.length; index++) next.selected.add(index);
+    }
+  }
+  if (key === "clear" && multiple) next.selected.clear();
   if (key === "cancel") return { type: "cancel", state: next, selected: [] };
   if (key === "submit") {
     const indexes = multiple ? [...next.selected].sort((a, b) => a - b) : [next.cursor];
