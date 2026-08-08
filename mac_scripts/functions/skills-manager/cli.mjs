@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import {
   initializeConfig as initializeConfigDefault,
   readConfig as readConfigDefault,
+  writeCatalog as writeCatalogDefault,
   writeConfigTransaction as writeConfigTransactionDefault,
   writeProfiles as writeProfilesDefault,
   writeProjects as writeProjectsDefault,
@@ -40,10 +41,9 @@ function requiresNpx(action, args) {
   if (["status", "install", "uninstall"].includes(action)) return true;
   if (action === "source") {
     const subcommand = args[0];
-    if (subcommand === "show" || subcommand === "edit") return true;
     return subcommand === "add" && !args.some((arg) => ["-n", "--no-skills"].includes(arg));
   }
-  return action === "skill" && args[0] === "add";
+  return false;
 }
 
 export async function runCli(argv, dependencies = {}) {
@@ -58,6 +58,7 @@ export async function runCli(argv, dependencies = {}) {
     readConfig = readConfigDefault,
     writeProfiles = writeProfilesDefault,
     writeProjects = writeProjectsDefault,
+    writeCatalog = writeCatalogDefault,
     writeConfigTransaction = writeConfigTransactionDefault,
     resolveProjectRoot = resolveProjectRootDefault,
     discoverAvailableSkills = discoverAvailableSkillsDefault,
@@ -109,7 +110,9 @@ export async function runCli(argv, dependencies = {}) {
     return 1;
   }
   try {
-    if (["profile", "source", "skill", "project"].includes(action)) {
+    if (action === "source") {
+      validateManagementCommandGrammar(action, args);
+    } else if (["profile", "skill", "project"].includes(action)) {
       validateManagementCommandGrammar(action, args);
     } else if (["status", "install", "uninstall"].includes(action)) {
       validateLifecycleCommandGrammar(action, args);
@@ -174,6 +177,7 @@ export async function runCli(argv, dependencies = {}) {
     executeUninstallPlan,
     writeProfiles,
     writeProjects,
+    writeCatalog,
     writeConfigTransaction,
     selectItems: ({ items, ...options }) => select(items, options),
     selectProfiles: (items, options) => select(items, options),
