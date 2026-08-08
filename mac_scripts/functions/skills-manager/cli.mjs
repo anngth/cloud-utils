@@ -13,9 +13,9 @@ import {
 import { runDashboard as runDashboardDefault } from "./dashboard.mjs";
 import { loadInstalledState as loadInstalledStateDefault } from "./installed-state.mjs";
 import {
-  runInstallCommand as runInstallCommandDefault,
+  runAddCommand as runAddCommandDefault,
+  runRemoveCommand as runRemoveCommandDefault,
   runStatusCommand as runStatusCommandDefault,
-  runUninstallCommand as runUninstallCommandDefault,
   validateLifecycleCommandGrammar,
 } from "./lifecycle-commands.mjs";
 import {
@@ -38,7 +38,7 @@ import {
 import { createUi } from "./ui.mjs";
 
 function requiresNpx(action, args) {
-  if (["status", "install", "uninstall"].includes(action)) return true;
+  if (["status", "add", "remove"].includes(action)) return true;
   if (action === "source") {
     const subcommand = args[0];
     return subcommand === "add" && !args.some((arg) => ["-n", "--no-skills"].includes(arg));
@@ -71,8 +71,8 @@ export async function runCli(argv, dependencies = {}) {
     runSkillCommand = runSkillCommandDefault,
     runProjectCommand = runProjectCommandDefault,
     runStatusCommand = runStatusCommandDefault,
-    runInstallCommand = runInstallCommandDefault,
-    runUninstallCommand = runUninstallCommandDefault,
+    runAddCommand = runAddCommandDefault,
+    runRemoveCommand = runRemoveCommandDefault,
     runDashboard = runDashboardDefault,
     pathExists = existsSync,
     ui = createUi({ stdout, stderr }),
@@ -96,8 +96,8 @@ export async function runCli(argv, dependencies = {}) {
     skill: runSkillCommand,
     project: runProjectCommand,
     status: runStatusCommand,
-    install: runInstallCommand,
-    uninstall: runUninstallCommand,
+    add: runAddCommand,
+    remove: runRemoveCommand,
   };
 
   if (action !== undefined && !Object.hasOwn(routes, action)) {
@@ -114,7 +114,7 @@ export async function runCli(argv, dependencies = {}) {
       validateManagementCommandGrammar(action, args);
     } else if (["profile", "skill", "project"].includes(action)) {
       validateManagementCommandGrammar(action, args);
-    } else if (["status", "install", "uninstall"].includes(action)) {
+    } else if (["status", "add", "remove"].includes(action)) {
       validateLifecycleCommandGrammar(action, args);
     }
   } catch (error) {
@@ -205,8 +205,8 @@ export async function runCli(argv, dependencies = {}) {
     runSkillCommand,
     runProjectCommand,
     runStatusCommand,
-    runInstallCommand,
-    runUninstallCommand,
+    runAddCommand,
+    runRemoveCommand,
   };
 
   if (action === undefined) return runDashboard(context);

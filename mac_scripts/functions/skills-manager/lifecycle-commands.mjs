@@ -1,35 +1,35 @@
+import { resolveSourceToken } from "./catalog.mjs";
 import {
+  catalogRequirements,
   classifyStatus,
   createInstallPlan,
   createUninstallPlan,
-  mergeProfileRequirements,
 } from "./planner.mjs";
-import { linkProjectProfiles, unlinkProjectProfiles } from "./projects.mjs";
 import { redactSource } from "./source-id.mjs";
 
 class LifecycleCommandError extends Error {}
 
-function parseLifecycleOptions(args, { install = false, uninstall = false } = {}) {
+function lifecycleUsage(action) {
+  return `Usage: skm ${action} <source|index...> [--all] [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]`;
+}
+
+function parseLifecycleOptions(args, { allowAll = false, allowPositionals = true } = {}) {
   const parsed = {
-    profileNames: [],
+    tokens: [],
     yes: false,
     force: false,
     dryRun: false,
-    keepLink: false,
+    all: false,
   };
-  const flags = new Map();
-  if (install || uninstall) {
-    flags.set("-y", "yes");
-    flags.set("--yes", "yes");
-    flags.set("-f", "force");
-    flags.set("--force", "force");
-    flags.set("-d", "dryRun");
-    flags.set("--dry-run", "dryRun");
-  }
-  if (uninstall) {
-    flags.set("-l", "keepLink");
-    flags.set("--keep-link", "keepLink");
-  }
+  const flags = new Map([
+    ["-y", "yes"],
+    ["--yes", "yes"],
+    ["-f", "force"],
+    ["--force", "force"],
+    ["-d", "dryRun"],
+    ["--dry-run", "dryRun"],
+  ]);
+  if (allowAll) flags.set("--all", "all");
 
   for (const arg of args) {
     const key = flags.get(arg);
@@ -37,62 +37,51 @@ function parseLifecycleOptions(args, { install = false, uninstall = false } = {}
       parsed[key] = true;
     } else if (arg.startsWith("-")) {
       throw new LifecycleCommandError(`Unknown option: ${arg}`);
-    } else if (!parsed.profileNames.includes(arg)) {
-      parsed.profileNames.push(arg);
+    } else if (allowPositionals && !parsed.tokens.includes(arg)) {
+      parsed.tokens.push(arg);
+    } else if (!allowPositionals) {
+      throw new LifecycleCommandError(`Unexpected argument: ${arg}`);
     }
+  }
+
+  if (parsed.all && parsed.tokens.length > 0) {
+    throw new LifecycleCommandError("Cannot combine --all with explicit source targets");
   }
   return parsed;
 }
 
 export function validateLifecycleCommandGrammar(action, args) {
-  parseLifecycleOptions(args, {
-    install: action === "install",
-    uninstall: action === "uninstall",
-  });
+  if (action === "status") {
+    parseLifecycleOptions(args, { allowPositionals: false });
+    return;
+  }
+  if (action === "add" || action === "remove") {
+    parseLifecycleOptions(args, { allowAll: true });
+  }
 }
 
-function linkedProfiles(projects, projectRoot) {
-  return projects.projects.find(({ root }) => root === projectRoot)?.profiles ?? [];
+export function resolveSourceTargets(parsed, catalog, { cwd } = {}) {
+  if (!parsed.all && parsed.tokens.length === 0) {
+    throw new LifecycleCommandError(lifecycleUsage(parsed.action ?? "add"));
+  }
+  if (parsed.all) {
+    return catalog.sources.map((entry, index) => ({ index, entry }));
+  }
+  return parsed.tokens.map((token) => resolveSourceToken(catalog, token, { cwd }));
 }
 
-function noProfilesMessage() {
-  return "No profiles are linked to this project. Run 'skm project link <profile...>' or name profiles explicitly.";
+function catalogSlice(entries) {
+  return catalogRequirements({ version: 1, sources: entries.map(({ entry }) => entry) });
 }
 
-function profileSelectorItems(document) {
-  return document.profiles.map(({ name, sources }) => ({
-    value: name,
-    label: name,
-    hint: `${sources.reduce((total, entry) => total + entry.skills.length, 0)} selected skills`,
-  }));
+function remainingCatalogSlice(catalog, targets) {
+  const selectedSources = new Set(targets.map(({ entry }) => entry.source));
+  const remaining = catalog.sources.filter((entry) => !selectedSources.has(entry.source));
+  return catalogRequirements({ version: 1, sources: remaining });
 }
 
-export async function resolveLifecycleProfiles(parsed, context, {
-  projectRoot,
-  interactiveInstall = false,
-} = {}) {
-  if (parsed.profileNames.length > 0) {
-    return { type: "submit", profileNames: parsed.profileNames, saveLinks: false };
-  }
-
-  const linked = linkedProfiles(context.config.projects, projectRoot);
-  if (linked.length > 0) {
-    return { type: "submit", profileNames: [...linked], saveLinks: false };
-  }
-
-  if (!interactiveInstall || parsed.yes || !context.stdin?.isTTY || !context.stdout?.isTTY) {
-    throw new LifecycleCommandError(noProfilesMessage());
-  }
-
-  const selection = await context.selectProfiles(profileSelectorItems(context.config.profiles));
-  if (selection.type !== "submit") return { type: "cancel" };
-  const profileNames = [...new Set(selection.selected)];
-  if (profileNames.length === 0) {
-    context.ui.warn("No profiles selected");
-    return { type: "cancel" };
-  }
-  const saveLinks = await context.confirmSaveLinks({ projectRoot, profileNames });
-  return { type: "submit", profileNames, saveLinks: Boolean(saveLinks) };
+function targetSourceLabels(targets) {
+  return targets.map(({ entry }) => redactSource(entry.source));
 }
 
 function reportError(context, error) {
@@ -108,8 +97,8 @@ function statusOk(status) {
 }
 
 function desiredConflictMessage(conflicts) {
-  const details = conflicts.map(({ skill, sources, profiles }) => (
-    `${skill} (${sources.map(redactSource).join(" vs ")}; profiles: ${profiles.join(", ")})`
+  const details = conflicts.map(({ skill, sources }) => (
+    `${skill} (${sources.map(redactSource).join(" vs ")})`
   ));
   return `Conflicting desired skill sources: ${details.join("; ")}`;
 }
@@ -120,107 +109,11 @@ function selectableInstallItems(plan) {
     key: item.key,
     value: item.key,
     label: item.skill,
-    hint: `${redactSource(item.source)} — ${item.profiles.join(", ")}`,
+    hint: redactSource(item.source),
   }));
 }
 
-export async function runStatusCommand(args, context) {
-  try {
-    const parsed = parseLifecycleOptions(args);
-    const projectRoot = context.resolveProjectRoot({ cwd: context.cwd });
-    const resolved = await resolveLifecycleProfiles(parsed, context, { projectRoot });
-    if (resolved.type !== "submit") return 0;
-    const merged = mergeProfileRequirements(context.config.profiles, resolved.profileNames);
-    const installed = await context.loadInstalledState({ projectRoot });
-    const status = classifyStatus(merged, installed);
-    context.ui.status({ projectRoot, profileNames: resolved.profileNames, status });
-    return statusOk(status) ? 0 : 1;
-  } catch (error) {
-    return reportError(context, error);
-  }
-}
-
-export async function runInstallCommand(args, context, { onOutcome = () => {} } = {}) {
-  try {
-    const parsed = parseLifecycleOptions(args, { install: true });
-    const projectRoot = context.resolveProjectRoot({ cwd: context.cwd });
-    const resolved = await resolveLifecycleProfiles(parsed, context, {
-      projectRoot,
-      interactiveInstall: true,
-    });
-    if (resolved.type !== "submit") {
-      onOutcome({ type: "cancelled", stage: "profile-selection" });
-      return 0;
-    }
-
-    const merged = mergeProfileRequirements(context.config.profiles, resolved.profileNames);
-    if (merged.requirements.length === 0) {
-      throw new LifecycleCommandError("Selected profiles contain no selected skills to install");
-    }
-    if (merged.desiredConflicts.length > 0) {
-      throw new LifecycleCommandError(desiredConflictMessage(merged.desiredConflicts));
-    }
-
-    const installed = await context.loadInstalledState({ projectRoot });
-    const status = classifyStatus(merged, installed);
-    let plan = createInstallPlan(status, { force: parsed.force });
-
-    if (!parsed.yes) {
-      const items = selectableInstallItems(plan);
-      if (items.length > 0) {
-        const selection = await context.selectSkills(items);
-        if (selection.type !== "submit") {
-          onOutcome({ type: "cancelled", stage: "skill-selection" });
-          return 0;
-        }
-        plan = createInstallPlan(status, {
-          force: parsed.force,
-          selectedKeys: new Set(selection.selected),
-        });
-      }
-    }
-
-    context.ui.installPlan({
-      projectRoot,
-      profileNames: resolved.profileNames,
-      plan,
-      dryRun: parsed.dryRun,
-    });
-    if (parsed.dryRun) {
-      const ok = plan.conflicts.length === 0;
-      onOutcome({ type: "dry-run", ok });
-      return ok ? 0 : 1;
-    }
-
-    if (!parsed.yes) {
-      const confirmed = await context.confirm("Apply this install plan?");
-      if (!confirmed) {
-        onOutcome({ type: "cancelled", stage: "confirmation" });
-        return 0;
-      }
-    }
-
-    const result = await context.executeInstallPlan(plan, { yes: parsed.yes, projectRoot });
-    if (result.ok && resolved.saveLinks) {
-      const profileNames = new Set(context.config.profiles.profiles.map(({ name }) => name));
-      const projects = linkProjectProfiles(
-        context.config.projects,
-        projectRoot,
-        resolved.profileNames,
-        profileNames,
-      );
-      context.writeProjects(context.paths, context.config.profiles, projects);
-    }
-    context.ui.executionSummary(result);
-    onOutcome({ type: "completed", ok: result.ok });
-    return result.ok ? 0 : 1;
-  } catch (error) {
-    onOutcome({ type: "error" });
-    return reportError(context, error);
-  }
-}
-
-function retainedByRemainingProfile(plan, remaining) {
+function retainedByRemaining(plan, remaining) {
   const byKey = new Map(remaining.requirements.map((item) => [item.key, item]));
   return {
     ...plan,
@@ -241,23 +134,94 @@ function forcedUninstallNames(plan, installedState) {
     .map((item) => item.skill);
 }
 
-export async function runUninstallCommand(args, context) {
+export async function runStatusCommand(args, context) {
   try {
-    const parsed = parseLifecycleOptions(args, { uninstall: true });
+    parseLifecycleOptions(args, { allowPositionals: false });
     const projectRoot = context.resolveProjectRoot({ cwd: context.cwd });
-    const resolved = await resolveLifecycleProfiles(parsed, context, { projectRoot });
-    if (resolved.type !== "submit") return 0;
+    const merged = catalogRequirements(context.config.catalog);
+    const installed = await context.loadInstalledState({ projectRoot });
+    const status = classifyStatus(merged, installed);
+    context.ui.status({ projectRoot, profileNames: [], status });
+    return statusOk(status) ? 0 : 1;
+  } catch (error) {
+    return reportError(context, error);
+  }
+}
 
-    const currentLinks = linkedProfiles(context.config.projects, projectRoot);
-    const selectedNames = resolved.profileNames;
-    const selectedLinks = currentLinks.filter((name) => selectedNames.includes(name));
-    const remainingNames = currentLinks.filter((name) => !selectedLinks.includes(name));
-    const selected = mergeProfileRequirements(context.config.profiles, selectedNames);
-    const remaining = mergeProfileRequirements(context.config.profiles, remainingNames);
-    const desiredConflicts = mergeProfileRequirements(
-      context.config.profiles,
-      [...new Set([...selectedNames, ...remainingNames])],
-    ).desiredConflicts;
+export async function runAddCommand(args, context, { onOutcome = () => {} } = {}) {
+  try {
+    const parsed = parseLifecycleOptions(args, { allowAll: true });
+    parsed.action = "add";
+    const projectRoot = context.resolveProjectRoot({ cwd: context.cwd });
+    const catalog = context.config.catalog;
+    const targets = resolveSourceTargets(parsed, catalog, { cwd: context.cwd });
+    const selected = catalogSlice(targets);
+    if (selected.requirements.length === 0) {
+      throw new LifecycleCommandError("Selected sources contain no skills to install");
+    }
+    if (selected.desiredConflicts.length > 0) {
+      throw new LifecycleCommandError(desiredConflictMessage(selected.desiredConflicts));
+    }
+
+    const installed = await context.loadInstalledState({ projectRoot });
+    const status = classifyStatus(selected, installed);
+    let plan = createInstallPlan(status, { force: parsed.force });
+
+    if (!parsed.yes) {
+      const items = selectableInstallItems(plan);
+      if (items.length > 0) {
+        const selection = await context.selectSkills(items);
+        if (selection.type !== "submit") {
+          onOutcome({ type: "cancelled", stage: "skill-selection" });
+          return 0;
+        }
+        plan = createInstallPlan(status, {
+          force: parsed.force,
+          selectedKeys: new Set(selection.selected),
+        });
+      }
+    }
+
+    context.ui.installPlan({
+      projectRoot,
+      profileNames: targetSourceLabels(targets),
+      plan,
+      dryRun: parsed.dryRun,
+    });
+    if (parsed.dryRun) {
+      const ok = plan.conflicts.length === 0;
+      onOutcome({ type: "dry-run", ok });
+      return ok ? 0 : 1;
+    }
+
+    if (!parsed.yes) {
+      const confirmed = await context.confirm("Apply this install plan?");
+      if (!confirmed) {
+        onOutcome({ type: "cancelled", stage: "confirmation" });
+        return 0;
+      }
+    }
+
+    const result = await context.executeInstallPlan(plan, { yes: parsed.yes, projectRoot });
+    context.ui.executionSummary(result);
+    onOutcome({ type: "completed", ok: result.ok });
+    return result.ok ? 0 : 1;
+  } catch (error) {
+    onOutcome({ type: "error" });
+    return reportError(context, error);
+  }
+}
+
+export async function runRemoveCommand(args, context) {
+  try {
+    const parsed = parseLifecycleOptions(args, { allowAll: true });
+    parsed.action = "remove";
+    const projectRoot = context.resolveProjectRoot({ cwd: context.cwd });
+    const catalog = context.config.catalog;
+    const targets = resolveSourceTargets(parsed, catalog, { cwd: context.cwd });
+    const selected = catalogSlice(targets);
+    const remaining = remainingCatalogSlice(catalog, targets);
+    const desiredConflicts = catalogRequirements(catalog).desiredConflicts;
     if (desiredConflicts.length > 0) {
       throw new LifecycleCommandError(desiredConflictMessage(desiredConflicts));
     }
@@ -268,9 +232,9 @@ export async function runUninstallCommand(args, context) {
       remaining,
       installedState,
       force: parsed.force,
-      linkedSelected: selectedLinks,
+      linkedSelected: [],
     });
-    plan = retainedByRemainingProfile(plan, remaining);
+    plan = retainedByRemaining(plan, remaining);
 
     const forcedNames = parsed.force ? forcedUninstallNames(plan, installedState) : [];
     if (forcedNames.length > 0) {
@@ -278,11 +242,10 @@ export async function runUninstallCommand(args, context) {
     }
     context.ui.uninstallPlan({
       projectRoot,
-      profileNames: selectedNames,
+      profileNames: targetSourceLabels(targets),
       plan,
       dryRun: parsed.dryRun,
       force: parsed.force,
-      keepLink: parsed.keepLink,
     });
     if (parsed.dryRun) return plan.conflicts.length === 0 ? 0 : 1;
 
@@ -292,14 +255,6 @@ export async function runUninstallCommand(args, context) {
     }
 
     const result = await context.executeUninstallPlan(plan, { yes: parsed.yes, projectRoot });
-    if (result.ok && !parsed.keepLink && plan.unlinkProfiles.length > 0) {
-      const projects = unlinkProjectProfiles(
-        context.config.projects,
-        projectRoot,
-        plan.unlinkProfiles,
-      );
-      context.writeProjects(context.paths, context.config.profiles, projects);
-    }
     context.ui.executionSummary(result, { operation: "uninstall" });
     return result.ok ? 0 : 1;
   } catch (error) {
