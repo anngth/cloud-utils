@@ -1,4 +1,5 @@
 import { redactSource } from "./source-id.mjs";
+import { requirementKey } from "./planner.mjs";
 
 const C = {
   cyan: "\u001b[36m",
@@ -19,6 +20,86 @@ const fg = (color, text) => `${color}${text}${C.fgReset}`;
 const plural = (count, singular, pluralForm = `${singular}s`) => (
   `${count} ${count === 1 ? singular : pluralForm}`
 );
+
+function isCorrectlyInstalled(skill, source, installedState) {
+  const actual = installedState.get(skill);
+  return Boolean(
+    actual
+    && actual.source != null
+    && actual.provenance !== "untracked"
+    && actual.source === source,
+  );
+}
+
+function isCatalogSourceSelected(state, sourceItem, sourceIndex) {
+  const childValues = new Set(sourceItem.childValues ?? []);
+  if (childValues.size === 0) return false;
+  const childIndices = state.items.flatMap((item, index) => (
+    item.kind === "skill" && childValues.has(item.value) ? [index] : []
+  ));
+  return childIndices.length > 0 && childIndices.every((index) => state.selected.has(index));
+}
+
+export function buildCatalogSelectorItems(catalog, { installedState }) {
+  const items = [];
+  const initial = [];
+
+  for (const [sourceIndex, entry] of (catalog.sources ?? []).entries()) {
+    const childValues = (entry.skills ?? []).map((skill) => requirementKey(entry.source, skill));
+    items.push({
+      kind: "source",
+      value: entry.source,
+      label: redactSource(entry.source),
+      sourceIndex: sourceIndex + 1,
+      childValues,
+    });
+    for (const skill of entry.skills ?? []) {
+      const value = requirementKey(entry.source, skill);
+      if (isCorrectlyInstalled(skill, entry.source, installedState)) initial.push(value);
+      items.push({
+        kind: "skill",
+        value,
+        label: skill,
+        sourceIndex: sourceIndex + 1,
+      });
+    }
+  }
+
+  return { items, initial };
+}
+
+export function renderCatalogSelector(stdout, heading, state, { cancelled = false } = {}) {
+  const out = (line = "") => stdout.write(`${line}\n`);
+  const pipe = fg(C.cyan, "│");
+  stdout.write("\u001b[2J\u001b[H");
+  out();
+  out(`   ${C.bgCyan}${C.black} SKILLS MANAGER ${C.fgReset}${C.bgReset}`);
+  out(pipe);
+  out(`${fg(C.green, "◇")}  ${String(heading)}`);
+  out(pipe);
+  out(`${fg(C.cyan, "◆")}  Select items ${fg(C.white, "(space to toggle, enter to continue, q to quit)")}`);
+  out(pipe);
+  state.items.forEach((entry, index) => {
+    const previous = state.items[index - 1];
+    if (index > 0 && entry.kind === "skill" && previous?.kind === "skill") out(pipe);
+    const selected = entry.kind === "source"
+      ? isCatalogSourceSelected(state, entry, index)
+      : state.selected.has(index);
+    const box = selected ? "■" : "□";
+    const boxColor = selected ? C.brightGreen : C.gray;
+    const labelColor = entry.kind === "skill"
+      ? C.brightGreen
+      : index === state.cursor ? C.white : C.gray;
+    if (entry.kind === "source") {
+      const number = String(entry.sourceIndex ?? index + 1);
+      out(`${pipe}  ${number}  ${boxColor}${box}${C.reset}  ${fg(labelColor, entry.label)}`);
+      return;
+    }
+    out(`${pipe}    ${boxColor}${box}${C.reset} ${fg(labelColor, entry.label)}${entry.hint ? ` ${fg(C.gray, entry.hint)}` : ""}`);
+  });
+  if (cancelled) out(`${fg(C.cyan, "└")}  ${fg(C.red, "Selection cancelled")}`);
+  else out(fg(C.cyan, "└"));
+}
 
 export function createUi({ stdout = process.stdout, stderr = process.stderr } = {}) {
   const out = (line = "") => stdout.write(`${line}\n`);
@@ -432,6 +513,14 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     renderSelector(heading, state, { mode, cancelled: true });
   }
 
+  function catalogSelector(heading, state) {
+    renderCatalogSelector(stdout, heading, state);
+  }
+
+  function cancelledCatalogSelector(heading, state) {
+    renderCatalogSelector(stdout, heading, state, { cancelled: true });
+  }
+
   function renderSelector(heading, state, { mode, cancelled }) {
     stdout.write("\u001b[2J\u001b[H");
     title();
@@ -478,6 +567,8 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     confirm,
     selector,
     cancelledSelector,
+    catalogSelector,
+    cancelledCatalogSelector,
     error(message) { err(fg(C.red, `❌ ${message}`)); },
     warn(message) { err(fg(C.yellow, `⚠️  ${message}`)); },
     info(message) { out(message); },

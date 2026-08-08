@@ -41,6 +41,37 @@ export function createKeyDecoder() {
   };
 }
 
+function childIndicesForSource(items, sourceItem) {
+  const values = new Set(sourceItem.childValues ?? []);
+  return items.flatMap((item, index) => (
+    item.kind === "skill" && values.has(item.value) ? [index] : []
+  ));
+}
+
+function isSourceGroupSelected(state, sourceIndex) {
+  const sourceItem = state.items[sourceIndex];
+  if (sourceItem?.kind !== "source") return false;
+  const childIndices = childIndicesForSource(state.items, sourceItem);
+  if (childIndices.length === 0) return false;
+  return childIndices.every((index) => state.selected.has(index));
+}
+
+function syncSourceSelection(state, sourceIndex) {
+  const sourceItem = state.items[sourceIndex];
+  if (sourceItem?.kind !== "source") return;
+  if (isSourceGroupSelected(state, sourceIndex)) state.selected.add(sourceIndex);
+  else state.selected.delete(sourceIndex);
+}
+
+function syncSourceForSkill(state, skillItem) {
+  const sourceIndex = state.items.findIndex((item) => (
+    item.kind === "source"
+    && item.sourceIndex === skillItem.sourceIndex
+    && item.childValues?.includes(skillItem.value)
+  ));
+  if (sourceIndex >= 0) syncSourceSelection(state, sourceIndex);
+}
+
 export function reduceSelector(state, key, { multiple }) {
   const next = {
     items: state.items,
@@ -50,8 +81,21 @@ export function reduceSelector(state, key, { multiple }) {
   if (key === "up") next.cursor = Math.max(0, next.cursor - 1);
   if (key === "down") next.cursor = Math.min(next.items.length - 1, next.cursor + 1);
   if (key === "toggle" && multiple) {
-    if (next.selected.has(next.cursor)) next.selected.delete(next.cursor);
-    else next.selected.add(next.cursor);
+    const item = next.items[next.cursor];
+    if (item?.kind === "source" && item.childValues?.length) {
+      const childIndices = childIndicesForSource(next.items, item);
+      if (isSourceGroupSelected(next, next.cursor)) {
+        next.selected.delete(next.cursor);
+        for (const index of childIndices) next.selected.delete(index);
+      } else {
+        next.selected.add(next.cursor);
+        for (const index of childIndices) next.selected.add(index);
+      }
+    } else {
+      if (next.selected.has(next.cursor)) next.selected.delete(next.cursor);
+      else next.selected.add(next.cursor);
+      if (item?.kind === "skill") syncSourceForSkill(next, item);
+    }
   }
   if (key === "cancel") return { type: "cancel", state: next, selected: [] };
   if (key === "submit") {

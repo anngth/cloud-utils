@@ -371,6 +371,47 @@ test("SIGCONT transition failures clean up and reject", async () => {
   }
 });
 
+const CATALOG_ITEMS = [
+  {
+    kind: "source",
+    value: "a/repo",
+    label: "a/repo",
+    sourceIndex: 1,
+    childValues: ['["a/repo","one"]', '["a/repo","two"]'],
+  },
+  { kind: "skill", value: '["a/repo","one"]', label: "one", sourceIndex: 1 },
+  { kind: "skill", value: '["a/repo","two"]', label: "two", sourceIndex: 1 },
+];
+
+test("toggle source selects and clears all child skills", () => {
+  let state = createSelectorState(CATALOG_ITEMS);
+  state = reduceSelector(state, "toggle", { multiple: true }).state;
+  assert.deepEqual([...state.selected].sort(), [0, 1, 2]);
+  state = reduceSelector(state, "toggle", { multiple: true }).state;
+  assert.deepEqual([...state.selected], []);
+});
+
+test("toggle source selects remaining children when some are already checked", () => {
+  let state = createSelectorState(CATALOG_ITEMS);
+  state.selected = new Set([1]);
+  state = reduceSelector(state, "toggle", { multiple: true }).state;
+  assert.deepEqual([...state.selected].sort(), [0, 1, 2]);
+});
+
+test("toggling the last unchecked child selects the parent source row", () => {
+  let state = createSelectorState(CATALOG_ITEMS);
+  state.selected = new Set([1]);
+  state = reduceSelector({ ...state, cursor: 2 }, "toggle", { multiple: true }).state;
+  assert.deepEqual([...state.selected].sort(), [0, 1, 2]);
+});
+
+test("unchecking one child clears the parent source row", () => {
+  let state = createSelectorState(CATALOG_ITEMS);
+  state.selected = new Set([0, 1, 2]);
+  state = reduceSelector({ ...state, cursor: 2 }, "toggle", { multiple: true }).state;
+  assert.deepEqual([...state.selected].sort(), [1]);
+});
+
 test("SIGTSTP kill failures clean up and reject", async () => {
   const input = new FakeInput();
   const processRef = new EventEmitter();

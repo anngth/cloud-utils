@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createUi } from "../ui.mjs";
+import { buildCatalogSelectorItems, createUi } from "../ui.mjs";
+import { requirementKey } from "../planner.mjs";
 
 function memoryStream() {
   let value = "";
@@ -565,6 +566,90 @@ test("selector keeps ANSI output and renders selected items", () => {
   assert.match(stdout.read(), /\u001b\[46m/);
   assert.match(stdout.read(), /■.*Frontend/);
   assert.match(stdout.read(), /□.*Review/);
+});
+
+const actual = (skill, source) => ({
+  name: skill,
+  path: `/repo/.agents/skills/${skill}`,
+  agents: ["Codex"],
+  source,
+  provenance: source ? "tracked" : "untracked",
+});
+
+function catalogSelectorState(catalog, installedState, selectedValues = null) {
+  const { items, initial } = buildCatalogSelectorItems(catalog, { installedState });
+  const values = selectedValues ?? initial;
+  const selected = new Set(items.flatMap((item, index) => (
+    values.includes(item.value) ? [index] : []
+  )));
+  for (const [index, item] of items.entries()) {
+    if (item.kind !== "source" || item.childValues.length === 0) continue;
+    const allChildren = item.childValues.every((value) => values.includes(value));
+    if (allChildren) selected.add(index);
+  }
+  return { items, selected };
+}
+
+test("buildCatalogSelectorItems marks only correctly installed skills in initial", () => {
+  const catalog = {
+    version: 1,
+    sources: [{ source: "a/repo", skills: ["one", "two"] }],
+  };
+  const installedState = new Map([
+    ["one", actual("one", "a/repo")],
+    ["two", actual("two", "b/repo")],
+  ]);
+  const { items, initial } = buildCatalogSelectorItems(catalog, { installedState });
+  assert.equal(items[0].kind, "source");
+  assert.deepEqual(items[0].childValues, [
+    requirementKey("a/repo", "one"),
+    requirementKey("a/repo", "two"),
+  ]);
+  assert.deepEqual(initial, [requirementKey("a/repo", "one")]);
+});
+
+test("catalog selector shows source unchecked for partial install and checked for full install", () => {
+  const catalog = {
+    version: 1,
+    sources: [{ source: "a/repo", skills: ["one", "two"] }],
+  };
+  const partial = makeUi();
+  partial.ui.catalogSelector("Choose skills", catalogSelectorState(
+    catalog,
+    new Map([["one", actual("one", "a/repo")]]),
+  ));
+  const partialOutput = stripAnsi(partial.stdout.read());
+  assert.match(partialOutput, /1\s+□\s+a\/repo/);
+  assert.match(partialOutput, /■ one/);
+  assert.match(partialOutput, /□ two/);
+
+  const full = makeUi();
+  full.ui.catalogSelector("Choose skills", catalogSelectorState(
+    catalog,
+    new Map([
+      ["one", actual("one", "a/repo")],
+      ["two", actual("two", "a/repo")],
+    ]),
+  ));
+  const fullOutput = stripAnsi(full.stdout.read());
+  assert.match(fullOutput, /1\s+■\s+a\/repo/);
+  assert.match(fullOutput, /■ one/);
+  assert.match(fullOutput, /■ two/);
+});
+
+test("catalog selector numbers sources and indents skills like gt backup", () => {
+  const catalog = {
+    version: 1,
+    sources: [
+      { source: "a/repo", skills: ["alpha"] },
+      { source: "b/repo", skills: ["beta"] },
+    ],
+  };
+  const { stdout, ui } = makeUi();
+  ui.catalogSelector("Choose skills", catalogSelectorState(catalog, new Map()));
+  const rendered = stripAnsi(stdout.read());
+  assert.match(rendered, /1\s+□\s+a\/repo\n│\s+□ alpha/);
+  assert.match(rendered, /2\s+□\s+b\/repo\n│\s+□ beta/);
 });
 
 test("skill selectors highlight names and separate rows while profile selectors stay compact", () => {
