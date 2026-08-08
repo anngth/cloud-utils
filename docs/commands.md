@@ -34,8 +34,10 @@ gt push
 gt backup add git@github.com:org/my-app.git
 gt backup add git@github.com:org/a.git git@github.com:org/b.git
 gt backup                          # interactive multi-select
+gt backup --dry-run                # preview without mirroring or config writes
 gt backup -f                       # force re-mirror (skip fingerprint check)
 gt backup --all                    # backup every listed repo
+gt backup --all --dry-run          # preview every listed repo
 gt backup --all --force            # force all listed repos
 gt backup remove 1
 gt backup remove git@github.com:org/my-app.git
@@ -43,8 +45,10 @@ gt backup remove git@github.com:org/my-app.git
 
 - **backup** — manages a list of source SSH URLs and mirrors selected repos to private `anngth-dev/backups/<owner>-<repo>` on GitLab.
   - `gt backup` — interactive multi-select (TTY required); space toggles, a selects all, c clears, enter starts, q cancels; pre-checks repos from the last successful submit.
-  - `gt backup -f` / `gt backup --force` — skip the equal-fingerprint short-circuit; always mirror live repos (still creates missing / recreates inactive).
+  - `gt backup --dry-run` — same as interactive, but preview only: no clone/push/create, no timestamp or `selectedLast` writes; summary shows `→ would mirror` / `→ would skip (unchanged)`.
+  - `gt backup -f` / `gt backup --force` — skip the equal-fingerprint short-circuit; always mirror live repos (still creates missing / recreates inactive). Cannot combine with `--dry-run`.
   - `gt backup --all` — backup every listed repo (no TTY required); does not read or update `selectedLast`.
+  - `gt backup --all --dry-run` — preview every listed repo without mirroring or timestamp writes.
   - `gt backup --all -f` / `--force` — same as `--all`, but force every live repo to mirror.
   - `gt backup add <ssh-url> [<ssh-url> ...]` / `gt backup remove <index|ssh-url>` — maintain the list (`index` is 1-based). Multi-add processes URLs in order, continues after per-URL failures (invalid or duplicate), writes once if any succeed; exit `0` only when every URL succeeds.
 - **Config:** `$CLOUD_UTILS_CONFIG_DIR/gt/backups.json` (same config root as `skm`; default under iCloud Backups when unset).
