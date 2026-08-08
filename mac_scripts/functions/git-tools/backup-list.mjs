@@ -59,7 +59,11 @@ export function addBackupRepo(paths, sshUrl, { fs } = {}) {
     };
   }
 
-  document.repos.push({ url: canonicalized.sshUrl, lastBackupAt: null });
+  document.repos.push({
+    url: canonicalized.sshUrl,
+    lastBackupAt: null,
+    lastCheckedAt: null,
+  });
 
   const written = writeBackupsDocument(paths.backupsFile, document, writeOpts);
   if (!written.ok) {
@@ -189,6 +193,61 @@ export function recordLastBackupAt(paths, sshUrl, { now = new Date(), fs } = {})
   document.repos[index] = {
     ...document.repos[index],
     lastBackupAt: now.toISOString(),
+    lastCheckedAt: now.toISOString(),
+  };
+
+  const written = writeBackupsDocument(paths.backupsFile, document, writeOpts);
+  if (!written.ok) {
+    return written;
+  }
+
+  return { ok: true, document };
+}
+
+/**
+ * @param {{ backupsFile: string }} paths
+ * @param {string} sshUrl
+ * @param {{ now?: Date, fs?: object }} [options]
+ * @returns {{ ok: true, document: object } | { ok: false, error: string }}
+ */
+export function recordLastCheckedAt(paths, sshUrl, { now = new Date(), fs } = {}) {
+  const canonicalized = canonicalizeSshGitUrl(sshUrl);
+  if (!canonicalized.ok) {
+    return canonicalized;
+  }
+
+  const loadOpts = fs ? { fs } : {};
+  const writeOpts = fs ? { fs } : {};
+  const load = loadBackupsDocument(paths.backupsFile, loadOpts);
+
+  if (!load.ok) {
+    if (load.missing) {
+      return {
+        ok: false,
+        error: `No backups list found. ${ADD_HINT}`,
+      };
+    }
+    return { ok: false, error: load.error };
+  }
+
+  const document = {
+    version: load.document.version,
+    repos: [...load.document.repos],
+  };
+
+  const index = document.repos.findIndex(
+    (repo) => canonicalKey(repo.url) === canonicalized.canonical,
+  );
+  if (index === -1) {
+    return {
+      ok: false,
+      error: `Repo not found in backups list: ${sshUrl}`,
+    };
+  }
+
+  document.repos[index] = {
+    ...document.repos[index],
+    lastCheckedAt: now.toISOString(),
   };
 
   const written = writeBackupsDocument(paths.backupsFile, document, writeOpts);
