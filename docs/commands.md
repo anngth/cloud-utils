@@ -43,6 +43,7 @@ gt backup stale                    # interactive select among stale repos (defau
 gt backup stale --all              # backup every stale repo (no TTY)
 gt backup stale --days 14          # custom staleness threshold
 gt backup stale --all --dry-run    # preview stale repos only
+gt backup stale --all --force      # force every stale repo
 gt backup remove 1
 gt backup remove git@github.com:org/my-app.git
 ```
