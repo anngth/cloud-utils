@@ -67,7 +67,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     item("fetch [--sync-upstream]");
     item("backup [-f|--force]       Interactive select; force re-mirror");
     item("backup --all [-f|--force]  Backup every repo in the list");
-    item("backup add <ssh-url>  Add SSH URL to managed list");
+    item("backup add <ssh-url> [<ssh-url> ...]  Add SSH URL(s) to managed list");
     item("backup remove <index|ssh-url>  Remove by 1-based index or URL");
     listEnd("Run 'gt --help' for this message.");
   }
