@@ -45,8 +45,8 @@ function cliHarness({ stdinIsTTY = true, stdoutIsTTY = true, hasNpx = true } = {
       runStatusCommand: handler("status"),
       runInstallCommand: handler("install"),
       runUninstallCommand: handler("uninstall"),
-      runDashboard: async (context) => {
-        calls.push(["dashboard", [], context]);
+      runInteractive: async (context) => {
+        calls.push(["interactive", [], context]);
         return 0;
       },
       ui: {
@@ -122,15 +122,18 @@ test("help aliases render without bootstrapping or checking npx", async () => {
   }
 });
 
-test("no arguments require a TTY and dispatch the dashboard", async () => {
+test("no arguments require a TTY and dispatch interactive mode", async () => {
   const interactive = cliHarness();
   assert.equal(await runCli([], interactive.dependencies), 0);
-  assert.deepEqual(interactive.calls.map(([name]) => name), ["dashboard"]);
+  assert.deepEqual(interactive.calls.map(([name]) => name), ["interactive"]);
 
   for (const options of [{ stdinIsTTY: false }, { stdoutIsTTY: false }]) {
     const nonInteractive = cliHarness(options);
     assert.equal(await runCli([], nonInteractive.dependencies), 1);
     assert.match(nonInteractive.stderr(), /interactive terminal/i);
+    assert.match(nonInteractive.stderr(), /skm add/);
+    assert.match(nonInteractive.stderr(), /skm remove/);
+    assert.match(nonInteractive.stderr(), /--all/);
     assert.deepEqual(nonInteractive.calls, []);
   }
 });

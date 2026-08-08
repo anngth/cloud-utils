@@ -110,7 +110,7 @@ expect {
   timeout { fail "baseline:timeout" }
   eof { fail "baseline:eof" }
 }
-expect_exact "Actions" "initial-selector"
+expect_exact "Select items" "initial-selector"
 
 send -raw -- "\032"
 expect {
@@ -139,7 +139,7 @@ expect_exact "__SKM_PROMPT__ " "stopped-state-prompt"
 
 send -- {fg; skm_status=$?; print -r -- "__SKM_"STATUS__:$skm_status}
 send -- "\r"
-expect_exact "Actions" "resumed-selector"
+expect_exact "Select items" "resumed-selector"
 puts "__SKM_RESUMED_SELECTOR__"
 
 # A bare q reaches the CLI without Enter only after raw mode is restored.
@@ -150,7 +150,7 @@ expect {
   timeout { fail "status:timeout" }
   eof { fail "status:eof" }
 }
-if {$status ne "0"} { fail "status:$status" }
+if {$status ne "1"} { fail "status:$status" }
 expect_exact "__SKM_PROMPT__ " "final-prompt"
 
 send -- {stty -pendin; final=$(stty -g); print -r -- "__SKM_"FINAL__:$final}
@@ -217,6 +217,10 @@ if (JSON.stringify(args) === JSON.stringify(["skills", "list", "--json"])) {
 }
 `;
 
+const TEST_CATALOG = {
+  version: 1,
+  sources: [{ source: "a/one", skills: ["frontend-design"] }],
+};
 const TEST_PROFILES = {
   version: 1,
   profiles: [{
@@ -413,7 +417,7 @@ async function finishAndAssertRestored(session, before) {
 }
 
 test("foreground shell Ctrl+Z, fg, and q preserve terminal job control", { skip: !hasMacOsPtyTools }, (t) => {
-  const sandbox = makeSandbox(t, { profiles: TEST_PROFILES, projects: TEST_PROJECTS });
+  const sandbox = makeSandbox(t, { catalog: TEST_CATALOG, profiles: TEST_PROFILES, projects: TEST_PROJECTS });
   const expectScript = join(sandbox.root, "foreground-job.exp");
   writeFileSync(expectScript, FOREGROUND_JOB_EXPECT_SOURCE, "utf8");
   const result = spawnSync(EXPECT, [expectScript], {
@@ -436,28 +440,28 @@ test("foreground shell Ctrl+Z, fg, and q preserve terminal job control", { skip:
   assert.match(result.stdout, /__SKM_STOPPED_DETAIL_BEGIN__[\s\S]*\bicanon\b[\s\S]*__SKM_STOPPED_DETAIL_END__/);
   assert.match(result.stdout, /__SKM_RESUMED_SELECTOR__/);
   assert.match(result.stdout, /__SKM_RESUMED_RAW_Q__/);
-  assert.match(result.stdout, /__SKM_STATUS__:0/);
+  assert.match(result.stdout, /__SKM_STATUS__:1/);
   assert.match(result.stdout, /__SKM_FINAL__:[^\r\n]+/);
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /unsettled top-level await/i);
 });
 
-test("q cancels dashboard and restores terminal state", { skip: !hasMacOsPtyTools }, async (t) => {
-  const sandbox = makeSandbox(t, { profiles: TEST_PROFILES, projects: TEST_PROJECTS });
-  const { session, before } = await readySession(t, [], sandbox, "Actions");
+test("q cancels interactive selector and restores terminal state", { skip: !hasMacOsPtyTools }, async (t) => {
+  const sandbox = makeSandbox(t, { catalog: TEST_CATALOG, profiles: TEST_PROFILES, projects: TEST_PROJECTS });
+  const { session, before } = await readySession(t, [], sandbox, "Select items");
   session.input("q");
   const result = await finishAndAssertRestored(session, before);
-  assert.deepEqual(result.childExit, { status: 0, signal: null });
-  assert.equal(result.status, 0);
-  assert.match(result.stdout, /Project:/);
+  assert.deepEqual(result.childExit, { status: 1, signal: null });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /Selection cancelled/);
 });
 
-test("raw Ctrl+C cancels a profile selector and restores terminal state", { skip: !hasMacOsPtyTools }, async (t) => {
-  const sandbox = makeSandbox(t, { profiles: TEST_PROFILES, projects: TEST_PROJECTS });
+test("raw Ctrl+C cancels a skill selector and restores terminal state", { skip: !hasMacOsPtyTools }, async (t) => {
+  const sandbox = makeSandbox(t, { catalog: TEST_CATALOG, profiles: TEST_PROFILES, projects: TEST_PROJECTS });
   const { session, before } = await readySession(
     t,
-    ["source", "add", "b/two", "--no-skills"],
+    ["add", "1"],
     sandbox,
-    "Select a profile",
+    "Select items",
   );
   session.input("\u0003");
   const result = await finishAndAssertRestored(session, before);
@@ -467,9 +471,9 @@ test("raw Ctrl+C cancels a profile selector and restores terminal state", { skip
 });
 
 test("Enter restores terminal input before the child inherits stdio", { skip: !hasMacOsPtyTools }, async (t) => {
-  const sandbox = makeSandbox(t, { profiles: TEST_PROFILES, projects: TEST_PROJECTS });
+  const sandbox = makeSandbox(t, { catalog: TEST_CATALOG, profiles: TEST_PROFILES, projects: TEST_PROJECTS });
   const heldNpx = installHeldNpx(sandbox);
-  const { session, before } = await readySession(t, ["install", "frontend"], sandbox, "Select items");
+  const { session, before } = await readySession(t, ["add", "1"], sandbox, "Select items");
   const beforeEnter = session.stdout.length;
   try {
     session.input(" \r");
@@ -501,8 +505,8 @@ test("Enter restores terminal input before the child inherits stdio", { skip: !h
 
 for (const signal of ["SIGTERM", "SIGHUP"]) {
   test(`${signal} restores terminal state before signal termination`, { skip: !hasMacOsPtyTools }, async (t) => {
-    const sandbox = makeSandbox(t, { profiles: TEST_PROFILES, projects: TEST_PROJECTS });
-    const { session, before } = await readySession(t, [], sandbox, "Actions");
+    const sandbox = makeSandbox(t, { catalog: TEST_CATALOG, profiles: TEST_PROFILES, projects: TEST_PROJECTS });
+    const { session, before } = await readySession(t, [], sandbox, "Select items");
     session.signalCli(signal);
     const result = await finishAndAssertRestored(session, before);
     assert.deepEqual(result.childExit, { status: null, signal });

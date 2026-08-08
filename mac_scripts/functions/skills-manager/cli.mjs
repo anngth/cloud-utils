@@ -10,7 +10,7 @@ import {
   writeProfiles as writeProfilesDefault,
   writeProjects as writeProjectsDefault,
 } from "./config.mjs";
-import { runDashboard as runDashboardDefault } from "./dashboard.mjs";
+import { runInteractive as runInteractiveDefault } from "./interactive.mjs";
 import { loadInstalledState as loadInstalledStateDefault } from "./installed-state.mjs";
 import {
   runAddCommand as runAddCommandDefault,
@@ -73,7 +73,7 @@ export async function runCli(argv, dependencies = {}) {
     runStatusCommand = runStatusCommandDefault,
     runAddCommand = runAddCommandDefault,
     runRemoveCommand = runRemoveCommandDefault,
-    runDashboard = runDashboardDefault,
+    runInteractive = runInteractiveDefault,
     pathExists = existsSync,
     ui = createUi({ stdout, stderr }),
   } = dependencies;
@@ -106,7 +106,7 @@ export async function runCli(argv, dependencies = {}) {
     return 1;
   }
   if (action === undefined && (!stdin.isTTY || !stdout.isTTY)) {
-    ui.error("skm requires an interactive terminal");
+    ui.error("skm requires an interactive terminal; use skm add, skm remove, or skm add --all");
     return 1;
   }
   try {
@@ -182,6 +182,12 @@ export async function runCli(argv, dependencies = {}) {
     selectItems: ({ items, ...options }) => select(items, options),
     selectProfiles: (items, options) => select(items, options),
     selectSkills: (items, options) => select(items, options),
+    selectCatalogItems: (items, options = {}) => select(items, {
+      ...options,
+      multiple: true,
+      title: options.title ?? "Choose skills",
+      render: (state) => ui.catalogSelector(options.title ?? "Choose skills", state),
+    }),
     selectAction: (items, options) => select(items, options),
     confirm: async (message) => {
       ui.confirm(message);
@@ -209,7 +215,7 @@ export async function runCli(argv, dependencies = {}) {
     runRemoveCommand,
   };
 
-  if (action === undefined) return runDashboard(context);
+  if (action === undefined) return runInteractive(context);
   return routes[action](args, context);
 }
 

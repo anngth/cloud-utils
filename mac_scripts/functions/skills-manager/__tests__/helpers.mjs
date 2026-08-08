@@ -61,6 +61,10 @@ export function makeSandbox(t, {
 const fs = require("fs");
 const values = fs.readFileSync(0, "utf8").split("\\n").slice(0, -1);
 fs.appendFileSync(process.env.SKM_ARGV_LOG, JSON.stringify(values) + "\\n");
+if (JSON.stringify(values) === JSON.stringify(["skills", "list", "--json"])) {
+  process.stdout.write("[]\\n");
+  process.exit(0);
+}
 process.exit(Number(process.env.SKM_NPX_STATUS || 0));
 '\n`,
   );
