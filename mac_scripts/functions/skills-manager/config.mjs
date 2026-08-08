@@ -104,10 +104,14 @@ function bootstrapCatalog(paths, { fs, pid }) {
       const profiles = validateProfilesDocument(readJson(paths.profilesFile, fs));
       catalog = migrateProfilesToCatalog(profiles);
     } catch (cause) {
-      throw wrapCatalogError(cause, paths.sourcesFile) ?? new ConfigFileError(
-        `Invalid profiles file: ${paths.profilesFile}`,
-        { cause, filePath: paths.profilesFile },
-      );
+      if (cause instanceof ConfigFileError) throw cause;
+      if (cause instanceof CatalogError) {
+        throw new ConfigFileError(cause.message, { cause, filePath: paths.sourcesFile });
+      }
+      throw new ConfigFileError(`Invalid profiles file: ${paths.profilesFile}`, {
+        cause,
+        filePath: paths.profilesFile,
+      });
     }
   } else if (fs.existsSync(paths.legacyFile)) {
     const sources = readLegacySources(paths.legacyFile, fs);

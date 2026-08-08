@@ -133,7 +133,19 @@ test("profile migration conflict surfaces error without writing sources.json", (
       ],
     },
   });
-  assert.throws(() => initializeConfig({ env: sandbox.env }), /dup/);
+  assert.throws(() => initializeConfig({ env: sandbox.env }), ConfigFileError);
+  assert.equal(existsSync(sandbox.sourcesFile), false);
+});
+
+test("invalid profiles.json during migrate bootstrap throws ConfigFileError without creating sources.json", (t) => {
+  const sandbox = makeSandbox(t, {
+    createCatalog: false,
+    profiles: { version: 1, profiles: [] },
+  });
+  assert.throws(
+    () => initializeConfig({ env: sandbox.env }),
+    (error) => error instanceof ConfigFileError && error.filePath === sandbox.profilesFile,
+  );
   assert.equal(existsSync(sandbox.sourcesFile), false);
 });
 
