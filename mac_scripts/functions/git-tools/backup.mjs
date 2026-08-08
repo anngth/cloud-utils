@@ -7,6 +7,7 @@ import {
   recordLastBackupAt as recordLastBackupAtDefault,
   recordLastCheckedAt as recordLastCheckedAtDefault,
   removeBackupRepo as removeBackupRepoDefault,
+  setSelectedLast as setSelectedLastDefault,
 } from "./backup-list.mjs";
 import {
   formatDisplayPath,
@@ -64,6 +65,7 @@ function resolveContext(context = {}) {
     removeBackupRepo = removeBackupRepoDefault,
     recordLastBackupAt = recordLastBackupAtDefault,
     recordLastCheckedAt = recordLastCheckedAtDefault,
+    setSelectedLast = setSelectedLastDefault,
     loadBackupsDocument = loadBackupsDocumentDefault,
     now = () => new Date(),
     fs,
@@ -92,6 +94,7 @@ function resolveContext(context = {}) {
     removeBackupRepo,
     recordLastBackupAt,
     recordLastCheckedAt,
+    setSelectedLast,
     loadBackupsDocument,
     now,
     fs,
@@ -408,6 +411,8 @@ export async function runBackupCommand(args = [], context = {}) {
     removeBackupRepo,
     loadBackupsDocument,
     runSelector,
+    setSelectedLast,
+    fs,
   } = resolved;
   const paths = resolveGtPaths(env);
 
@@ -490,9 +495,13 @@ export async function runBackupCommand(args = [], context = {}) {
     lastCheckedAt: entry.lastCheckedAt,
   }));
   const heading = "Select repos to backup";
+  const initial = loaded.repos
+    .filter((r) => r.selectedLast)
+    .map((r) => r.url);
   const selection = await runSelector({
     items,
     multiple: true,
+    initial,
     input: stdin,
     render: (state) => ui.renderBackupSelector(heading, state, { listPath }),
   });
@@ -503,6 +512,16 @@ export async function runBackupCommand(args = [], context = {}) {
 
   if (!selection.selected || selection.selected.length === 0) {
     ui.error("No repos selected");
+    return 1;
+  }
+
+  const saved = setSelectedLast(
+    paths,
+    selection.selected,
+    fs ? { fs } : {},
+  );
+  if (!saved.ok) {
+    ui.error(`Failed to save selection: ${saved.error}`);
     return 1;
   }
 

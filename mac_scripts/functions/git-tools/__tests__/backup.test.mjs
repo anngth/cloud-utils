@@ -21,17 +21,23 @@ function seedRepos(paths, repos) {
   mkdirSync(paths.gtDir, { recursive: true });
   const normalized = repos.map((r) => {
     if (typeof r === "string") {
-      return { url: r, lastBackupAt: null, lastCheckedAt: null };
+      return {
+        url: r,
+        lastBackupAt: null,
+        lastCheckedAt: null,
+        selectedLast: false,
+      };
     }
     return {
       lastBackupAt: null,
       lastCheckedAt: null,
+      selectedLast: false,
       ...r,
     };
   });
   writeFileSync(
     paths.backupsFile,
-    `${JSON.stringify({ version: 3, repos: normalized }, null, 2)}\n`,
+    `${JSON.stringify({ version: 4, repos: normalized }, null, 2)}\n`,
     "utf8",
   );
 }
@@ -631,6 +637,93 @@ test("runBackupBatch metadata write failure counts as fail", async () => {
   );
 });
 
+test("runBackupCommand interactive passes initial from selectedLast", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [
+    { url: SOURCE, lastBackupAt: null, lastCheckedAt: null, selectedLast: true },
+    { url: SOURCE_B, lastBackupAt: null, lastCheckedAt: null, selectedLast: false },
+  ]);
+  let capturedInitial;
+  const { context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    stdin: { isTTY: true },
+    runSelector: async ({ items, initial }) => {
+      capturedInitial = initial;
+      return { type: "submit", selected: [items[0].value] };
+    },
+    setSelectedLast: () => ({ ok: true, document: { version: 4, repos: [] } }),
+    recordLastBackupAt: () => ({ ok: true, document: { version: 4, repos: [] } }),
+  });
+  await runBackupCommand([], context);
+  assert.deepEqual(capturedInitial, [SOURCE]);
+});
+
+test("runBackupCommand submit persists selectedLast before batch", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE, SOURCE_B]);
+  const { context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    stdin: { isTTY: true },
+    runSelector: async ({ items }) => ({
+      type: "submit",
+      selected: [items[1].value],
+    }),
+  });
+  await runBackupCommand([], context);
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.repos[0].selectedLast, false);
+  assert.equal(onDisk.repos[1].selectedLast, true);
+});
+
+test("runBackupCommand selection write failure skips batch", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE]);
+  const created = [];
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    stdin: { isTTY: true },
+    runSelector: async ({ items }) => ({ type: "submit", selected: [items[0].value] }),
+    setSelectedLast: () => ({ ok: false, error: "disk full" }),
+    createPrivateProject: async (_group, name) => {
+      created.push(name);
+      return { ok: true };
+    },
+  });
+  const code = await runBackupCommand([], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /selection|save|selectedLast|disk full/i);
+  assert.deepEqual(created, []);
+  assert.doesNotMatch(h.messages.statuses.join("\n"), /Backup summary/);
+});
+
+test("runBackupCommand cancel does not change selectedLast", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [
+    { url: SOURCE, lastBackupAt: null, lastCheckedAt: null, selectedLast: true },
+  ]);
+  const { context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    stdin: { isTTY: true },
+    runSelector: async () => ({ type: "cancel", selected: [] }),
+  });
+  await runBackupCommand([], context);
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.repos[0].selectedLast, true);
+});
+
+test("runBackupCommand --all leaves selectedLast unchanged", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [
+    { url: SOURCE, lastBackupAt: null, lastCheckedAt: null, selectedLast: true },
+  ]);
+  const { context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+  });
+  await runBackupCommand(["--all"], context);
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.repos[0].selectedLast, true);
+});
+
 test("runBackupCommand interactive passes lastBackupAt and lastCheckedAt into selector render", async () => {
   const paths = tempPaths();
   seedRepos(paths, [
@@ -673,10 +766,11 @@ test("runBackupCommand --all migrates v1 list on load", async () => {
   const code = await runBackupCommand(["--all"], context);
   assert.equal(code, 0);
   const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
-  assert.equal(onDisk.version, 3);
+  assert.equal(onDisk.version, 4);
   assert.equal(onDisk.repos[0].url, SOURCE);
   assert.ok("lastBackupAt" in onDisk.repos[0]);
   assert.ok("lastCheckedAt" in onDisk.repos[0]);
+  assert.ok("selectedLast" in onDisk.repos[0]);
 });
 
 test("runBackupCommand add then --all backs up listed repos", async () => {
