@@ -402,7 +402,11 @@ test("usage documents every command signature and short flag", () => {
     ],
     [
       "│  skm source add <source>",
-      "│      [[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)] [(-y | --yes)]  Add or update a catalog source",
+      "│      [[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)] [(-y | --yes)]  Add a catalog source",
+    ],
+    [
+      "│  skm source edit <source|index>",
+      "│      [[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)] [(-y | --yes)]  Update skills for a catalog source",
     ],
   ]) {
     const index = lines.indexOf(first);
@@ -416,7 +420,7 @@ test("usage documents every command signature and short flag", () => {
     "│  skm status  Compare catalog and installed skills",
     "│  skm source remove <source|index>  Remove a catalog source",
     "│  Source indexes are 1-based, matching the interactive selector and gt backup.",
-    "│  source add and source remove change the catalog only; use add/remove to change disk.",
+    "│  source add, source edit, and source remove change the catalog only; use add/remove to change disk.",
     "│  --force permits mismatch/untracked skill replacement or removal.",
   ]) assert.ok(lines.includes(line), `missing help line: ${line}`);
 });

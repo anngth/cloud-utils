@@ -156,9 +156,21 @@ test("source add no-skills aliases bypass npx preflight and dispatch equivalentl
   }
 });
 
+test("source edit no-skills aliases bypass npx preflight and dispatch equivalently", async () => {
+  for (const noSkills of ["-n", "--no-skills"]) {
+    const harness = cliHarness({ hasNpx: false });
+    const argv = ["source", "edit", "1", noSkills];
+    assert.equal(await runCli(argv, harness.dependencies), 0, noSkills);
+    assert.deepEqual(harness.calls.map(([name]) => name), ["source"], noSkills);
+    assert.deepEqual(harness.calls[0][1], argv.slice(1), noSkills);
+    assert.equal(harness.npxChecks(), 0, noSkills);
+  }
+});
+
 test("route grammar errors take precedence over missing npx", async () => {
   for (const [argv, message] of [
     [["source", "add"], /Usage: skm source add/i],
+    [["source", "edit"], /Usage: skm source edit/i],
     [["source", "add", "a/repo", "--all", "--no-skills"], /mutually exclusive/i],
     [["add", "--unsupported"], /Unknown option: --unsupported/i],
   ]) {

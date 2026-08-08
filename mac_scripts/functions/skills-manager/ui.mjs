@@ -172,12 +172,14 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
 
     section("Catalog");
     command("skm source add <source>");
-    continuation("[[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)] [(-y | --yes)]", "Add or update a catalog source");
+    continuation("[[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)] [(-y | --yes)]", "Add a catalog source");
+    command("skm source edit <source|index>");
+    continuation("[[(-k | --skill) <skill>]... | (-a | --all) | (-n | --no-skills)] [(-y | --yes)]", "Update skills for a catalog source");
     command("skm source remove <source|index>", "Remove a catalog source");
 
     section("Notes");
     note("Source indexes are 1-based, matching the interactive selector and gt backup.");
-    note("source add and source remove change the catalog only; use add/remove to change disk.");
+    note("source add, source edit, and source remove change the catalog only; use add/remove to change disk.");
     note("--force permits mismatch/untracked skill replacement or removal.");
     listEnd();
   }
