@@ -7,13 +7,6 @@ import {
   createUninstallPlan,
 } from "../planner.mjs";
 
-const CATALOG = {
-  version: 1,
-  sources: [
-    { source: "a/repo", skills: ["frontend-design", "code-review", "testing"] },
-  ],
-};
-
 const FRONTEND_CATALOG = {
   version: 1,
   sources: [{ source: "a/repo", skills: ["frontend-design", "code-review"] }],
@@ -83,10 +76,18 @@ test("catalogRequirements unions all catalog skills", () => {
 });
 
 test("catalogRequirements deduplicates the same source and skill pair", () => {
-  const merged = catalogRequirements(CATALOG);
-  const shared = merged.requirements.find((item) => item.skill === "code-review");
-  assert.equal(shared.source, "a/repo");
-  assert.ok(!("profiles" in shared) || shared.profiles.length === 0);
+  const merged = catalogRequirements({
+    version: 1,
+    sources: [
+      { source: "a/repo", skills: ["code-review"] },
+      { source: "a/repo", skills: ["code-review", "testing"] },
+    ],
+  });
+  const key = '["a/repo","code-review"]';
+  const matches = merged.requirements.filter((item) => item.key === key);
+  assert.equal(matches.length, 1);
+  assert.equal(merged.requirements.length, 2);
+  assert.deepEqual(merged.requirements.map((item) => item.skill).sort(), ["code-review", "testing"]);
 });
 
 test("catalogRequirements reports one name required from different sources", () => {
