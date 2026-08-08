@@ -75,23 +75,19 @@ test("source add creates catalog entry", async (t) => {
   ]);
 });
 
-test("source add on existing replaces skills with selector initial", async (t) => {
+test("source add rejects an existing catalog source", async (t) => {
   const harness = makeManagementHarness(t, {
-    catalog: catalog({ source: "acme/skills", skills: ["old", "keep"] }),
-    discover: [
-      { name: "keep", description: "Keep" },
-      { name: "new", description: "New" },
-    ],
-    selected: ["keep", "new"],
+    catalog: catalog({ source: "acme/skills", skills: ["old"] }),
+    discover: [{ name: "new", description: "New" }],
+    selected: ["new"],
   });
 
-  assert.equal(await runSourceCommand(["add", "acme/skills"], harness.context), 0);
-  assert.deepEqual(harness.selectionCalls[0][0].initial, ["old", "keep"]);
-  assert.deepEqual(harness.writtenCatalog, catalog({
-    source: "acme/skills",
-    skills: ["keep", "new"],
-  }));
-  assert.deepEqual(harness.uiCalls.at(-1)?.[1]?.action, "edited");
+  assert.equal(await runSourceCommand(["add", "acme/skills"], harness.context), 1);
+  assert.match(harness.stderr(), /already exists/i);
+  assert.match(harness.stderr(), /skm source edit/i);
+  assert.equal(harness.upstreamCalls.length, 0);
+  assert.equal(harness.writtenCatalog, undefined);
+  assert.deepEqual(harness.uiCalls, []);
 });
 
 test("source remove by index", async (t) => {

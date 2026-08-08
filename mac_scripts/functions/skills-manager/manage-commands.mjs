@@ -156,16 +156,19 @@ async function runSourceAdd(args, context) {
   requirePositionals(parsed, 1, "skm source add <source> [-k skill...] [-a|--all] [-n|--no-skills] [-y]");
   rejectOptions(parsed, ["skills", "all", "noSkills", "yes"]);
   const source = canonicalizeSource(parsed.positionals[0], { cwd: context.cwd });
-  const existing = context.config.catalog.sources.find((entry) => entry.source === source);
-  const selection = await sourceSelection(parsed, source, context, {
-    initial: existing?.skills ?? [],
-  });
+  const existingIndex = context.config.catalog.sources.findIndex((entry) => entry.source === source);
+  if (existingIndex >= 0) {
+    throw new CommandUsageError(
+      `Source ${redactSource(source)} already exists (index ${existingIndex + 1}). Use: skm source edit ${existingIndex + 1}`,
+    );
+  }
+  const selection = await sourceSelection(parsed, source, context);
   if (selection.type !== "submit") return 0;
   const skills = [...new Set(selection.selected)];
   const next = upsertSource(context.config.catalog, source, skills, { cwd: context.cwd });
   context.writeCatalog(context.paths, next);
   context.ui.sourceChanged({
-    action: existing ? "edited" : "added",
+    action: "added",
     profile: null,
     source,
     skills,
