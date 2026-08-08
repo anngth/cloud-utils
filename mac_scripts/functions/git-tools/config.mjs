@@ -20,6 +20,19 @@ const defaultFs = {
 
 export const EMPTY_BACKUPS = Object.freeze({ version: 4, repos: [] });
 
+const ISO_UTC_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
+
+/**
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+export function isIsoUtcTimestamp(value) {
+  if (typeof value !== "string" || !ISO_UTC_TIMESTAMP_RE.test(value)) {
+    return false;
+  }
+  return Number.isFinite(Date.parse(value));
+}
+
 export function defaultConfigDir(env = process.env) {
   return `${env.HOME ?? ""}/Library/Mobile Documents/com~apple~CloudDocs/Backups/cloud-utils`;
 }
@@ -88,7 +101,7 @@ export function isValidBackupsDocumentV2(value) {
         && repo.url.length > 0
         && (
           repo.lastBackupAt === null
-          || (typeof repo.lastBackupAt === "string" && repo.lastBackupAt.length > 0)
+          || isIsoUtcTimestamp(repo.lastBackupAt)
         ),
     )
   );
@@ -110,11 +123,11 @@ export function isValidBackupsDocumentV3(value) {
         && repo.url.length > 0
         && (
           repo.lastBackupAt === null
-          || (typeof repo.lastBackupAt === "string" && repo.lastBackupAt.length > 0)
+          || isIsoUtcTimestamp(repo.lastBackupAt)
         )
         && (
           repo.lastCheckedAt === null
-          || (typeof repo.lastCheckedAt === "string" && repo.lastCheckedAt.length > 0)
+          || isIsoUtcTimestamp(repo.lastCheckedAt)
         ),
     )
   );
@@ -136,11 +149,11 @@ export function isValidBackupsDocumentV4(value) {
         && repo.url.length > 0
         && (
           repo.lastBackupAt === null
-          || (typeof repo.lastBackupAt === "string" && repo.lastBackupAt.length > 0)
+          || isIsoUtcTimestamp(repo.lastBackupAt)
         )
         && (
           repo.lastCheckedAt === null
-          || (typeof repo.lastCheckedAt === "string" && repo.lastCheckedAt.length > 0)
+          || isIsoUtcTimestamp(repo.lastCheckedAt)
         )
         && typeof repo.selectedLast === "boolean",
     )

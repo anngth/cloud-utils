@@ -12,6 +12,7 @@ import {
   migrateBackupsDocument,
   loadBackupsDocument,
   EMPTY_BACKUPS,
+  isIsoUtcTimestamp,
 } from "../config.mjs";
 
 test("defaultConfigDir matches skm iCloud backups root", () => {
@@ -268,6 +269,32 @@ test("loadBackupsDocument migrates v1 to v4 on disk", () => {
     lastCheckedAt: null,
     selectedLast: false,
   });
+});
+
+test("isIsoUtcTimestamp accepts Z and millis", () => {
+  assert.equal(isIsoUtcTimestamp("2026-08-08T09:30:00.000Z"), true);
+  assert.equal(isIsoUtcTimestamp("2026-08-08T09:30:00Z"), true);
+});
+
+test("isIsoUtcTimestamp rejects garbage", () => {
+  assert.equal(isIsoUtcTimestamp("yesterday"), false);
+  assert.equal(isIsoUtcTimestamp(""), false);
+  assert.equal(isIsoUtcTimestamp("2026-08-08T09:30:00+07:00"), false);
+});
+
+test("readBackupsDocument rejects bad lastBackupAt ISO", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gt-cfg-"));
+  const file = join(dir, "b.json");
+  writeFileSync(file, JSON.stringify({
+    version: 4,
+    repos: [{
+      url: "git@github.com:a/b.git",
+      lastBackupAt: "not-iso",
+      lastCheckedAt: null,
+      selectedLast: false,
+    }],
+  }));
+  assert.equal(readBackupsDocument(file).ok, false);
 });
 
 test("formatDisplayPath shortens HOME and tmpdir paths", () => {

@@ -43,7 +43,7 @@ gt backup remove git@github.com:org/my-app.git
   - `gt backup --all` — backup every listed repo (no TTY required); does not read or update `selectedLast`.
   - `gt backup add <ssh-url>` / `gt backup remove <index|ssh-url>` — maintain the list (`index` is 1-based).
 - **Config:** `$CLOUD_UTILS_CONFIG_DIR/gt/backups.json` (same config root as `skm`; default under iCloud Backups when unset).
-  - List file schema version 4: each repo is `{ url, lastBackupAt, lastCheckedAt, selectedLast }` (`lastBackupAt` / `lastCheckedAt` ISO UTC or null; `selectedLast` boolean).
+  - List file schema version 4: each repo is `{ url, lastBackupAt, lastCheckedAt, selectedLast }` (`lastBackupAt` / `lastCheckedAt` must be UTC ISO-8601 with `Z`, e.g. `2026-08-08T09:30:00.000Z`, or null; `selectedLast` boolean).
   - `lastBackupAt` — set only after a successful mirror push; unchanged on skip.
   - `lastCheckedAt` — set after a successful check (skip or mirror).
   - `selectedLast` — per-repo flag for the last interactive submit selection; updated on Enter with ≥1 repo selected (whole list rewritten); cancel / empty submit leave flags unchanged; `add` sets `false`.

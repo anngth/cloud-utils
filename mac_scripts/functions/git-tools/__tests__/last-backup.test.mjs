@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   formatLastBackupLabel,
   formatLastCheckedLabel,
+  formatTimestampLabel,
 } from "../last-backup.mjs";
 
 test("formatLastBackupLabel uses relative + local datetime", () => {
@@ -49,4 +50,14 @@ test("formatLastBackupLabel still works", () => {
     formatLastBackupLabel("2026-08-08T08:00:00.000Z", now),
     /^Last backup: 2 hours ago \(/,
   );
+});
+
+test("formatTimestampLabel soft fallback on bad ISO", () => {
+  const label = formatTimestampLabel("not-iso", { prefix: "Last backup" });
+  assert.match(label, /Invalid timestamp/);
+});
+
+test("formatLastCheckedLabel soft fallback on bad ISO", () => {
+  const label = formatLastCheckedLabel("yesterday");
+  assert.match(label, /Invalid timestamp/);
 });

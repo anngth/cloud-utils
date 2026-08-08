@@ -4,7 +4,7 @@ export function formatTimestampLabel(
 ) {
   const then = new Date(isoString);
   if (Number.isNaN(then.getTime())) {
-    throw new TypeError(`Invalid lastBackupAt: ${isoString}`);
+    return `${prefix}: Invalid timestamp`;
   }
   const ms = Math.max(0, now.getTime() - then.getTime());
   const sec = Math.floor(ms / 1000);
