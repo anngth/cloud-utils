@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 import {
+  ALT_SCREEN_ENTER,
+  ALT_SCREEN_EXIT,
   createKeyDecoder,
   createSelectorState,
   decodeKeys,
@@ -114,4 +116,25 @@ test("runSelector cancel via q restores raw mode", async () => {
   assert.equal(result.type, "cancel");
   assert.deepEqual(result.selected, []);
   assert.equal(input.isRaw, false);
+});
+
+test("runSelector enters alternate screen on start and exits on finish", async () => {
+  const input = new FakeInput();
+  const processRef = new EventEmitter();
+  processRef.pid = 123;
+  processRef.kill = () => {};
+  const writes = [];
+  const output = { isTTY: true, write(chunk) { writes.push(String(chunk)); } };
+  const promise = runSelector({
+    items: [{ value: "a", label: "A" }],
+    multiple: true,
+    input,
+    output,
+    render() {},
+    processRef,
+  });
+  assert.deepEqual(writes, [ALT_SCREEN_ENTER]);
+  input.emit("data", Buffer.from("q"));
+  await promise;
+  assert.deepEqual(writes, [ALT_SCREEN_ENTER, ALT_SCREEN_EXIT]);
 });

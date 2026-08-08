@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { createKeyDecoder, createSelectorState, decodeKeys, reduceSelector, runSelector } from "../selector.mjs";
+import {
+  ALT_SCREEN_ENTER,
+  ALT_SCREEN_EXIT,
+  createKeyDecoder,
+  createSelectorState,
+  decodeKeys,
+  reduceSelector,
+  runSelector,
+} from "../selector.mjs";
 
 test("decodeKeys recognizes arrows, vim keys, space, enter, q, and Ctrl+C", () => {
   assert.deepEqual(
@@ -130,6 +138,69 @@ test("runSelector restores raw mode and listeners on submit", async () => {
   assert.deepEqual(result.selected, ["a"]);
   assert.deepEqual(input.rawCalls, [true, false]);
   assertSelectorListenersRemoved(input, processRef);
+});
+
+test("runSelector enters alternate screen on start and exits on finish", async () => {
+  const input = new FakeInput();
+  const processRef = new EventEmitter();
+  processRef.pid = 123;
+  processRef.kill = () => {};
+  const writes = [];
+  const output = { isTTY: true, write(chunk) { writes.push(String(chunk)); } };
+  const promise = runSelector({
+    items: [{ value: "a", label: "A" }],
+    multiple: true,
+    input,
+    output,
+    render() {},
+    processRef,
+  });
+  assert.deepEqual(writes, [ALT_SCREEN_ENTER]);
+  input.emit("data", Buffer.from("q"));
+  await promise;
+  assert.deepEqual(writes, [ALT_SCREEN_ENTER, ALT_SCREEN_EXIT]);
+});
+
+test("runSelector skips alternate screen when output is not a TTY", async () => {
+  const input = new FakeInput();
+  const processRef = new EventEmitter();
+  processRef.pid = 123;
+  processRef.kill = () => {};
+  const writes = [];
+  const output = { isTTY: false, write(chunk) { writes.push(String(chunk)); } };
+  const promise = runSelector({
+    items: [{ value: "a", label: "A" }],
+    multiple: true,
+    input,
+    output,
+    render() {},
+    processRef,
+  });
+  input.emit("data", Buffer.from("q"));
+  await promise;
+  assert.deepEqual(writes, []);
+});
+
+test("runSelector exits alternate screen on suspend and re-enters on resume", () => {
+  const input = new FakeInput();
+  const processRef = new EventEmitter();
+  processRef.pid = 123;
+  processRef.kill = () => {};
+  const writes = [];
+  const output = { isTTY: true, write(chunk) { writes.push(String(chunk)); } };
+  runSelector({
+    items: [{ value: "a", label: "A" }],
+    multiple: true,
+    input,
+    output,
+    render() {},
+    processRef,
+  });
+  assert.deepEqual(writes, [ALT_SCREEN_ENTER]);
+  processRef.emit("SIGTSTP");
+  assert.deepEqual(writes, [ALT_SCREEN_ENTER, ALT_SCREEN_EXIT]);
+  processRef.emit("SIGCONT");
+  assert.deepEqual(writes, [ALT_SCREEN_ENTER, ALT_SCREEN_EXIT, ALT_SCREEN_ENTER]);
 });
 
 test("runSelector marks initial values without changing item order", async () => {

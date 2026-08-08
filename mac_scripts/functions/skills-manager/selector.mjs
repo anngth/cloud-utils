@@ -1,4 +1,6 @@
 const SUSPEND_KEEPALIVE_DELAY = 2_147_483_647;
+export const ALT_SCREEN_ENTER = "\u001b[?1049h";
+export const ALT_SCREEN_EXIT = "\u001b[?1049l";
 
 export function createSelectorState(items) {
   return { items: items.map((item) => ({ ...item })), cursor: 0, selected: new Set() };
@@ -126,6 +128,7 @@ export function runSelector({
   initial = [],
   multiple,
   input = process.stdin,
+  output = process.stdout,
   render,
   processRef = process,
   setIntervalImpl = setInterval,
@@ -139,9 +142,24 @@ export function runSelector({
     )));
     let active = true;
     let suspended = false;
+    let inAltScreen = false;
     let suspensionKeepalive;
     const decoder = createKeyDecoder();
     const priorRaw = Boolean(input.isRaw);
+
+    const writeOutput = (chunk) => {
+      if (typeof output?.write === "function") output.write(chunk);
+    };
+    const enterAltScreen = () => {
+      if (inAltScreen || !output?.isTTY) return;
+      writeOutput(ALT_SCREEN_ENTER);
+      inAltScreen = true;
+    };
+    const exitAltScreen = () => {
+      if (!inAltScreen) return;
+      writeOutput(ALT_SCREEN_EXIT);
+      inAltScreen = false;
+    };
 
     const setInputMode = (enabled) => {
       if (input.isTTY && typeof input.setRawMode === "function") input.setRawMode(enabled ? true : priorRaw);
@@ -170,6 +188,7 @@ export function runSelector({
       clearSuspensionKeepalive();
       removeListeners();
       setInputMode(false);
+      exitAltScreen();
     };
 
     const finish = (result) => {
@@ -209,6 +228,7 @@ export function runSelector({
         suspended = true;
         input.off("data", onData);
         setInputMode(false);
+        exitAltScreen();
         processRef.off("SIGTSTP", signalHandlers.SIGTSTP);
         suspensionKeepalive = setIntervalImpl(() => {}, SUSPEND_KEEPALIVE_DELAY);
         processRef.kill(processRef.pid, "SIGTSTP");
@@ -224,6 +244,7 @@ export function runSelector({
         suspended = false;
         input.on("data", onData);
         setInputMode(true);
+        enterAltScreen();
         render(state);
         clearSuspensionKeepalive();
       } catch (error) {
@@ -244,6 +265,7 @@ export function runSelector({
     for (const [signal, handler] of Object.entries(signalHandlers)) processRef.on(signal, handler);
     try {
       setInputMode(true);
+      enterAltScreen();
       render(state);
     } catch (error) {
       cleanup();
