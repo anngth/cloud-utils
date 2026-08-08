@@ -18,7 +18,7 @@ const defaultFs = {
   writeFileSync,
 };
 
-export const EMPTY_BACKUPS = Object.freeze({ version: 2, repos: [] });
+export const EMPTY_BACKUPS = Object.freeze({ version: 3, repos: [] });
 
 export function defaultConfigDir(env = process.env) {
   return `${env.HOME ?? ""}/Library/Mobile Documents/com~apple~CloudDocs/Backups/cloud-utils`;
@@ -94,13 +94,57 @@ export function isValidBackupsDocumentV2(value) {
   );
 }
 
+export function isValidBackupsDocumentV3(value) {
+  return (
+    value !== null
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && value.version === 3
+    && Array.isArray(value.repos)
+    && value.repos.every(
+      (repo) =>
+        repo !== null
+        && typeof repo === "object"
+        && !Array.isArray(repo)
+        && typeof repo.url === "string"
+        && repo.url.length > 0
+        && (
+          repo.lastBackupAt === null
+          || (typeof repo.lastBackupAt === "string" && repo.lastBackupAt.length > 0)
+        )
+        && (
+          repo.lastCheckedAt === null
+          || (typeof repo.lastCheckedAt === "string" && repo.lastCheckedAt.length > 0)
+        ),
+    )
+  );
+}
+
 function isValidBackupsDocument(value) {
-  return isValidBackupsDocumentV1(value) || isValidBackupsDocumentV2(value);
+  return (
+    isValidBackupsDocumentV1(value)
+    || isValidBackupsDocumentV2(value)
+    || isValidBackupsDocumentV3(value)
+  );
 }
 
 export function migrateBackupsDocument(document) {
-  if (isValidBackupsDocumentV2(document)) {
+  if (isValidBackupsDocumentV3(document)) {
     return { ok: true, document, migrated: false };
+  }
+
+  if (isValidBackupsDocumentV2(document)) {
+    return {
+      ok: true,
+      migrated: true,
+      document: {
+        version: 3,
+        repos: document.repos.map((repo) => ({
+          ...repo,
+          lastCheckedAt: null,
+        })),
+      },
+    };
   }
 
   if (isValidBackupsDocumentV1(document)) {
@@ -108,8 +152,12 @@ export function migrateBackupsDocument(document) {
       ok: true,
       migrated: true,
       document: {
-        version: 2,
-        repos: document.repos.map((url) => ({ url, lastBackupAt: null })),
+        version: 3,
+        repos: document.repos.map((url) => ({
+          url,
+          lastBackupAt: null,
+          lastCheckedAt: null,
+        })),
       },
     };
   }
@@ -143,7 +191,7 @@ export function readBackupsDocument(filePath, { fs = defaultFs } = {}) {
 }
 
 export function writeBackupsDocument(filePath, document, { fs = defaultFs } = {}) {
-  if (!isValidBackupsDocumentV2(document)) {
+  if (!isValidBackupsDocumentV3(document)) {
     return { ok: false, error: "Invalid backups document" };
   }
 
