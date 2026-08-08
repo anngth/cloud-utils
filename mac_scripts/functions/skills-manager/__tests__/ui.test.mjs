@@ -22,15 +22,7 @@ test("management UI exposes the complete renderer surface", () => {
   const { ui } = makeUi();
   for (const name of [
     "usage",
-    "dashboard",
-    "profileList",
-    "profileShow",
-    "profileChanged",
     "sourceChanged",
-    "skillChanged",
-    "projectShow",
-    "projectList",
-    "projectChanged",
     "status",
     "installPlan",
     "uninstallPlan",
@@ -44,44 +36,7 @@ test("management UI exposes the complete renderer surface", () => {
   ]) assert.equal(typeof ui[name], "function", `${name} renderer`);
 });
 
-test("profile list renders source, skill, and linked-project counts", () => {
-  const { stdout, ui } = makeUi();
-  ui.profileList({
-    profiles: [{
-      name: "frontend",
-      sources: [
-        { source: "a/skills", skills: ["lint", "review"] },
-        { source: "b/skills", skills: [] },
-      ],
-    }],
-    projects: [
-      { root: "/repo/one", profiles: ["frontend"] },
-      { root: "/repo/two", profiles: ["frontend"] },
-    ],
-  });
-  const rendered = stdout.read();
-  assert.match(rendered, /frontend/);
-  assert.match(rendered, /2 sources/);
-  assert.match(rendered, /2 skills/);
-  assert.match(rendered, /2 linked projects/);
-});
-
-test("profile show renders sources, selected skills, and linked projects", () => {
-  const { stdout, ui } = makeUi();
-  ui.profileShow({
-    profile: {
-      name: "review",
-      sources: [{ source: "acme/skills", skills: ["review-pr", "lint"] }],
-    },
-    projects: [{ root: "/repo/app", profiles: ["review"] }],
-  });
-  const rendered = stdout.read();
-  for (const text of ["review", "acme/skills", "review-pr", "lint", "/repo/app"]) {
-    assert.match(rendered, new RegExp(text.replace("/", "\\/")));
-  }
-});
-
-test("source and skill result renderers include selected-skill counts", () => {
+test("source result renderers include selected-skill counts", () => {
   const source = makeUi();
   source.ui.sourceChanged({
     action: "added",
@@ -90,17 +45,6 @@ test("source and skill result renderers include selected-skill counts", () => {
     skills: ["a", "b"],
   });
   assert.match(source.stdout.read(), /2 selected skills/);
-
-  const skill = makeUi();
-  skill.ui.skillChanged({
-    action: "removed",
-    profile: "default",
-    source: "acme/skills",
-    skills: ["a"],
-    missing: [],
-  });
-  assert.match(skill.stdout.read(), /1 skill/);
-  assert.match(skill.stdout.read(), /does not change installed project skills/);
 });
 
 test("available skill rows highlight only names and separate adjacent records", () => {
@@ -141,33 +85,6 @@ test("a single available skill row has no skill-to-skill separator", () => {
   );
 });
 
-test("profile and skill-change lists highlight and separate name-only skills", () => {
-  const profile = makeUi();
-  profile.ui.profileShow({
-    profile: {
-      name: "quality",
-      sources: [{ source: "obra/superpowers", skills: ["brainstorming", "testing"] }],
-    },
-    projects: [],
-  });
-  assert.match(
-    stripAnsi(profile.stdout.read()),
-    /│      • brainstorming\n│\n│      • testing/,
-  );
-  assert.ok(profile.stdout.read().includes(paint("92", "brainstorming")));
-
-  const changed = makeUi();
-  changed.ui.skillChanged({
-    action: "added",
-    profile: "quality",
-    source: "obra/superpowers",
-    skills: ["brainstorming", "testing"],
-    missing: [],
-  });
-  assert.match(stripAnsi(changed.stdout.read()), /■ brainstorming\n│\n│  ■ testing/);
-  assert.ok(changed.stdout.read().includes(paint("92", "testing")));
-});
-
 test("source renderers never display URL queries, fragments, or credentials", () => {
   const { stdout, ui } = makeUi();
   const unsafe = "https://user:secret@git.example.com/acme/skills?ToKeN=query-secret#fragment-secret";
@@ -201,25 +118,6 @@ test("source renderers preserve safe generic SCP provider identity", () => {
   const rendered = stdout.read();
   assert.match(rendered, /git@gitlab\.com:owner\/repo\.git/);
   assert.doesNotMatch(rendered, /unsafe source redacted/i);
-});
-
-test("project renderers show linked profiles and mark stale roots", () => {
-  const current = makeUi();
-  current.ui.projectShow({ root: "/repo/current", profiles: ["frontend", "review"] });
-  assert.match(current.stdout.read(), /\/repo\/current/);
-  assert.match(current.stdout.read(), /frontend/);
-  assert.match(current.stdout.read(), /review/);
-
-  const list = makeUi();
-  list.ui.projectList({
-    projects: [
-      { root: "/repo/current", profiles: ["frontend"], stale: false },
-      { root: "/repo/gone", profiles: ["review"], stale: true },
-    ],
-  });
-  const rendered = list.stdout.read();
-  assert.match(rendered, /\/repo\/current/);
-  assert.match(rendered, /\/repo\/gone.*stale/i);
 });
 
 const requirement = (source, skill, profiles = ["frontend"]) => ({
@@ -515,22 +413,6 @@ test("usage documents every command signature and short flag", () => {
     "│  source add and source remove change the catalog only; use add/remove to change disk.",
     "│  --force permits mismatch/untracked skill replacement or removal.",
   ]) assert.ok(lines.includes(line), `missing help line: ${line}`);
-});
-
-test("dashboard renders the current project, linked profiles, and actions", () => {
-  const { stdout, ui } = makeUi();
-  ui.dashboard({
-    projectRoot: "/repo/app",
-    linkedProfiles: ["frontend", "quality"],
-    actions: [
-      { value: "install-linked", label: "Install linked profiles" },
-      { value: "exit", label: "Exit" },
-    ],
-  });
-  const rendered = stdout.read();
-  for (const text of ["/repo/app", "frontend, quality", "Install linked profiles", "Exit"]) {
-    assert.match(rendered, new RegExp(text.replace("/", "\\/")));
-  }
 });
 
 test("selector keeps ANSI output and renders selected items", () => {

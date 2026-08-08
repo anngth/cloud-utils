@@ -33,7 +33,6 @@ export function makeSandbox(t, {
   const profilesFile = join(skmDir, "profiles.json");
   const projectsFile = join(skmDir, "projects.json");
   const legacyFile = join(skmDir, "list.json");
-  const transactionFile = join(skmDir, ".transaction.json");
   const argvLog = join(root, "npx-argv.jsonl");
   mkdirSync(skmDir, { recursive: true });
   mkdirSync(binDir, { recursive: true });
@@ -77,7 +76,6 @@ process.exit(Number(process.env.SKM_NPX_STATUS || 0));
     profilesFile,
     projectsFile,
     legacyFile,
-    transactionFile,
     binDir,
     argvLog,
     env: {

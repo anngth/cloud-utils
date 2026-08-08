@@ -145,11 +145,27 @@ test("status lists missing against full catalog", async () => {
   assert.deepEqual(status.missing.map((item) => item.skill).sort(), ["skill-a", "skill-b", "skill-c"]);
 });
 
+test("status exits zero when all catalog skills are installed", async () => {
+  const harness = catalogHarness({
+    installed: new Map([
+      ["skill-a", actualSkill("skill-a", "a/one")],
+      ["skill-b", actualSkill("skill-b", "a/one")],
+      ["skill-c", actualSkill("skill-c", "b/two")],
+    ]),
+  });
+  assert.equal(await runStatusCommand([], harness.context), 0);
+});
+
 test("status exits zero when only extras are present", async () => {
   const harness = catalogHarness({
-    installed: new Map([["extra", actualSkill("extra", "x/repo")]]),
+    installed: new Map([
+      ["skill-a", actualSkill("skill-a", "a/one")],
+      ["skill-b", actualSkill("skill-b", "a/one")],
+      ["skill-c", actualSkill("skill-c", "b/two")],
+      ["extra", actualSkill("extra", "x/repo")],
+    ]),
   });
-  assert.equal(await runStatusCommand([], harness.context), 1);
+  assert.equal(await runStatusCommand([], harness.context), 0);
   assert.equal(harness.uiCalls[0][1].status.extras[0].name, "extra");
 });
 

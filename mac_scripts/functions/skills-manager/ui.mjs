@@ -172,78 +172,6 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     listEnd();
   }
 
-  function dashboard({ projectRoot, linkedProfiles, actions, state }) {
-    stdout.write("\u001b[2J\u001b[H");
-    title();
-    step(`Project: ${projectRoot}`);
-    active("Linked profiles");
-    if (linkedProfiles.length === 0) item("No linked profiles", C.yellow);
-    else item(linkedProfiles.join(", "));
-    out(pipe);
-    active(`Actions ${fg(C.white, "(enter to continue, q to quit)")}`);
-    out(pipe);
-    const cursor = state?.cursor ?? 0;
-    actions.forEach((action, index) => {
-      const marker = index === cursor ? "◆" : "◇";
-      const color = index === cursor ? C.brightGreen : C.gray;
-      out(`${pipe}  ${fg(color, marker)} ${fg(index === cursor ? C.white : C.gray, action.label)}`);
-    });
-    listEnd();
-  }
-
-  function profileList(value, positionalProjects) {
-    const profiles = Array.isArray(value) ? value : value.profiles;
-    const projects = Array.isArray(value) ? (positionalProjects ?? []) : value.projects;
-    title();
-    step(`Found ${plural(profiles.length, "profile")}`);
-    active("Profiles");
-    if (profiles.length === 0) item("No profiles", C.yellow);
-    for (const profile of profiles) {
-      const sourceCount = profile.sources.length;
-      const skillCount = profile.sources.reduce((count, source) => count + source.skills.length, 0);
-      const linkedCount = projects.filter((project) => project.profiles.includes(profile.name)).length;
-      item(
-        `${profile.name} — ${plural(sourceCount, "source")}, ${plural(skillCount, "skill")}, ${plural(linkedCount, "linked project")}`,
-      );
-    }
-    listEnd();
-  }
-
-  function profileShow(value, positionalProjects) {
-    const profile = value.profile ?? value;
-    const projects = value.profile ? value.projects : (positionalProjects ?? []);
-    title();
-    step(`Profile: ${profile.name}`);
-    const skillCount = profile.sources.reduce((count, source) => count + source.skills.length, 0);
-    step(`${plural(profile.sources.length, "source")}; ${plural(skillCount, "selected skill")}`);
-    active("Sources and selected skills");
-    if (profile.sources.length === 0) item("No sources", C.yellow);
-    for (const source of profile.sources) {
-      item(`${redactSource(source.source)} — ${plural(source.skills.length, "selected skill")}`);
-      skillList(source.skills, (name) => skillItem({
-        name,
-        marker: "•",
-        markerColor: C.gray,
-        indent: "      ",
-      }));
-    }
-    out(pipe);
-    active("Linked projects");
-    if (projects.length === 0) item("No linked projects", C.yellow);
-    for (const project of projects) item(project.root);
-    listEnd();
-  }
-
-  function profileChanged(value, name, extra = {}) {
-    const change = typeof value === "string" ? { action: value, name, ...extra } : value;
-    title();
-    step(`Profile ${change.action}: ${change.oldName ? `${change.oldName} → ` : ""}${change.name}`);
-    if (change.action === "removed") {
-      out(`${pipe}  Configuration changed; installed project skills were not uninstalled`);
-    }
-    listEnd();
-  }
-
   function sourceChanged(value, profile, source, skills = []) {
     const change = typeof value === "string"
       ? { action: value, profile, source, skills }
@@ -259,54 +187,6 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
         suffix: record.description ? `— ${record.description}` : "",
       }));
     }
-    listEnd();
-  }
-
-  function skillChanged(value, profile, source, skills = [], missing = []) {
-    const change = typeof value === "string"
-      ? { action: value, profile, source, skills, missing }
-      : value;
-    title();
-    step(`Skills ${change.action}: ${plural(change.skills?.length ?? 0, "skill")}`);
-    step(`Profile: ${change.profile}; source: ${redactSource(change.source)}`);
-    skillList(change.skills ?? [], (name) => skillItem({ name }));
-    if (change.missing?.length > 0) item(`Not selected: ${change.missing.join(", ")}`, C.yellow);
-    out(pipe);
-    out(`${pipe}  This changes the profile definition and does not change installed project skills`);
-    listEnd();
-  }
-
-  function projectShow(value, positionalProfiles) {
-    const project = typeof value === "string"
-      ? { root: value, profiles: positionalProfiles ?? [] }
-      : value;
-    title();
-    step(`Project: ${project.root}`);
-    active("Linked profiles");
-    if (project.profiles.length === 0) item("No linked profiles", C.yellow);
-    for (const name of project.profiles) item(name);
-    listEnd();
-  }
-
-  function projectList(value) {
-    const projects = Array.isArray(value) ? value : value.projects;
-    title();
-    step(`Found ${plural(projects.length, "project")}`);
-    active("Registered projects");
-    if (projects.length === 0) item("No registered projects", C.yellow);
-    for (const project of projects) {
-      const stale = project.stale ? ` ${fg(C.yellow, "(stale root)")}` : "";
-      item(`${project.root}${stale} — ${project.profiles.join(", ") || "no profiles"}`);
-    }
-    listEnd();
-  }
-
-  function projectChanged(value, root, profiles = []) {
-    const change = typeof value === "string" ? { action: value, root, profiles } : value;
-    title();
-    step(`Project ${change.action}: ${change.root}`);
-    if (change.profiles?.length > 0) step(`Profiles: ${change.profiles.join(", ")}`);
-    out(`${pipe}  Configuration changed; installed project skills were not modified`);
     listEnd();
   }
 
@@ -530,15 +410,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
 
   return {
     usage,
-    dashboard,
-    profileList,
-    profileShow,
-    profileChanged,
     sourceChanged,
-    skillChanged,
-    projectShow,
-    projectList,
-    projectChanged,
     status,
     installPlan,
     uninstallPlan,

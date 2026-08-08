@@ -6,7 +6,6 @@ import {
   initializeConfig as initializeConfigDefault,
   readConfig as readConfigDefault,
   writeCatalog as writeCatalogDefault,
-  writeConfigTransaction as writeConfigTransactionDefault,
 } from "./config.mjs";
 import { runInteractive as runInteractiveDefault } from "./interactive.mjs";
 import { loadInstalledState as loadInstalledStateDefault } from "./installed-state.mjs";
@@ -52,7 +51,6 @@ export async function runCli(argv, dependencies = {}) {
     initializeConfig = initializeConfigDefault,
     readConfig = readConfigDefault,
     writeCatalog = writeCatalogDefault,
-    writeConfigTransaction = writeConfigTransactionDefault,
     resolveProjectRoot = resolveProjectRootDefault,
     discoverAvailableSkills = discoverAvailableSkillsDefault,
     loadInstalledState = loadInstalledStateDefault,
@@ -161,7 +159,6 @@ export async function runCli(argv, dependencies = {}) {
     executeInstallPlan,
     executeUninstallPlan,
     writeCatalog,
-    writeConfigTransaction,
     selectItems: ({ items, ...options }) => select(items, options),
     selectSkills: (items, options) => select(items, options),
     selectCatalogItems: (items, options = {}) => select(items, {

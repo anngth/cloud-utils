@@ -1,6 +1,4 @@
-import { createHash } from "node:crypto";
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -16,11 +14,9 @@ import {
   validateCatalogDocument,
 } from "./catalog.mjs";
 import { validateProfilesDocument } from "./profiles.mjs";
-import { validateProjectsDocument } from "./projects.mjs";
 import { canonicalizeSource } from "./source-id.mjs";
 
 const defaultFs = {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -28,25 +24,6 @@ const defaultFs = {
   rmSync,
   writeFileSync,
 };
-
-const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
-
-function transactionEntry(target, pid) {
-  return {
-    target,
-    backup: `${target}.${pid}.bak`,
-    next: `${target}.${pid}.next`,
-    beforeHash: "",
-    nextHash: "",
-  };
-}
-
-export const EMPTY_PROFILES = Object.freeze({
-  version: 1,
-  profiles: [{ name: "default", sources: [] }],
-});
-
-export const EMPTY_PROJECTS = Object.freeze({ version: 1, projects: [] });
 
 export class ConfigFileError extends Error {
   constructor(message, { cause, filePath } = {}) {
@@ -130,81 +107,6 @@ function bootstrapCatalog(paths, { fs, pid }) {
   writeJsonAtomic(paths.sourcesFile, catalog, { fs, pid });
 }
 
-function hashFile(filePath, fs) {
-  return sha256(fs.readFileSync(filePath));
-}
-
-function readAndValidateJournal(paths, fs) {
-  const filePath = paths.transactionFile;
-  let value;
-  try {
-    value = JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch (error) {
-    throw new ConfigFileError(`Could not read transaction journal: ${filePath}`, { cause: error });
-  }
-  if (
-    value?.version !== 1 ||
-    !["prepared", "profiles-written", "targets-written"].includes(value.phase) ||
-    !Array.isArray(value.files) ||
-    value.files.length !== 2
-  ) {
-    throw new ConfigFileError(`Invalid transaction journal: ${filePath}`);
-  }
-  for (const item of value.files) {
-    for (const key of ["target", "backup", "next", "beforeHash", "nextHash"]) {
-      if (typeof item[key] !== "string" || item[key] === "") {
-        throw new ConfigFileError(`Invalid transaction journal field: ${key}`);
-      }
-    }
-  }
-  const expectedTargets = new Set([paths.profilesFile, paths.projectsFile]);
-  const transactionIds = new Set();
-  for (const item of value.files) {
-    if (!expectedTargets.delete(item.target)) {
-      throw new ConfigFileError(`Invalid transaction journal target: ${item.target}`);
-    }
-    const backupPrefix = `${item.target}.`;
-    const backupSuffix = ".bak";
-    if (!item.backup.startsWith(backupPrefix) || !item.backup.endsWith(backupSuffix)) {
-      throw new ConfigFileError(`Invalid transaction journal backup: ${item.backup}`);
-    }
-    const transactionId = item.backup.slice(backupPrefix.length, -backupSuffix.length);
-    if (!/^\d+$/.test(transactionId) || item.next !== `${item.target}.${transactionId}.next`) {
-      throw new ConfigFileError(`Invalid transaction journal artifacts: ${item.target}`);
-    }
-    transactionIds.add(transactionId);
-  }
-  if (expectedTargets.size !== 0 || transactionIds.size !== 1) {
-    throw new ConfigFileError(`Invalid transaction journal paths: ${filePath}`);
-  }
-  return value;
-}
-
-function cleanupTransaction(journal, journalPath, fs) {
-  for (const item of journal.files) {
-    fs.rmSync(item.backup, { force: true });
-    fs.rmSync(item.next, { force: true });
-  }
-  fs.rmSync(journalPath, { force: true });
-}
-
-export function recoverConfigTransaction(paths, { fs = defaultFs } = {}) {
-  if (!fs.existsSync(paths.transactionFile)) return;
-  const journal = readAndValidateJournal(paths, fs);
-  const bothNext = journal.files.every((item) => hashFile(item.target, fs) === item.nextHash);
-  if (journal.phase === "targets-written" && bothNext) {
-    cleanupTransaction(journal, paths.transactionFile, fs);
-    return;
-  }
-  for (const item of journal.files) {
-    if (!fs.existsSync(item.backup) || hashFile(item.backup, fs) !== item.beforeHash) {
-      throw new ConfigFileError(`Cannot recover transaction: ${item.target}`);
-    }
-  }
-  for (const item of journal.files) fs.copyFileSync(item.backup, item.target);
-  cleanupTransaction(journal, paths.transactionFile, fs);
-}
-
 export function initializeConfig({
   env = process.env,
   fs = defaultFs,
@@ -219,7 +121,6 @@ export function initializeConfig({
     profilesFile: join(skmDir, "profiles.json"),
     projectsFile: join(skmDir, "projects.json"),
     legacyFile: join(skmDir, "list.json"),
-    transactionFile: join(skmDir, ".transaction.json"),
   };
   fs.mkdirSync(skmDir, { recursive: true });
   bootstrapCatalog(paths, { fs, pid });
@@ -257,60 +158,4 @@ export function writeJsonAtomic(filePath, value, {
 
 export function writeCatalog(paths, document, options = {}) {
   writeJsonAtomic(paths.sourcesFile, validateCatalogDocument(document), options);
-}
-
-export function writeConfigTransaction(paths, { profiles, projects }, {
-  fs = defaultFs,
-  pid = process.pid,
-} = {}) {
-  if (!Number.isSafeInteger(pid) || pid < 0) {
-    throw new ConfigFileError("Invalid transaction identifier");
-  }
-  const validProfiles = validateProfilesDocument(profiles);
-  const profileNames = new Set(validProfiles.profiles.map((item) => item.name));
-  const validProjects = validateProjectsDocument(projects, profileNames);
-  const documents = [
-    [paths.profilesFile, validProfiles],
-    [paths.projectsFile, validProjects],
-  ];
-  const files = documents.map(([target, document]) => {
-    const entry = transactionEntry(target, pid);
-    const before = fs.readFileSync(target);
-    const next = Buffer.from(`${JSON.stringify(document, null, 2)}\n`);
-    fs.writeFileSync(entry.backup, before);
-    fs.writeFileSync(entry.next, next);
-    entry.beforeHash = sha256(before);
-    entry.nextHash = sha256(next);
-    return entry;
-  });
-  const journal = { version: 1, phase: "prepared", files };
-  const saveJournal = () => writeJsonAtomic(paths.transactionFile, journal, { fs, pid });
-  saveJournal();
-  try {
-    fs.renameSync(files[0].next, files[0].target);
-    journal.phase = "profiles-written";
-    saveJournal();
-    fs.renameSync(files[1].next, files[1].target);
-    journal.phase = "targets-written";
-    saveJournal();
-    cleanupTransaction(journal, paths.transactionFile, fs);
-  } catch (error) {
-    try {
-      recoverConfigTransaction(paths, { fs });
-    } catch {}
-    throw error;
-  }
-}
-
-export function writeProfiles(paths, document, options) {
-  writeJsonAtomic(paths.profilesFile, validateProfilesDocument(document), options);
-}
-
-export function writeProjects(paths, profilesDocument, projectsDocument, options) {
-  const names = new Set(profilesDocument.profiles.map((profile) => profile.name));
-  writeJsonAtomic(
-    paths.projectsFile,
-    validateProjectsDocument(projectsDocument, names),
-    options,
-  );
 }
