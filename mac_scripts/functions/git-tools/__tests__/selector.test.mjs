@@ -40,6 +40,19 @@ test("toggle and submit return selected item values in display order", () => {
   ]);
 });
 
+test("a selects all when multiple", () => {
+  let state = createSelectorState([{ value: "a" }, { value: "b" }]);
+  state = reduceSelector(state, "selectAll", { multiple: true }).state;
+  assert.deepEqual([...state.selected].sort(), [0, 1]);
+});
+
+test("c clears selection when multiple", () => {
+  let state = createSelectorState([{ value: "a" }, { value: "b" }]);
+  state.selected = new Set([0, 1]);
+  state = reduceSelector(state, "clear", { multiple: true }).state;
+  assert.equal(state.selected.size, 0);
+});
+
 test("cancel returns empty selection", () => {
   const state = createSelectorState([
     { value: "a", label: "A" },
