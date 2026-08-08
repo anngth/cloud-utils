@@ -282,7 +282,7 @@ test("isIsoUtcTimestamp rejects garbage", () => {
   assert.equal(isIsoUtcTimestamp("2026-08-08T09:30:00+07:00"), false);
 });
 
-test("readBackupsDocument rejects bad lastBackupAt ISO", () => {
+test("readBackupsDocument rejects bad lastBackupAt ISO with field and URL", () => {
   const dir = mkdtempSync(join(tmpdir(), "gt-cfg-"));
   const file = join(dir, "b.json");
   writeFileSync(file, JSON.stringify({
@@ -294,7 +294,44 @@ test("readBackupsDocument rejects bad lastBackupAt ISO", () => {
       selectedLast: false,
     }],
   }));
-  assert.equal(readBackupsDocument(file).ok, false);
+  const result = readBackupsDocument(file);
+  assert.equal(result.ok, false);
+  assert.match(
+    result.error,
+    /Invalid lastBackupAt for git@github\.com:a\/b\.git: "not-iso"/,
+  );
+});
+
+test("readBackupsDocument rejects bad lastCheckedAt ISO with field and URL", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gt-cfg-"));
+  const file = join(dir, "b.json");
+  writeFileSync(file, JSON.stringify({
+    version: 4,
+    repos: [{
+      url: "git@github.com:a/b.git",
+      lastBackupAt: null,
+      lastCheckedAt: "not-iso",
+      selectedLast: false,
+    }],
+  }));
+  const result = readBackupsDocument(file);
+  assert.equal(result.ok, false);
+  assert.match(
+    result.error,
+    /Invalid lastCheckedAt for git@github\.com:a\/b\.git: "not-iso"/,
+  );
+});
+
+test("migrateBackupsDocument rejects bad lastBackupAt ISO with field and URL", () => {
+  const result = migrateBackupsDocument({
+    version: 2,
+    repos: [{ url: "git@github.com:a/b.git", lastBackupAt: "not-iso" }],
+  });
+  assert.equal(result.ok, false);
+  assert.match(
+    result.error,
+    /Invalid lastBackupAt for git@github\.com:a\/b\.git: "not-iso"/,
+  );
 });
 
 test("formatDisplayPath shortens HOME and tmpdir paths", () => {

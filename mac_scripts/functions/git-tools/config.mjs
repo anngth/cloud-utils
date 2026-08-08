@@ -160,6 +160,72 @@ export function isValidBackupsDocumentV4(value) {
   );
 }
 
+const TIMESTAMP_FIELDS_BY_VERSION = {
+  2: ["lastBackupAt"],
+  3: ["lastBackupAt", "lastCheckedAt"],
+  4: ["lastBackupAt", "lastCheckedAt"],
+};
+
+/**
+ * @param {unknown} repo
+ * @param {number} index
+ * @returns {string}
+ */
+function formatRepoRef(repo, index) {
+  if (
+    repo !== null
+    && typeof repo === "object"
+    && !Array.isArray(repo)
+    && typeof repo.url === "string"
+    && repo.url.length > 0
+  ) {
+    return repo.url;
+  }
+  return `repo at index ${index}`;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function formatInvalidTimestampValue(value) {
+  if (value === undefined) return "undefined";
+  return JSON.stringify(value);
+}
+
+/**
+ * @param {unknown} document
+ * @returns {string | null}
+ */
+export function findRepoTimestampError(document) {
+  if (
+    document === null
+    || typeof document !== "object"
+    || Array.isArray(document)
+    || !Array.isArray(document.repos)
+  ) {
+    return null;
+  }
+
+  const fields = TIMESTAMP_FIELDS_BY_VERSION[document.version];
+  if (!fields) {
+    return null;
+  }
+
+  for (let index = 0; index < document.repos.length; index += 1) {
+    const repo = document.repos[index];
+    for (const field of fields) {
+      const value = repo?.[field];
+      if (value !== null && value !== undefined && !isIsoUtcTimestamp(value)) {
+        const ref = formatRepoRef(repo, index);
+        return `Invalid ${field} for ${ref}: ${formatInvalidTimestampValue(value)}`;
+      }
+    }
+  }
+
+  return null;
+}
+
 function isValidBackupsDocument(value) {
   return (
     isValidBackupsDocumentV1(value)
@@ -220,6 +286,11 @@ export function migrateBackupsDocument(document) {
     };
   }
 
+  const timestampError = findRepoTimestampError(document);
+  if (timestampError) {
+    return { ok: false, error: timestampError };
+  }
+
   return { ok: false, error: "Invalid backups document" };
 }
 
@@ -242,7 +313,11 @@ export function readBackupsDocument(filePath, { fs = defaultFs } = {}) {
   }
 
   if (!isValidBackupsDocument(document)) {
-    return { ok: false, error: `Invalid backups document: ${filePath}` };
+    const timestampError = findRepoTimestampError(document);
+    return {
+      ok: false,
+      error: timestampError ?? `Invalid backups document: ${filePath}`,
+    };
   }
 
   return { ok: true, document };
