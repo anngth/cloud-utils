@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolveGtPaths } from "../config.mjs";
 import {
   addBackupRepo,
+  addBackupRepos,
   recordLastBackupAt,
   recordLastCheckedAt,
   removeBackupRepo,
@@ -94,6 +95,98 @@ test("addBackupRepo rejects invalid ssh url", () => {
   const result = addBackupRepo(paths, "https://github.com/org/app.git");
   assert.equal(result.ok, false);
   assert.match(result.error, /HTTPS|Invalid/i);
+});
+
+test("addBackupRepos adds two valid new URLs in one write", () => {
+  const paths = tempPaths();
+  let writeCount = 0;
+  const fs = {
+    existsSync: () => false,
+    mkdirSync: mkdirSync,
+    readFileSync: readFileSync,
+    renameSync: (...args) => {
+      writeCount += 1;
+      return renameSync(...args);
+    },
+    rmSync: () => {},
+    writeFileSync: writeFileSync,
+  };
+
+  const result = addBackupRepos(
+    paths,
+    ["git@github.com:Org/Foo.git", "git@gitlab.com:acme/bar"],
+    { fs },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.added.length, 2);
+  assert.equal(result.failures.length, 0);
+  assert.equal(result.added[0].index, 1);
+  assert.equal(result.added[1].index, 2);
+  assert.deepEqual(result.document.repos, [
+    repo("git@github.com:Org/Foo.git"),
+    repo("git@gitlab.com:acme/bar.git"),
+  ]);
+  assert.equal(writeCount, 1);
+
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.deepEqual(onDisk.repos, result.document.repos);
+});
+
+test("addBackupRepos continues after duplicate and persists earlier adds", () => {
+  const paths = tempPaths();
+  seedV1(paths, ["git@github.com:existing/repo.git"]);
+
+  const result = addBackupRepos(paths, [
+    "git@github.com:new/one.git",
+    "git@github.com:existing/repo.git",
+    "git@github.com:new/two.git",
+  ]);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.added.length, 2);
+  assert.equal(result.failures.length, 1);
+  assert.match(result.failures[0].error, /duplicate/i);
+  assert.deepEqual(result.document.repos, [
+    repo("git@github.com:existing/repo.git"),
+    repo("git@github.com:new/one.git"),
+    repo("git@github.com:new/two.git"),
+  ]);
+
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.deepEqual(onDisk.repos, result.document.repos);
+});
+
+test("addBackupRepos all invalid leaves file unchanged", () => {
+  const paths = tempPaths();
+  seedV1(paths, ["git@github.com:existing/repo.git"]);
+
+  const result = addBackupRepos(paths, [
+    "https://github.com/a/one.git",
+    "not-a-url",
+  ]);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.added.length, 0);
+  assert.equal(result.failures.length, 2);
+  assert.equal(result.document, undefined);
+
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.deepEqual(onDisk.repos, [repo("git@github.com:existing/repo.git")]);
+});
+
+test("addBackupRepos rejects duplicate within same batch", () => {
+  const paths = tempPaths();
+
+  const result = addBackupRepos(paths, [
+    "git@github.com:Org/Foo.git",
+    "git@GitHub.com:Org/Foo",
+  ]);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.added.length, 1);
+  assert.equal(result.failures.length, 1);
+  assert.match(result.failures[0].error, /duplicate/i);
 });
 
 test("setSelectedLast marks only submitted urls true", () => {

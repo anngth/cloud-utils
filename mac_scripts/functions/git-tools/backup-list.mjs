@@ -81,6 +81,85 @@ export function addBackupRepo(paths, sshUrl, { fs } = {}) {
 
 /**
  * @param {{ backupsFile: string }} paths
+ * @param {string[]} urls
+ * @param {{ fs?: object }} [options]
+ * @returns {{ ok: boolean, added: Array<{ url: string, index: number }>, failures: Array<{ url: string, error: string }>, document?: object, createdFile?: boolean, error?: string }}
+ */
+export function addBackupRepos(paths, urls, { fs } = {}) {
+  const loadOpts = fs ? { fs } : {};
+  const writeOpts = fs ? { fs } : {};
+  const load = loadBackupsDocument(paths.backupsFile, loadOpts);
+
+  let document;
+  let createdFile = false;
+
+  if (load.ok) {
+    document = {
+      version: load.document.version,
+      repos: [...load.document.repos],
+    };
+  } else if (load.missing) {
+    document = { version: EMPTY_BACKUPS.version, repos: [] };
+    createdFile = true;
+  } else {
+    return { ok: false, added: [], failures: [], error: load.error };
+  }
+
+  const added = [];
+  const failures = [];
+
+  for (const sshUrl of urls) {
+    const canonicalized = canonicalizeSshGitUrl(sshUrl);
+    if (!canonicalized.ok) {
+      failures.push({ url: sshUrl, error: canonicalized.error });
+      continue;
+    }
+
+    const newKey = canonicalized.canonical;
+    const duplicate = document.repos.some(
+      (repo) => canonicalKey(repo.url) === newKey,
+    );
+    if (duplicate) {
+      failures.push({
+        url: sshUrl,
+        error: `Duplicate repo (already listed): ${canonicalized.sshUrl}`,
+      });
+      continue;
+    }
+
+    document.repos.push({
+      url: canonicalized.sshUrl,
+      lastBackupAt: null,
+      lastCheckedAt: null,
+      selectedLast: false,
+    });
+    added.push({ url: canonicalized.sshUrl, index: document.repos.length });
+  }
+
+  if (added.length === 0) {
+    return {
+      ok: failures.length === 0,
+      added,
+      failures,
+    };
+  }
+
+  const written = writeBackupsDocument(paths.backupsFile, document, writeOpts);
+  if (!written.ok) {
+    return { ok: false, added, failures, error: written.error };
+  }
+
+  return {
+    ok: failures.length === 0 && added.length === urls.length,
+    added,
+    failures,
+    document,
+    createdFile: createdFile && added.length > 0,
+  };
+}
+
+/**
+ * @param {{ backupsFile: string }} paths
  * @param {string} token
  * @param {{ fs?: object }} [options]
  * @returns {{ ok: true, removed: string, document: object }

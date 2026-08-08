@@ -924,6 +924,71 @@ test("runBackupCommand non-TTY without --all mentions terminal and --all", async
   assert.match(h.messages.errors.join("\n"), /--all/);
 });
 
+test("runBackupCommand add with no URLs shows usage", async () => {
+  const { h, context } = baseContext();
+  const code = await runBackupCommand(["add"], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /Usage:.*gt backup add/i);
+});
+
+test("runBackupCommand add multiple valid URLs exits 0", async () => {
+  const paths = tempPaths();
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+  });
+
+  const code = await runBackupCommand(
+    ["add", SOURCE, SOURCE_B],
+    context,
+  );
+
+  assert.equal(code, 0);
+  const statuses = h.messages.statuses.join("\n");
+  assert.match(statuses, new RegExp(`Added ${SOURCE} at index 1`));
+  assert.match(statuses, new RegExp(`Added ${SOURCE_B} at index 2`));
+  assert.match(h.messages.items.join("\n"), /gt\/backups\.json/);
+
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.repos.length, 2);
+});
+
+test("runBackupCommand add valid plus duplicate exits 1 and persists valid", async () => {
+  const paths = tempPaths();
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+  });
+
+  const code = await runBackupCommand(
+    ["add", SOURCE, SOURCE],
+    context,
+  );
+
+  assert.equal(code, 1);
+  assert.match(h.messages.statuses.join("\n"), /Added.*index 1/);
+  assert.match(h.messages.errors.join("\n"), /duplicate/i);
+
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.repos.length, 1);
+  assert.equal(onDisk.repos[0].url, SOURCE);
+});
+
+test("runBackupCommand add all invalid exits 1 and leaves file missing", async () => {
+  const paths = tempPaths();
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+  });
+
+  const code = await runBackupCommand(
+    ["add", "https://github.com/a.git", "not-a-url"],
+    context,
+  );
+
+  assert.equal(code, 1);
+  assert.equal(h.messages.statuses.filter((m) => /Added/.test(m)).length, 0);
+  assert.equal(h.messages.errors.length, 2);
+  assert.throws(() => readFileSync(paths.backupsFile, "utf8"), /ENOENT/);
+});
+
 test("runBackupCommand rejects --force on add", async () => {
   const { h, context } = baseContext();
   const code = await runBackupCommand(["add", SOURCE, "--force"], context);

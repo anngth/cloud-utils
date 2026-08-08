@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   addBackupRepo as addBackupRepoDefault,
+  addBackupRepos as addBackupReposDefault,
   recordLastBackupAt as recordLastBackupAtDefault,
   recordLastCheckedAt as recordLastCheckedAtDefault,
   removeBackupRepo as removeBackupRepoDefault,
@@ -72,6 +73,7 @@ function resolveContext(context = {}) {
     rmSync = rmSyncDefault,
     resolveGtPaths = resolveGtPathsDefault,
     addBackupRepo = addBackupRepoDefault,
+    addBackupRepos = addBackupReposDefault,
     removeBackupRepo = removeBackupRepoDefault,
     recordLastBackupAt = recordLastBackupAtDefault,
     recordLastCheckedAt = recordLastCheckedAtDefault,
@@ -102,6 +104,7 @@ function resolveContext(context = {}) {
     rmSync,
     resolveGtPaths,
     addBackupRepo,
+    addBackupRepos,
     removeBackupRepo,
     recordLastBackupAt,
     recordLastCheckedAt,
@@ -420,7 +423,7 @@ export async function runBackupCommand(args = [], context = {}) {
     ui,
     stdin,
     resolveGtPaths,
-    addBackupRepo,
+    addBackupRepos,
     removeBackupRepo,
     loadBackupsDocument,
     runSelector,
@@ -434,21 +437,31 @@ export async function runBackupCommand(args = [], context = {}) {
       ui.error(FORCE_ONLY_HINT);
       return 1;
     }
-    const sshUrl = args[1];
-    if (!sshUrl || args.length !== 2) {
-      ui.error("Usage: gt backup add <ssh-url>");
+    const urls = args.slice(1);
+    if (urls.length === 0) {
+      ui.error("Usage: gt backup add <ssh-url> [<ssh-url> ...]");
       return 1;
     }
-    const result = addBackupRepo(paths, sshUrl);
-    if (!result.ok) {
+    const addOpts = fs ? { fs } : {};
+    const result = addBackupRepos(paths, urls, addOpts);
+    if (result.error && result.added.length === 0) {
       ui.error(result.error);
       return 1;
     }
-    const addedUrl = result.document.repos[result.index - 1].url;
-    ui.success(`Added ${addedUrl} at index ${result.index}`);
-    ui.item(formatDisplayPath(paths.backupsFile, { home: env.HOME }));
-    ui.listEnd();
-    return 0;
+    if (result.error) {
+      ui.error(result.error);
+    }
+    for (const item of result.added) {
+      ui.success(`Added ${item.url} at index ${item.index}`);
+    }
+    for (const failure of result.failures) {
+      ui.error(`${failure.url}: ${failure.error}`);
+    }
+    if (result.added.length > 0) {
+      ui.item(formatDisplayPath(paths.backupsFile, { home: env.HOME }));
+      ui.listEnd();
+    }
+    return result.ok ? 0 : 1;
   }
 
   if (args[0] === "remove") {
