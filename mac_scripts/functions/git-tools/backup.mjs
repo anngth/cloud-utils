@@ -37,6 +37,16 @@ import { createUi } from "./ui.mjs";
 
 const RED = "\u001b[31m";
 const ADD_HINT = "Use `gt backup add <ssh-url>` to add a repo first.";
+const FORCE_ONLY_HINT =
+  "The --force flag is only valid for interactive backup and gt backup --all";
+
+function isForceFlag(arg) {
+  return arg === "-f" || arg === "--force";
+}
+
+function hasForceFlag(args, startIndex = 1) {
+  return args.slice(startIndex).some(isForceFlag);
+}
 
 function defaultHasCommand(name) {
   return spawnSync("which", [name], { stdio: "ignore" }).status === 0;
@@ -70,6 +80,7 @@ function resolveContext(context = {}) {
     now = () => new Date(),
     fs,
     runSelector = runSelectorDefault,
+    force = false,
   } = context;
 
   return {
@@ -99,6 +110,7 @@ function resolveContext(context = {}) {
     now,
     fs,
     runSelector,
+    force,
   };
 }
 
@@ -130,6 +142,7 @@ export async function backupOneRepo(sourceUrl, context = {}) {
     runGit,
     mkdtempSync,
     rmSync,
+    force,
   } = resolveContext(context);
 
   const parsed = parseSshGitUrl(sourceUrl);
@@ -180,7 +193,7 @@ export async function backupOneRepo(sourceUrl, context = {}) {
 
   const destUrl = projectSshUrl(group, targetName);
 
-  if (existsResult.exists) {
+  if (existsResult.exists && !force) {
     const sourceLs = await runGit(["ls-remote", sourceUrl], { cwd, env });
     if (sourceLs.status !== 0) {
       return {
@@ -417,6 +430,10 @@ export async function runBackupCommand(args = [], context = {}) {
   const paths = resolveGtPaths(env);
 
   if (args[0] === "add") {
+    if (hasForceFlag(args, 1)) {
+      ui.error(FORCE_ONLY_HINT);
+      return 1;
+    }
     const sshUrl = args[1];
     if (!sshUrl || args.length !== 2) {
       ui.error("Usage: gt backup add <ssh-url>");
@@ -435,6 +452,10 @@ export async function runBackupCommand(args = [], context = {}) {
   }
 
   if (args[0] === "remove") {
+    if (hasForceFlag(args, 1)) {
+      ui.error(FORCE_ONLY_HINT);
+      return 1;
+    }
     const token = args[1];
     if (!token || args.length !== 2) {
       ui.error("Usage: gt backup remove <index|ssh-url>");
@@ -452,9 +473,14 @@ export async function runBackupCommand(args = [], context = {}) {
   }
 
   let all = false;
+  let force = false;
   for (const arg of args) {
     if (arg === "--all") {
       all = true;
+      continue;
+    }
+    if (isForceFlag(arg)) {
+      force = true;
       continue;
     }
     if (arg.startsWith("-")) {
@@ -467,6 +493,13 @@ export async function runBackupCommand(args = [], context = {}) {
     return 1;
   }
 
+  if (force && context.dryRun === true) {
+    ui.error("Cannot combine --force and --dry-run");
+    return 1;
+  }
+
+  const batchContext = force ? { ...context, force: true } : context;
+
   const loaded = loadReposOrError(paths, { loadBackupsDocument, ui });
   if (!loaded.ok) return 1;
 
@@ -477,7 +510,7 @@ export async function runBackupCommand(args = [], context = {}) {
     ui.step(listPath);
     return runBackupBatch(
       loaded.repos.map((entry) => entry.url),
-      context,
+      batchContext,
     );
   }
 
@@ -525,5 +558,5 @@ export async function runBackupCommand(args = [], context = {}) {
     return 1;
   }
 
-  return runBackupBatch(selection.selected, context);
+  return runBackupBatch(selection.selected, batchContext);
 }

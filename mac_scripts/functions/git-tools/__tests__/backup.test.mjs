@@ -388,6 +388,26 @@ test("backupOneRepo recreates when inactive", async () => {
   assert.match(h.messages.statuses.join("\n"), /Created /);
 });
 
+test("backupOneRepo with force mirrors even when fingerprints match", async () => {
+  let cloned = false;
+  const { context } = baseContext({
+    force: true,
+    projectExists: async () => ({ ok: true, exists: true }),
+    runGit: async (args) => {
+      if (args[0] === "ls-remote") assert.fail("ls-remote should not run when force");
+      if (args[0] === "clone") {
+        cloned = true;
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 0, stdout: "ref: refs/heads/main\n", stderr: "" };
+    },
+  });
+  const result = await backupOneRepo(SOURCE, context);
+  assert.equal(result.ok, true);
+  assert.equal(result.skipped, false);
+  assert.equal(cloned, true);
+});
+
 test("backupOneRepo skips when live fingerprints match", async () => {
   let cloned = false;
   const { h, context } = baseContext({
@@ -902,6 +922,68 @@ test("runBackupCommand non-TTY without --all mentions terminal and --all", async
   assert.equal(code, 1);
   assert.match(h.messages.errors.join("\n"), /terminal/i);
   assert.match(h.messages.errors.join("\n"), /--all/);
+});
+
+test("runBackupCommand rejects --force on add", async () => {
+  const { h, context } = baseContext();
+  const code = await runBackupCommand(["add", SOURCE, "--force"], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /force|Usage|Unknown/i);
+});
+
+test("runBackupCommand rejects --force on remove", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+  });
+  const code = await runBackupCommand(["remove", "1", "--force"], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /force|Usage|Unknown/i);
+});
+
+test("runBackupCommand --all --force passes force through batch", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [{
+    url: SOURCE,
+    lastBackupAt: "2020-01-01T00:00:00.000Z",
+    lastCheckedAt: null,
+  }]);
+  let cloned = false;
+  const fixed = new Date("2026-08-08T12:00:00.000Z");
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => fixed,
+    projectExists: async () => ({ ok: true, exists: true }),
+    runGit: async (args) => {
+      if (args[0] === "ls-remote") assert.fail("ls-remote should not run when force");
+      if (args[0] === "clone") {
+        cloned = true;
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+  const code = await runBackupCommand(["--all", "--force"], context);
+  assert.equal(code, 0);
+  assert.equal(cloned, true);
+  assert.match(h.messages.items.join("\n"), /ok/);
+  assert.doesNotMatch(h.messages.items.join("\n"), /skip/);
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.repos[0].lastBackupAt, "2026-08-08T12:00:00.000Z");
+  assert.equal(onDisk.repos[0].lastCheckedAt, "2026-08-08T12:00:00.000Z");
+});
+
+test("runBackupCommand rejects force and dryRun together", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    dryRun: true,
+  });
+  const code = await runBackupCommand(["--force"], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /force.*dry-run|dry-run.*force/i);
 });
 
 test("runBackupCommand unknown flag errors", async () => {
