@@ -109,7 +109,7 @@ test("renderBackupSelector shows 1-based numbers with □/■ and hint", () => {
   assert.match(stdout, /└/);
 });
 
-test("renderBackupSelector shows last backup on line 2 and blank between repos", () => {
+test("renderBackupSelector shows checkbox lines without timestamp labels", () => {
   let stdout = "";
   const ui = createUi({
     stdout: { write: (v) => { stdout += v; } },
@@ -122,44 +122,23 @@ test("renderBackupSelector shows last backup on line 2 and blank between repos",
         value: "git@github.com:org/a.git",
         label: "git@github.com:org/a.git",
         lastBackupAt: "2026-08-08T10:00:00.000Z",
+        lastCheckedAt: "2026-08-08T11:00:00.000Z",
       },
       {
         value: "git@gitlab.com:acme/b.git",
         label: "git@gitlab.com:acme/b.git",
         lastBackupAt: null,
+        lastCheckedAt: null,
       },
     ],
     cursor: 0,
     selected: new Set([0]),
   }, { now });
 
-  assert.match(stdout, /Last backup: 2 hours ago/);
-  assert.match(stdout, /\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}\)/);
-  assert.doesNotMatch(
-    stdout,
-    /git@gitlab\.com:acme\/b\.git[\s\S]*Last backup/,
-  );
+  assert.match(stdout, /1\s+.*■.*git@github\.com:org\/a\.git/);
+  assert.match(stdout, /2\s+.*□.*git@gitlab\.com:acme\/b\.git/);
+  assert.doesNotMatch(stdout, /Last backup/);
+  assert.doesNotMatch(stdout, /Last checked/);
   const plain = stdout.replace(/\x1B\[[0-9;]*m/g, "");
   assert.match(plain, /org\/a\.git[\s\S]*│\n│\s+2\s+/);
-});
-
-test("renderBackupSelector shows last checked line when set", () => {
-  let stdout = "";
-  const ui = createUi({
-    stdout: { write: (v) => { stdout += v; } },
-    stderr: { write() {} },
-  });
-  const now = new Date("2026-08-08T12:00:00.000Z");
-  ui.renderBackupSelector("Select repos to backup", {
-    items: [{
-      value: "git@github.com:org/a.git",
-      label: "git@github.com:org/a.git",
-      lastBackupAt: "2026-08-05T09:00:00.000Z",
-      lastCheckedAt: "2026-08-08T11:00:00.000Z",
-    }],
-    cursor: 0,
-    selected: new Set([0]),
-  }, { now });
-  assert.match(stdout, /Last backup:/);
-  assert.match(stdout, /Last checked: 1 hour ago/);
 });
