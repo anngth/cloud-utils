@@ -105,3 +105,37 @@ test("renderBackupSelector shows 1-based numbers with □/■ and hint", () => {
   assert.match(stdout, /2\s+.*□.*git@gitlab\.com:acme\/b\.git/);
   assert.match(stdout, /└/);
 });
+
+test("renderBackupSelector shows last backup on line 2 and blank between repos", () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (v) => { stdout += v; } },
+    stderr: { write() {} },
+  });
+  const now = new Date("2026-08-08T12:00:00.000Z");
+  ui.renderBackupSelector("Select repos to backup", {
+    items: [
+      {
+        value: "git@github.com:org/a.git",
+        label: "git@github.com:org/a.git",
+        lastBackupAt: "2026-08-08T10:00:00.000Z",
+      },
+      {
+        value: "git@gitlab.com:acme/b.git",
+        label: "git@gitlab.com:acme/b.git",
+        lastBackupAt: null,
+      },
+    ],
+    cursor: 0,
+    selected: new Set([0]),
+  }, { now });
+
+  assert.match(stdout, /Last backup: 2 hours ago/);
+  assert.match(stdout, /\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}\)/);
+  assert.doesNotMatch(
+    stdout,
+    /git@gitlab\.com:acme\/b\.git[\s\S]*Last backup/,
+  );
+  const plain = stdout.replace(/\x1B\[[0-9;]*m/g, "");
+  assert.match(plain, /org\/a\.git[\s\S]*│\n│\s+2\s+/);
+});

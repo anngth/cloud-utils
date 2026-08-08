@@ -1,3 +1,5 @@
+import { formatLastBackupLabel } from "./last-backup.mjs";
+
 const C = {
   cyan: "\u001b[36m",
   green: "\u001b[32m",
@@ -87,7 +89,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out(message);
   }
 
-  function renderBackupSelector(heading, state, { listPath } = {}) {
+  function renderBackupSelector(heading, state, { listPath, now } = {}) {
     stdout.write("\u001b[2J\u001b[H");
     title("REPO BACKUP");
     if (listPath) {
@@ -98,12 +100,17 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out(pipe);
     state.items.forEach((entry, index) => {
       const label = typeof entry === "string" ? entry : entry.label;
+      const lastBackupAt = typeof entry === "object" ? entry.lastBackupAt : null;
       const selected = state.selected.has(index);
       const box = selected ? "■" : "□";
       const boxColor = selected ? C.brightGreen : C.gray;
       const labelColor = index === state.cursor ? C.white : C.gray;
       const number = String(index + 1);
       out(`${pipe}  ${number}  ${boxColor}${box}${C.reset}  ${fg(labelColor, label)}`);
+      if (lastBackupAt) {
+        out(`${pipe}      ${fg(C.gray, formatLastBackupLabel(lastBackupAt, now))}`);
+      }
+      out(pipe);
     });
     listEnd();
   }
