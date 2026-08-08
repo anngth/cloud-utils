@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildCatalogSelectorItems,
   createUi,
+  renderCatalogSelector,
   selectorNameColor,
   SELECTOR_DESCRIPTION_COLOR,
 } from "../ui.mjs";
@@ -530,6 +531,50 @@ test("catalog selector shows source unchecked for partial install and checked fo
   assert.match(fullOutput, /■ two/);
 });
 
+test("renderCatalogSelector uses layout C spacing and shared colors", () => {
+  let stdout = "";
+  const sink = { write: (chunk) => { stdout += chunk; } };
+  const state = {
+    items: [
+      {
+        kind: "source",
+        value: "vercel-labs/agent-skills",
+        label: "vercel-labs/agent-skills",
+        sourceIndex: 1,
+        childValues: ["vercel-labs/agent-skills:code-review", "vercel-labs/agent-skills:frontend-design"],
+      },
+      { kind: "skill", value: "vercel-labs/agent-skills:code-review", label: "code-review", sourceIndex: 1 },
+      {
+        kind: "skill",
+        value: "vercel-labs/agent-skills:frontend-design",
+        label: "frontend-design",
+        sourceIndex: 1,
+        hint: "design flows",
+      },
+      {
+        kind: "source",
+        value: "anthropics/skills",
+        label: "anthropics/skills",
+        sourceIndex: 2,
+        childValues: ["anthropics/skills:brainstorming"],
+      },
+      { kind: "skill", value: "anthropics/skills:brainstorming", label: "brainstorming", sourceIndex: 2 },
+    ],
+    cursor: 1,
+    selected: new Set([1, 2]),
+  };
+  renderCatalogSelector(sink, "Choose skills", state);
+  const plain = stripAnsi(stdout);
+  assert.match(stdout, /space toggle, a all, c clear/);
+  assert.match(plain, /1\s+■\s+vercel-labs\/agent-skills/);
+  assert.match(plain, /│\s+■ code-review/);
+  assert.match(plain, /│\s+■ frontend-design/);
+  assert.doesNotMatch(plain, /code-review\n│\n│\s+■ frontend-design/);
+  assert.match(plain, /frontend-design design flows\n│\n│\s+2\s+□\s+anthropics\/skills/);
+  assert.match(stdout, /\u001b\[92m/);
+  assert.match(stdout, new RegExp(`${SELECTOR_DESCRIPTION_COLOR.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}design flows`));
+});
+
 test("catalog selector numbers sources and indents skills like gt backup", () => {
   const catalog = {
     version: 1,
@@ -542,7 +587,7 @@ test("catalog selector numbers sources and indents skills like gt backup", () =>
   ui.catalogSelector("Choose skills", catalogSelectorState(catalog, new Map()));
   const rendered = stripAnsi(stdout.read());
   assert.match(rendered, /1\s+□\s+a\/repo\n│\s+□ alpha/);
-  assert.match(rendered, /2\s+□\s+b\/repo\n│\s+□ beta/);
+  assert.match(rendered, /alpha\n│\n│\s+2\s+□\s+b\/repo\n│\s+□ beta/);
 });
 
 test("skill selectors highlight names and separate rows while profile selectors stay compact", () => {

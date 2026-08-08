@@ -86,25 +86,26 @@ export function renderCatalogSelector(stdout, heading, state, { cancelled = fals
   out(pipe);
   out(`${fg(C.green, "◇")}  ${String(heading)}`);
   out(pipe);
-  out(`${fg(C.cyan, "◆")}  Select items ${fg(C.white, "(space to toggle, enter to continue, q to quit)")}`);
+  out(`${fg(C.cyan, "◆")}  Select items ${fg(C.white, "(space toggle, a all, c clear, enter to continue, q to quit)")}`);
   out(pipe);
   state.items.forEach((entry, index) => {
-    const previous = state.items[index - 1];
-    if (index > 0 && entry.kind === "skill" && previous?.kind === "skill") out(pipe);
+    if (index > 0 && entry.kind === "source") out(pipe);
+    const isCursor = index === state.cursor;
     const selected = entry.kind === "source"
       ? isCatalogSourceSelected(state, entry, index)
       : state.selected.has(index);
     const box = selected ? "■" : "□";
     const boxColor = selected ? C.brightGreen : C.gray;
-    const labelColor = entry.kind === "skill"
-      ? C.brightGreen
-      : index === state.cursor ? C.white : C.gray;
+    const labelColor = selectorNameColor({ isCursor, isSelected: selected });
+    const hintText = entry.hint
+      ? ` ${SELECTOR_DESCRIPTION_COLOR}${entry.hint}${C.reset}`
+      : "";
     if (entry.kind === "source") {
       const number = String(entry.sourceIndex ?? index + 1);
       out(`${pipe}  ${number}  ${boxColor}${box}${C.reset}  ${fg(labelColor, entry.label)}`);
       return;
     }
-    out(`${pipe}    ${boxColor}${box}${C.reset} ${fg(labelColor, entry.label)}${entry.hint ? ` ${fg(C.gray, entry.hint)}` : ""}`);
+    out(`${pipe}      ${boxColor}${box}${C.reset} ${fg(labelColor, entry.label)}${hintText}`);
   });
   if (cancelled) out(`${fg(C.cyan, "└")}  ${fg(C.red, "Selection cancelled")}`);
   else out(fg(C.cyan, "└"));
