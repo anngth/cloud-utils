@@ -43,10 +43,14 @@ gt backup remove git@github.com:org/my-app.git
   - `gt backup --all` — backup every listed repo (no TTY required).
   - `gt backup add <ssh-url>` / `gt backup remove <index|ssh-url>` — maintain the list (`index` is 1-based).
 - **Config:** `$CLOUD_UTILS_CONFIG_DIR/gt/backups.json` (same config root as `skm`; default under iCloud Backups when unset).
-  - List file schema version 2: each repo is `{ url, lastBackupAt }` (`lastBackupAt` ISO UTC or null).
-  - Interactive selector shows `Last backup: <relative> (<local datetime>)` under repos that have been backed up successfully.
+  - List file schema version 3: each repo is `{ url, lastBackupAt, lastCheckedAt }` (`lastBackupAt` / `lastCheckedAt` ISO UTC or null).
+  - `lastBackupAt` — set only after a successful mirror push; unchanged on skip.
+  - `lastCheckedAt` — set after a successful check (skip or mirror).
+  - Interactive selector shows `Last backup: <relative> (<local datetime>)` and `Last checked: …` under repos when those timestamps are set (omit line when null).
+  - v1 string arrays and v2 `{ url, lastBackupAt }` lists migrate to v3 on load (adds `lastCheckedAt: null` for v2).
 - **Migration:** old one-shot `gt backup <ssh-url>` / `-n` / `--new` are removed. Use `gt backup add <ssh-url>`, then `gt backup` or `gt backup --all`.
-- Per URL: missing project → create; live → update (all branches + tags); inactive/soft-deleted → recreate at the base name. Creates the private `anngth-dev/backups` subgroup when missing (parent `anngth-dev` must already exist). After push, sets the GitLab default branch to `main` if present, otherwise `develop`. Protects `main` and/or `develop` when those branches exist (force-push allowed for later mirror updates).
+- Per URL: missing project → create; live → compare `git ls-remote` fingerprints (heads + tags only) — equal → skip mirror, update `lastCheckedAt` only (`skip` in summary, `→ unchanged`); differ → full mirror (all branches + tags); inactive/soft-deleted → recreate at the base name (never skip). Creates the private `anngth-dev/backups` subgroup when missing (parent `anngth-dev` must already exist). After push, sets the GitLab default branch to `main` if present, otherwise `develop`. Protects `main` and/or `develop` when those branches exist (force-push allowed for later mirror updates).
+- Batch summary lists `ok`, `skip`, and `fail` per URL; exit `0` only when there are no `fail` entries (`ok` and `skip` both succeed).
 - Requires `git`, `glab` (logged in), and SSH access to both the source and GitLab.
 - Backup pushes all branches and tags (not GitLab hidden refs like `refs/environments/*`). `--prune` can delete remote branches/tags that no longer exist on the source.
 
