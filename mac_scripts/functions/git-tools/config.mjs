@@ -6,7 +6,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { tmpdir as osTmpdir } from "node:os";
+import { dirname, join, relative, sep } from "node:path";
 
 const defaultFs = {
   existsSync,
@@ -31,6 +32,33 @@ export function resolveGtPaths(env = process.env) {
     gtDir,
     backupsFile: join(gtDir, "backups.json"),
   };
+}
+
+/**
+ * Shorten absolute paths for logs: ~/… under HOME, else path relative to tmpdir.
+ * @param {string} filePath
+ * @param {{ home?: string, tempDir?: string }} [options]
+ * @returns {string}
+ */
+export function formatDisplayPath(filePath, {
+  home = process.env.HOME,
+  tempDir = osTmpdir(),
+} = {}) {
+  if (typeof filePath !== "string" || !filePath) return filePath;
+
+  const withSep = (root) => (root.endsWith(sep) ? root : `${root}${sep}`);
+
+  if (home && (filePath === home || filePath.startsWith(withSep(home)))) {
+    const rest = filePath.slice(home.length).replace(/^\//, "");
+    return rest ? `~/${rest}` : "~";
+  }
+
+  if (tempDir && (filePath === tempDir || filePath.startsWith(withSep(tempDir)))) {
+    const rel = relative(tempDir, filePath);
+    if (rel && !rel.startsWith("..")) return rel;
+  }
+
+  return filePath;
 }
 
 function isValidBackupsDocument(value) {

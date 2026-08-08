@@ -44,7 +44,7 @@ gt backup remove git@github.com:org/my-app.git
   - `gt backup add <ssh-url>` / `gt backup remove <index|ssh-url>` — maintain the list (`index` is 1-based).
 - **Config:** `$CLOUD_UTILS_CONFIG_DIR/gt/backups.json` (same config root as `skm`; default under iCloud Backups when unset).
 - **Migration:** old one-shot `gt backup <ssh-url>` / `-n` / `--new` are removed. Use `gt backup add <ssh-url>`, then `gt backup` or `gt backup --all`.
-- Per URL: missing project → create; live → update (all branches + tags); inactive/soft-deleted → recreate at the base name. Creates the private `anngth-dev/backups` subgroup when missing (parent `anngth-dev` must already exist). After push, sets the GitLab default branch to `main` if present, otherwise `develop`.
+- Per URL: missing project → create; live → update (all branches + tags); inactive/soft-deleted → recreate at the base name. Creates the private `anngth-dev/backups` subgroup when missing (parent `anngth-dev` must already exist). After push, sets the GitLab default branch to `main` if present, otherwise `develop`. Protects `main` and/or `develop` when those branches exist (force-push allowed for later mirror updates).
 - Requires `git`, `glab` (logged in), and SSH access to both the source and GitLab.
 - Backup pushes all branches and tags (not GitLab hidden refs like `refs/environments/*`). `--prune` can delete remote branches/tags that no longer exist on the source.
 

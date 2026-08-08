@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   defaultConfigDir,
+  formatDisplayPath,
   resolveGtPaths,
   readBackupsDocument,
   writeBackupsDocument,
@@ -49,4 +50,25 @@ test("writeBackupsDocument creates parent dirs and round-trips", () => {
   assert.deepEqual(writeBackupsDocument(file, doc), { ok: true });
   assert.deepEqual(readBackupsDocument(file), { ok: true, document: doc });
   assert.deepEqual(EMPTY_BACKUPS, { version: 1, repos: [] });
+});
+
+test("formatDisplayPath shortens HOME and tmpdir paths", () => {
+  assert.equal(
+    formatDisplayPath(
+      "/Users/me/Library/Mobile Documents/com~apple~CloudDocs/Backups/cloud-utils/gt/backups.json",
+      { home: "/Users/me", tempDir: "/tmp" },
+    ),
+    "~/Library/Mobile Documents/com~apple~CloudDocs/Backups/cloud-utils/gt/backups.json",
+  );
+  assert.equal(
+    formatDisplayPath("/var/folders/xx/T/gt-backup-abc/mirror.git", {
+      home: "/Users/me",
+      tempDir: "/var/folders/xx/T",
+    }),
+    "gt-backup-abc/mirror.git",
+  );
+  assert.equal(
+    formatDisplayPath("/elsewhere/file.json", { home: "/Users/me", tempDir: "/tmp" }),
+    "/elsewhere/file.json",
+  );
 });

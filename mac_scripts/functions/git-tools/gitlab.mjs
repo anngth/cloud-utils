@@ -264,6 +264,7 @@ export function projectWebUrl(group, name) {
 
 /**
  * Prefer main, then develop, based on refs present in a local (mirror) repo.
+ * Callers should protect both main and develop when those refs exist.
  * @returns {Promise<string|null>}
  */
 export async function pickPreferredDefaultBranch(repoDir, { runGit } = {}) {
@@ -298,4 +299,40 @@ export async function setDefaultBranch(
     return { ok: false, error: resultError(result, "failed to set default branch") };
   }
   return { ok: true };
+}
+
+/**
+ * Protect a branch (Maintainers can push/merge; force-push allowed so later
+ * mirror updates with +refs still work).
+ * @returns {Promise<{ ok: true, alreadyProtected?: boolean } | { ok: false, error: string }>}
+ */
+export async function protectBranch(
+  group,
+  name,
+  branch,
+  { runGlab: runGlabDependency = runGlab } = {},
+) {
+  const path = `projects/${encodeURIComponent(`${group}/${name}`)}/protected_branches`;
+  const result = await runGlabDependency([
+    "api",
+    "--method",
+    "POST",
+    path,
+    "-f",
+    `name=${branch}`,
+    "-f",
+    "push_access_level=40",
+    "-f",
+    "merge_access_level=40",
+    "-f",
+    "allow_force_push=true",
+  ]);
+  if (result.status === 0) return { ok: true };
+
+  const detail = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  if (/already exists|already protected/i.test(detail)) {
+    return { ok: true, alreadyProtected: true };
+  }
+
+  return { ok: false, error: resultError(result, "failed to protect branch") };
 }

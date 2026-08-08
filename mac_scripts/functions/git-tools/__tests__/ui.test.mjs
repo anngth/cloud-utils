@@ -63,17 +63,19 @@ test("title and listEnd frame output like skm", () => {
   assert.match(stdout, /https:\/\/gitlab\.com\/example/);
 });
 
-test("success renders text in green", () => {
+test("detail indents continuation under an item without a box", () => {
   let stdout = "";
   const ui = createUi({
     stdout: { write: (value) => { stdout += value; } },
     stderr: { write() {} },
   });
 
-  ui.success("Push complete");
+  ui.item("ok  git@github.com:org/a.git");
+  ui.detail("→ https://gitlab.com/example/a");
 
-  assert.match(stdout, /\u001b\[92mPush complete/);
-  assert.match(stdout, /◇/);
+  assert.match(stdout, /■.*ok {2}git@github\.com:org\/a\.git/);
+  assert.match(stdout, /\n.* {6}.*→ https:\/\/gitlab\.com\/example\/a/);
+  assert.doesNotMatch(stdout, /■ →/);
 });
 
 test("renderBackupSelector shows 1-based numbers with □/■ and hint", () => {
@@ -90,9 +92,13 @@ test("renderBackupSelector shows 1-based numbers with □/■ and hint", () => {
     ],
     cursor: 1,
     selected: new Set([0]),
+  }, {
+    listPath: "~/Library/Mobile Documents/com~apple~CloudDocs/Backups/cloud-utils/gt/backups.json",
   });
 
   assert.match(stdout, /\u001b\[2J\u001b\[H/);
+  assert.match(stdout, /REPO BACKUP/);
+  assert.match(stdout, /~\/Library\/Mobile Documents\/.*\/gt\/backups\.json/);
   assert.match(stdout, /Select repos to backup/);
   assert.match(stdout, /space to toggle, enter to start, q to quit/);
   assert.match(stdout, /1\s+.*■.*git@github\.com:org\/a\.git/);

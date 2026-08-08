@@ -13,6 +13,7 @@ import {
   projectExists,
   projectSshUrl,
   projectWebUrl,
+  protectBranch,
   setDefaultBranch,
 } from "../gitlab.mjs";
 
@@ -316,6 +317,53 @@ test("setDefaultBranch updates the GitLab project default branch", async () => {
     "-f",
     "default_branch=main",
   ]);
+});
+
+test("protectBranch protects main with maintainer access and force-push allowed", async () => {
+  let received;
+  const result = await protectBranch(GROUP, "my-app", "main", {
+    runGlab: async (args) => {
+      received = args;
+      return { status: 0, stdout: "{}", stderr: "" };
+    },
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(received, [
+    "api",
+    "--method",
+    "POST",
+    `projects/${encodeURIComponent(`${GROUP}/my-app`)}/protected_branches`,
+    "-f",
+    "name=main",
+    "-f",
+    "push_access_level=40",
+    "-f",
+    "merge_access_level=40",
+    "-f",
+    "allow_force_push=true",
+  ]);
+});
+
+test("protectBranch treats already-protected as success", async () => {
+  const result = await protectBranch(GROUP, "my-app", "main", {
+    runGlab: async () => ({
+      status: 1,
+      stdout: '{"message":"Protected branch \'main\' already exists"}',
+      stderr: "",
+    }),
+  });
+
+  assert.deepEqual(result, { ok: true, alreadyProtected: true });
+});
+
+test("protectBranch returns error for unrelated API failures", async () => {
+  const result = await protectBranch(GROUP, "my-app", "main", {
+    runGlab: async () => ({ status: 1, stdout: "", stderr: "403 Forbidden" }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /403|Forbidden|protect/i);
 });
 
 test("pickPreferredDefaultBranch prefers main over develop", async () => {

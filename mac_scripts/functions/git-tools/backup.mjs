@@ -1,12 +1,13 @@
 import { mkdtempSync as mkdtempSyncDefault, rmSync as rmSyncDefault } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   addBackupRepo as addBackupRepoDefault,
   removeBackupRepo as removeBackupRepoDefault,
 } from "./backup-list.mjs";
 import {
+  formatDisplayPath,
   readBackupsDocument as readBackupsDocumentDefault,
   resolveGtPaths as resolveGtPathsDefault,
 } from "./config.mjs";
@@ -20,6 +21,7 @@ import {
   projectExists as projectExistsDefault,
   projectSshUrl,
   projectWebUrl,
+  protectBranch as protectBranchDefault,
   setDefaultBranch as setDefaultBranchDefault,
 } from "./gitlab.mjs";
 import { runSelector as runSelectorDefault } from "./selector.mjs";
@@ -47,6 +49,7 @@ function resolveContext(context = {}) {
     createPrivateProject = createPrivateProjectDefault,
     pickPreferredDefaultBranch = pickPreferredDefaultBranchDefault,
     setDefaultBranch = setDefaultBranchDefault,
+    protectBranch = protectBranchDefault,
     runGit = runGitDefault,
     mkdtempSync = mkdtempSyncDefault,
     rmSync = rmSyncDefault,
@@ -70,6 +73,7 @@ function resolveContext(context = {}) {
     createPrivateProject,
     pickPreferredDefaultBranch,
     setDefaultBranch,
+    protectBranch,
     runGit,
     mkdtempSync,
     rmSync,
@@ -105,6 +109,7 @@ export async function backupOneRepo(sourceUrl, context = {}) {
     createPrivateProject,
     pickPreferredDefaultBranch,
     setDefaultBranch,
+    protectBranch,
     runGit,
     mkdtempSync,
     rmSync,
@@ -161,7 +166,7 @@ export async function backupOneRepo(sourceUrl, context = {}) {
   const mirrorDir = join(tempRoot, "mirror.git");
 
   try {
-    ui.step(`Cloning source to ${mirrorDir}`);
+    ui.step(`Cloning source to ${join(basename(tempRoot), "mirror.git")}`);
     const cloneResult = await runGit(
       ["clone", "--mirror", sourceUrl, mirrorDir],
       { cwd, env },
@@ -204,6 +209,27 @@ export async function backupOneRepo(sourceUrl, context = {}) {
         ui.success(`Default branch ${preferred}`);
       }
     }
+
+    for (const branch of ["main", "develop"]) {
+      const hasBranch = await runGit(
+        ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+        { cwd: mirrorDir },
+      );
+      if (hasBranch.status !== 0) continue;
+
+      const protectedResult = await protectBranch(group, targetName, branch);
+      if (!protectedResult.ok) {
+        ui.warn(
+          `Could not protect ${branch}: ${protectedResult.error || "unknown error"}`,
+        );
+      } else {
+        ui.success(
+          protectedResult.alreadyProtected
+            ? `${branch} already protected`
+            : `Protected ${branch}`,
+        );
+      }
+    }
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -238,10 +264,12 @@ export async function runBackupBatch(urls, context = {}) {
 
   ui.step("Backup summary");
   for (const s of successes) {
-    ui.item(`ok  ${s.url} → ${s.webUrl}`);
+    ui.item(`ok  ${s.url}`);
+    ui.detail(`→ ${s.webUrl}`);
   }
   for (const f of failures) {
-    ui.item(`fail  ${f.url} — ${f.error}`, RED);
+    ui.item(`fail  ${f.url}`, RED);
+    ui.detail(`— ${f.error}`, RED);
   }
   ui.listEnd();
 
@@ -301,7 +329,7 @@ export async function runBackupCommand(args = [], context = {}) {
       return 1;
     }
     ui.success(`Added ${result.document.repos[result.index - 1]} at index ${result.index}`);
-    ui.item(paths.backupsFile);
+    ui.item(formatDisplayPath(paths.backupsFile, { home: env.HOME }));
     ui.listEnd();
     return 0;
   }
@@ -318,6 +346,8 @@ export async function runBackupCommand(args = [], context = {}) {
       return 1;
     }
     ui.success(`Removed ${result.removed}`);
+    ui.item(formatDisplayPath(paths.backupsFile, { home: env.HOME }));
+    ui.listEnd();
     return 0;
   }
 
@@ -340,7 +370,11 @@ export async function runBackupCommand(args = [], context = {}) {
   const loaded = loadReposOrError(paths, { readBackupsDocument, ui });
   if (!loaded.ok) return 1;
 
+  const listPath = formatDisplayPath(paths.backupsFile, { home: env.HOME });
+
   if (all) {
+    ui.title("REPO BACKUP");
+    ui.step(listPath);
     return runBackupBatch(loaded.repos, context);
   }
 
@@ -357,7 +391,7 @@ export async function runBackupCommand(args = [], context = {}) {
     items,
     multiple: true,
     input: stdin,
-    render: (state) => ui.renderBackupSelector(heading, state),
+    render: (state) => ui.renderBackupSelector(heading, state, { listPath }),
   });
 
   if (selection.type === "cancel") {

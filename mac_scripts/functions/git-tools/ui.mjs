@@ -44,6 +44,11 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out(`${pipe}  ${fg(color, "■")} ${text}`);
   }
 
+  /** Indented continuation under an item (no ■). */
+  function detail(text, color = C.gray) {
+    out(`${pipe}      ${fg(color, text)}`);
+  }
+
   function warn(text) {
     out(`${pipe}  ${fg(C.yellow, "■")} ${text}`);
   }
@@ -82,9 +87,12 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out(message);
   }
 
-  function renderBackupSelector(heading, state) {
+  function renderBackupSelector(heading, state, { listPath } = {}) {
     stdout.write("\u001b[2J\u001b[H");
-    title("GT");
+    title("REPO BACKUP");
+    if (listPath) {
+      step(listPath);
+    }
     step(String(heading));
     active(`Select repos ${fg(C.white, "(space to toggle, enter to start, q to quit)")}`);
     out(pipe);
@@ -111,6 +119,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     success,
     active,
     item,
+    detail,
     warn,
     listEnd,
     renderBackupSelector,
