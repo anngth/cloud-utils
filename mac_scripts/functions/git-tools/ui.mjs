@@ -96,7 +96,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
       step(listPath);
     }
     step(String(heading));
-    active(`Select repos ${fg(C.white, "(space to toggle, enter to start, q to quit)")}`);
+    active(`Select repos ${fg(C.white, "(space toggle, a all, c clear, enter to start, q to quit)")}`);
     out(pipe);
     state.items.forEach((entry, index) => {
       const label = typeof entry === "string" ? entry : entry.label;

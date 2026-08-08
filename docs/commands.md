@@ -42,7 +42,7 @@ gt backup remove git@github.com:org/my-app.git
 ```
 
 - **backup** — manages a list of source SSH URLs and mirrors selected repos to private `anngth-dev/backups/<owner>-<repo>` on GitLab.
-  - `gt backup` — interactive multi-select (TTY required); space toggles, enter starts, q cancels; pre-checks repos from the last successful submit.
+  - `gt backup` — interactive multi-select (TTY required); space toggles, a selects all, c clears, enter starts, q cancels; pre-checks repos from the last successful submit.
   - `gt backup -f` / `gt backup --force` — skip the equal-fingerprint short-circuit; always mirror live repos (still creates missing / recreates inactive).
   - `gt backup --all` — backup every listed repo (no TTY required); does not read or update `selectedLast`.
   - `gt backup --all -f` / `--force` — same as `--all`, but force every live repo to mirror.

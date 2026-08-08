@@ -101,7 +101,7 @@ test("renderBackupSelector shows 1-based numbers with □/■ and hint", () => {
   assert.match(stdout, /REPO BACKUP/);
   assert.match(stdout, /~\/Library\/Mobile Documents\/.*\/gt\/backups\.json/);
   assert.match(stdout, /Select repos to backup/);
-  assert.match(stdout, /space to toggle, enter to start, q to quit/);
+  assert.match(stdout, /space toggle, a all, c clear, enter to start, q to quit/);
   assert.match(stdout, /1\s+.*■.*git@github\.com:org\/a\.git/);
   assert.match(stdout, /2\s+.*□.*git@gitlab\.com:acme\/b\.git/);
   assert.match(stdout, /└/);
