@@ -11,6 +11,40 @@ export function requirementKey(source, skill) {
   return JSON.stringify([source, skill]);
 }
 
+export function catalogRequirements(document) {
+  const byKey = new Map();
+  const bySkill = new Map();
+
+  for (const entry of document.sources ?? []) {
+    for (const skill of entry.skills ?? []) {
+      const key = requirementKey(entry.source, skill);
+      const item = byKey.get(key) ?? {
+        key,
+        source: entry.source,
+        skill,
+      };
+      byKey.set(key, item);
+
+      const sources = bySkill.get(skill) ?? new Map();
+      if (!sources.has(entry.source)) sources.set(entry.source, true);
+      bySkill.set(skill, sources);
+    }
+  }
+
+  const desiredConflicts = [...bySkill]
+    .filter(([, sources]) => sources.size > 1)
+    .map(([skill, sources]) => ({
+      skill,
+      sources: [...sources.keys()].sort(),
+      profiles: [],
+    }));
+
+  return {
+    requirements: [...byKey.values()].sort((a, b) => a.skill.localeCompare(b.skill)),
+    desiredConflicts,
+  };
+}
+
 export function mergeProfileRequirements(document, names) {
   const byKey = new Map();
   const bySkill = new Map();

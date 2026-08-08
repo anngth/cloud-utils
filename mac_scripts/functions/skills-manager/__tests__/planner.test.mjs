@@ -1,35 +1,53 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  catalogRequirements,
   classifyStatus,
   createInstallPlan,
   createUninstallPlan,
-  mergeProfileRequirements,
 } from "../planner.mjs";
 
-const PROFILES = {
+const CATALOG = {
   version: 1,
-  profiles: [
-    {
-      name: "frontend",
-      sources: [{ source: "a/repo", skills: ["frontend-design", "code-review"] }],
-    },
-    {
-      name: "quality",
-      sources: [{ source: "a/repo", skills: ["code-review", "testing"] }],
-    },
-    {
-      name: "review",
-      sources: [{ source: "a/repo", skills: ["code-review"] }],
-    },
+  sources: [
+    { source: "a/repo", skills: ["frontend-design", "code-review", "testing"] },
   ],
 };
 
-const CONFLICTING_PROFILES = {
+const FRONTEND_CATALOG = {
   version: 1,
-  profiles: [
-    { name: "a", sources: [{ source: "a/repo", skills: ["review"] }] },
-    { name: "b", sources: [{ source: "b/repo", skills: ["review"] }] },
+  sources: [{ source: "a/repo", skills: ["frontend-design", "code-review"] }],
+};
+
+const QUALITY_CATALOG = {
+  version: 1,
+  sources: [{ source: "a/repo", skills: ["code-review", "testing"] }],
+};
+
+const CONFLICTING_CATALOG = {
+  version: 1,
+  sources: [
+    { source: "a/repo", skills: ["review"] },
+    { source: "b/repo", skills: ["review"] },
+  ],
+};
+
+const CONFLICTING_CATALOG_A_ONLY = {
+  version: 1,
+  sources: [{ source: "a/repo", skills: ["review"] }],
+};
+
+const CONFLICTING_CATALOG_B_ONLY = {
+  version: 1,
+  sources: [{ source: "b/repo", skills: ["review"] }],
+};
+
+const CONFLICTING_WITH_SAFE_CATALOG = {
+  version: 1,
+  sources: [
+    { source: "a/repo", skills: ["review"] },
+    { source: "b/repo", skills: ["review"] },
+    { source: "c/repo", skills: ["testing"] },
   ],
 };
 
@@ -44,26 +62,39 @@ const actual = (skill, source) => ({
 
 const MERGED = {
   requirements: [
-    { key: '["a/repo","ok"]', source: "a/repo", skill: "ok", profiles: ["p"] },
-    { key: '["a/repo","missing"]', source: "a/repo", skill: "missing", profiles: ["p"] },
-    { key: '["a/repo","wrong"]', source: "a/repo", skill: "wrong", profiles: ["p"] },
-    { key: '["a/repo","unknown"]', source: "a/repo", skill: "unknown", profiles: ["p"] },
+    { key: '["a/repo","ok"]', source: "a/repo", skill: "ok" },
+    { key: '["a/repo","missing"]', source: "a/repo", skill: "missing" },
+    { key: '["a/repo","wrong"]', source: "a/repo", skill: "wrong" },
+    { key: '["a/repo","unknown"]', source: "a/repo", skill: "unknown" },
   ],
   desiredConflicts: [],
 };
 
-test("deduplicates the same pair and records contributing profiles", () => {
-  const merged = mergeProfileRequirements(PROFILES, ["frontend", "review"]);
-  const shared = merged.requirements.find((item) => item.skill === "code-review");
-  assert.deepEqual(shared.profiles, ["frontend", "review"]);
+test("catalogRequirements unions all catalog skills", () => {
+  const merged = catalogRequirements({
+    version: 1,
+    sources: [
+      { source: "a/repo", skills: ["one"] },
+      { source: "b/repo", skills: ["two"] },
+    ],
+  });
+  assert.deepEqual(merged.requirements.map((r) => r.skill).sort(), ["one", "two"]);
+  assert.equal(merged.desiredConflicts.length, 0);
 });
 
-test("reports one name required from different sources", () => {
-  const merged = mergeProfileRequirements(CONFLICTING_PROFILES, ["a", "b"]);
+test("catalogRequirements deduplicates the same source and skill pair", () => {
+  const merged = catalogRequirements(CATALOG);
+  const shared = merged.requirements.find((item) => item.skill === "code-review");
+  assert.equal(shared.source, "a/repo");
+  assert.ok(!("profiles" in shared) || shared.profiles.length === 0);
+});
+
+test("catalogRequirements reports one name required from different sources", () => {
+  const merged = catalogRequirements(CONFLICTING_CATALOG);
   assert.deepEqual(merged.desiredConflicts, [{
     skill: "review",
     sources: ["a/repo", "b/repo"],
-    profiles: ["a", "b"],
+    profiles: [],
   }]);
 });
 
@@ -82,7 +113,7 @@ test("classifies installed missing mismatch untracked and extra", () => {
 });
 
 test("status preserves desired conflicts and skips their ambiguous actual names", () => {
-  const merged = mergeProfileRequirements(CONFLICTING_PROFILES, ["a", "b"]);
+  const merged = catalogRequirements(CONFLICTING_CATALOG);
   const result = classifyStatus(merged, new Map([
     ["review", actual("review", "a/repo")],
   ]));
@@ -106,6 +137,7 @@ const INSTALLED = new Map([
   ["code-review", actual("code-review", "a/repo")],
 ]);
 
+
 test("install selects missing and blocks conflicts without force", () => {
   const plan = createInstallPlan(STATUS, { force: false });
   assert.deepEqual(plan.install.map(name), ["missing"]);
@@ -124,7 +156,7 @@ test("temporary selected keys filter installs without removing non-force conflic
   const desiredConflicts = [{
     skill: "ambiguous",
     sources: ["a/repo", "b/repo"],
-    profiles: ["p", "q"],
+    profiles: [],
   }];
   const plan = createInstallPlan({ ...STATUS, desiredConflicts }, {
     force: false,
@@ -147,15 +179,8 @@ test("temporary selected keys filter forced replacements", () => {
 });
 
 test("desired-source conflicts block their mutation while safe installs continue", () => {
-  const document = {
-    version: 1,
-    profiles: [
-      ...CONFLICTING_PROFILES.profiles,
-      { name: "safe", sources: [{ source: "c/repo", skills: ["testing"] }] },
-    ],
-  };
   const status = classifyStatus(
-    mergeProfileRequirements(document, ["a", "b", "safe"]),
+    catalogRequirements(CONFLICTING_WITH_SAFE_CATALOG),
     new Map(),
   );
   const plan = createInstallPlan(status, { force: true });
@@ -165,10 +190,10 @@ test("desired-source conflicts block their mutation while safe installs continue
   assert.deepEqual(plan.desiredConflicts.map((item) => item.skill), ["review"]);
 });
 
-test("uninstall retains requirements from remaining linked profiles", () => {
+test("uninstall retains requirements from remaining catalog skills", () => {
   const plan = createUninstallPlan({
-    selected: mergeProfileRequirements(PROFILES, ["frontend"]),
-    remaining: mergeProfileRequirements(PROFILES, ["quality"]),
+    selected: catalogRequirements(FRONTEND_CATALOG),
+    remaining: catalogRequirements(QUALITY_CATALOG),
     installedState: INSTALLED,
     force: false,
     linkedSelected: ["frontend"],
@@ -180,8 +205,8 @@ test("uninstall retains requirements from remaining linked profiles", () => {
 
 test("uninstall retention compares source and skill pair keys", () => {
   const plan = createUninstallPlan({
-    selected: mergeProfileRequirements(CONFLICTING_PROFILES, ["a"]),
-    remaining: mergeProfileRequirements(CONFLICTING_PROFILES, ["b"]),
+    selected: catalogRequirements(CONFLICTING_CATALOG_A_ONLY),
+    remaining: catalogRequirements(CONFLICTING_CATALOG_B_ONLY),
     installedState: new Map([["review", actual("review", "a/repo")]]),
     force: false,
     linkedSelected: ["a"],
@@ -194,8 +219,8 @@ test("uninstall retention compares source and skill pair keys", () => {
 test("uninstall skips mismatched and untracked actual entries unless forced", () => {
   const selected = {
     requirements: [
-      { key: '["a/repo","wrong"]', source: "a/repo", skill: "wrong", profiles: ["p"] },
-      { key: '["a/repo","unknown"]', source: "a/repo", skill: "unknown", profiles: ["p"] },
+      { key: '["a/repo","wrong"]', source: "a/repo", skill: "wrong" },
+      { key: '["a/repo","unknown"]', source: "a/repo", skill: "unknown" },
     ],
     desiredConflicts: [],
   };
@@ -226,7 +251,7 @@ test("uninstall skips mismatched and untracked actual entries unless forced", ()
 });
 
 test("force never resolves two desired sources for one skill name", () => {
-  const selected = mergeProfileRequirements(CONFLICTING_PROFILES, ["a", "b"]);
+  const selected = catalogRequirements(CONFLICTING_CATALOG);
   const plan = createUninstallPlan({
     selected,
     remaining: { requirements: [], desiredConflicts: [] },
@@ -241,10 +266,10 @@ test("force never resolves two desired sources for one skill name", () => {
 test("desired-source conflicts do not block independent safe uninstall items", () => {
   const selected = {
     requirements: [
-      ...mergeProfileRequirements(CONFLICTING_PROFILES, ["a", "b"]).requirements,
-      { key: '["c/repo","safe"]', source: "c/repo", skill: "safe", profiles: ["a"] },
+      ...catalogRequirements(CONFLICTING_CATALOG).requirements,
+      { key: '["c/repo","safe"]', source: "c/repo", skill: "safe" },
     ],
-    desiredConflicts: mergeProfileRequirements(CONFLICTING_PROFILES, ["a", "b"]).desiredConflicts,
+    desiredConflicts: catalogRequirements(CONFLICTING_CATALOG).desiredConflicts,
   };
   const plan = createUninstallPlan({
     selected,
