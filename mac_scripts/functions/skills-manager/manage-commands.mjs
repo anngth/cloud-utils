@@ -78,6 +78,13 @@ export function validateManagementCommandGrammar(family, args) {
     const parsed = parseOptions(rest);
     requirePositionals(parsed, 1, "skm source remove <source|index>");
     rejectOptions(parsed);
+    return;
+  }
+  if (action === "edit") {
+    const parsed = parseOptions(rest);
+    requirePositionals(parsed, 1, "skm source edit <source|index> [-k skill...] [-a|--all] [-n|--no-skills] [-y]");
+    rejectOptions(parsed, ["skills", "all", "noSkills", "yes"]);
+    return;
   }
 }
 
@@ -176,6 +183,32 @@ async function runSourceAdd(args, context) {
   return 0;
 }
 
+async function runSourceEdit(args, context) {
+  const parsed = parseOptions(args);
+  requirePositionals(parsed, 1, "skm source edit <source|index> [-k skill...] [-a|--all] [-n|--no-skills] [-y]");
+  rejectOptions(parsed, ["skills", "all", "noSkills", "yes"]);
+  const { entry } = resolveSourceToken(
+    context.config.catalog,
+    parsed.positionals[0],
+    { cwd: context.cwd },
+  );
+  const source = entry.source;
+  const selection = await sourceSelection(parsed, source, context, {
+    initial: entry.skills ?? [],
+  });
+  if (selection.type !== "submit") return 0;
+  const skills = [...new Set(selection.selected)];
+  const next = upsertSource(context.config.catalog, source, skills, { cwd: context.cwd });
+  context.writeCatalog(context.paths, next);
+  context.ui.sourceChanged({
+    action: "edited",
+    profile: null,
+    source,
+    skills,
+  });
+  return 0;
+}
+
 async function runSourceRemove(args, context) {
   const parsed = parseOptions(args);
   requirePositionals(parsed, 1, "skm source remove <source|index>");
@@ -209,6 +242,7 @@ export async function runSourceCommand(args, context) {
   const [action, ...rest] = args;
   try {
     if (action === "add") return await runSourceAdd(rest, context);
+    if (action === "edit") return await runSourceEdit(rest, context);
     if (action === "remove") return await runSourceRemove(rest, context);
     context.ui.error(`Unknown source command: ${action ?? ""}`);
     return 1;

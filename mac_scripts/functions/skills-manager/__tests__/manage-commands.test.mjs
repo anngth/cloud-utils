@@ -137,3 +137,64 @@ test("source add rejects conflicting selection modes before discovery", async (t
   assert.equal(harness.writtenCatalog, undefined);
   assert.match(harness.stderr(), /mutually exclusive/i);
 });
+
+test("source edit by index updates skills in place", async (t) => {
+  const harness = makeManagementHarness(t, {
+    catalog: catalog(
+      { source: "first/repo", skills: ["a"] },
+      { source: "second/repo", skills: ["old"] },
+    ),
+    discover: [
+      { name: "old", description: "Old" },
+      { name: "new", description: "New" },
+    ],
+    selected: ["new"],
+  });
+
+  assert.equal(await runSourceCommand(["edit", "2"], harness.context), 0);
+  assert.deepEqual(harness.selectionCalls[0][0].initial, ["old"]);
+  assert.deepEqual(harness.writtenCatalog, catalog(
+    { source: "first/repo", skills: ["a"] },
+    { source: "second/repo", skills: ["new"] },
+  ));
+  assert.deepEqual(harness.uiCalls.at(-1), [
+    "sourceChanged",
+    { action: "edited", profile: null, source: "second/repo", skills: ["new"] },
+  ]);
+});
+
+test("source edit by source id uses resolveSourceToken", async (t) => {
+  const harness = makeManagementHarness(t, {
+    catalog: catalog({ source: "acme/skills", skills: ["keep"] }),
+    discover: [
+      { name: "keep", description: "Keep" },
+      { name: "extra", description: "Extra" },
+    ],
+    selected: ["keep", "extra"],
+  });
+
+  assert.equal(await runSourceCommand(["edit", "acme/skills"], harness.context), 0);
+  assert.deepEqual(harness.writtenCatalog, catalog({
+    source: "acme/skills",
+    skills: ["keep", "extra"],
+  }));
+});
+
+test("source edit missing token fails without write", async (t) => {
+  const harness = makeManagementHarness(t, {
+    catalog: catalog({ source: "acme/skills", skills: ["a"] }),
+  });
+  assert.equal(await runSourceCommand(["edit", "9"], harness.context), 1);
+  assert.match(harness.stderr(), /out of range/i);
+  assert.equal(harness.writtenCatalog, undefined);
+});
+
+test("source edit --no-skills clears skills without discovery", async (t) => {
+  const harness = makeManagementHarness(t, {
+    catalog: catalog({ source: "acme/skills", skills: ["a"] }),
+  });
+  assert.equal(await runSourceCommand(["edit", "1", "--no-skills"], harness.context), 0);
+  assert.equal(harness.upstreamCalls.length, 0);
+  assert.deepEqual(harness.writtenCatalog, catalog({ source: "acme/skills", skills: [] }));
+  assert.equal(harness.uiCalls.at(-1)[1].action, "edited");
+});
