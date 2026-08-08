@@ -21,6 +21,7 @@ import {
   assertGlabReady as assertGlabReadyDefault,
   createPrivateProject as createPrivateProjectDefault,
   ensureBackupGroup as ensureBackupGroupDefault,
+  groupExists as groupExistsDefault,
   pickPreferredDefaultBranch as pickPreferredDefaultBranchDefault,
   projectExists as projectExistsDefault,
   projectSshUrl,
@@ -40,13 +41,23 @@ const RED = "\u001b[31m";
 const ADD_HINT = "Use `gt backup add <ssh-url>` to add a repo first.";
 const FORCE_ONLY_HINT =
   "The --force flag is only valid for interactive backup and gt backup --all";
+const DRY_RUN_ONLY_HINT =
+  "The --dry-run flag is only valid for interactive backup and gt backup --all";
 
 function isForceFlag(arg) {
   return arg === "-f" || arg === "--force";
 }
 
+function isDryRunFlag(arg) {
+  return arg === "--dry-run";
+}
+
 function hasForceFlag(args, startIndex = 1) {
   return args.slice(startIndex).some(isForceFlag);
+}
+
+function hasDryRunFlag(args, startIndex = 1) {
+  return args.slice(startIndex).some(isDryRunFlag);
 }
 
 function defaultHasCommand(name) {
@@ -83,6 +94,8 @@ function resolveContext(context = {}) {
     fs,
     runSelector = runSelectorDefault,
     force = false,
+    dryRun = false,
+    groupExists = groupExistsDefault,
   } = context;
 
   return {
@@ -114,6 +127,8 @@ function resolveContext(context = {}) {
     fs,
     runSelector,
     force,
+    dryRun,
+    groupExists,
   };
 }
 
@@ -125,7 +140,7 @@ function resolveContext(context = {}) {
  * @param {string} sourceUrl
  * @param {Record<string, unknown>} context
  * @returns {Promise<
- *   | { ok: true, skipped: boolean, webUrl: string, projectPath: string }
+ *   | { ok: true, skipped: boolean, dryRun?: boolean, webUrl: string, projectPath: string }
  *   | { ok: false, error: string }
  * >}
  */
@@ -146,6 +161,8 @@ export async function backupOneRepo(sourceUrl, context = {}) {
     mkdtempSync,
     rmSync,
     force,
+    dryRun,
+    groupExists,
   } = resolveContext(context);
 
   const parsed = parseSshGitUrl(sourceUrl);
@@ -167,6 +184,85 @@ export async function backupOneRepo(sourceUrl, context = {}) {
   const projectPath = `${group}/${targetName}`;
 
   ui.step(`${sourceUrl} → ${projectPath}`);
+
+  if (dryRun) {
+    const groupCheck = await groupExists(group);
+    if (!groupCheck.ok) {
+      return {
+        ok: false,
+        error: groupCheck.error || "could not check GitLab group",
+      };
+    }
+
+    const existsResult = await projectExists(group, targetName);
+    if (!existsResult.ok) {
+      return {
+        ok: false,
+        error: existsResult.error || "could not check GitLab project",
+      };
+    }
+
+    const webUrl = projectWebUrl(group, targetName);
+    const destUrl = projectSshUrl(group, targetName);
+
+    if (!existsResult.exists) {
+      if (existsResult.inactive) {
+        ui.step(`Would recreate inactive backup ${projectPath}`);
+      } else {
+        ui.step(`Would create ${projectPath}`);
+      }
+      ui.step("Would mirror");
+      return {
+        ok: true,
+        skipped: false,
+        dryRun: true,
+        webUrl,
+        projectPath,
+      };
+    }
+
+    ui.step(`Would update existing backup ${projectPath}`);
+    const sourceLs = await runGit(["ls-remote", sourceUrl], { cwd, env });
+    if (sourceLs.status !== 0) {
+      return {
+        ok: false,
+        error:
+          sourceLs.stderr?.trim()
+          || sourceLs.stdout?.trim()
+          || "git ls-remote source failed",
+      };
+    }
+    const destLs = await runGit(["ls-remote", destUrl], { cwd, env });
+    if (destLs.status !== 0) {
+      return {
+        ok: false,
+        error:
+          destLs.stderr?.trim()
+          || destLs.stdout?.trim()
+          || "git ls-remote destination failed",
+      };
+    }
+    const sourceFp = parseLsRemoteFingerprint(sourceLs.stdout);
+    const destFp = parseLsRemoteFingerprint(destLs.stdout);
+    if (fingerprintsEqual(sourceFp, destFp)) {
+      ui.step("Would skip (unchanged)");
+      return {
+        ok: true,
+        skipped: true,
+        dryRun: true,
+        webUrl,
+        projectPath,
+      };
+    }
+    ui.step("Would mirror");
+    return {
+      ok: true,
+      skipped: false,
+      dryRun: true,
+      webUrl,
+      projectPath,
+    };
+  }
 
   const groupReady = await ensureBackupGroup(group);
   if (!groupReady.ok) {
@@ -326,15 +422,29 @@ export async function runBackupBatch(urls, context = {}) {
     recordLastCheckedAt,
     now,
     fs,
+    dryRun,
   } = resolveContext(context);
   const results = [];
   const paths = resolveGtPaths(env);
   const recordOpts = fs ? { fs } : {};
 
+  if (dryRun) {
+    ui.step("Dry run (no changes)");
+  }
+
   for (const url of urls ?? []) {
     const result = await backupOneRepo(url, context);
     if (!result.ok) {
       results.push({ kind: "fail", url, error: result.error });
+      continue;
+    }
+
+    if (dryRun) {
+      if (result.skipped) {
+        results.push({ kind: "skip", url });
+      } else {
+        results.push({ kind: "ok", url });
+      }
       continue;
     }
 
@@ -375,10 +485,14 @@ export async function runBackupBatch(urls, context = {}) {
   for (const r of results) {
     if (r.kind === "ok") {
       ui.item(`ok  ${r.url}`);
-      ui.detail(`→ ${r.webUrl}`);
+      if (dryRun) {
+        ui.detail("→ would mirror");
+      } else {
+        ui.detail(`→ ${r.webUrl}`);
+      }
     } else if (r.kind === "skip") {
       ui.item(`skip  ${r.url}`);
-      ui.detail("→ unchanged");
+      ui.detail(dryRun ? "→ would skip (unchanged)" : "→ unchanged");
     } else {
       ui.item(`fail  ${r.url}`, RED);
       ui.detail(`— ${r.error}`, RED);
@@ -437,6 +551,10 @@ export async function runBackupCommand(args = [], context = {}) {
       ui.error(FORCE_ONLY_HINT);
       return 1;
     }
+    if (hasDryRunFlag(args, 1)) {
+      ui.error(DRY_RUN_ONLY_HINT);
+      return 1;
+    }
     const urls = args.slice(1);
     if (urls.length === 0) {
       ui.error("Usage: gt backup add <ssh-url> [<ssh-url> ...]");
@@ -469,6 +587,10 @@ export async function runBackupCommand(args = [], context = {}) {
       ui.error(FORCE_ONLY_HINT);
       return 1;
     }
+    if (hasDryRunFlag(args, 1)) {
+      ui.error(DRY_RUN_ONLY_HINT);
+      return 1;
+    }
     const token = args[1];
     if (!token || args.length !== 2) {
       ui.error("Usage: gt backup remove <index|ssh-url>");
@@ -487,6 +609,7 @@ export async function runBackupCommand(args = [], context = {}) {
 
   let all = false;
   let force = false;
+  let dryRun = context.dryRun === true;
   for (const arg of args) {
     if (arg === "--all") {
       all = true;
@@ -494,6 +617,10 @@ export async function runBackupCommand(args = [], context = {}) {
     }
     if (isForceFlag(arg)) {
       force = true;
+      continue;
+    }
+    if (isDryRunFlag(arg)) {
+      dryRun = true;
       continue;
     }
     if (arg.startsWith("-")) {
@@ -506,12 +633,16 @@ export async function runBackupCommand(args = [], context = {}) {
     return 1;
   }
 
-  if (force && context.dryRun === true) {
+  if (force && dryRun) {
     ui.error("Cannot combine --force and --dry-run");
     return 1;
   }
 
-  const batchContext = force ? { ...context, force: true } : context;
+  const batchContext = {
+    ...context,
+    ...(force && { force: true }),
+    ...(dryRun && { dryRun: true }),
+  };
 
   const loaded = loadReposOrError(paths, { loadBackupsDocument, ui });
   if (!loaded.ok) return 1;
@@ -561,14 +692,16 @@ export async function runBackupCommand(args = [], context = {}) {
     return 1;
   }
 
-  const saved = setSelectedLast(
-    paths,
-    selection.selected,
-    fs ? { fs } : {},
-  );
-  if (!saved.ok) {
-    ui.error(`Failed to save selection: ${saved.error}`);
-    return 1;
+  if (!dryRun) {
+    const saved = setSelectedLast(
+      paths,
+      selection.selected,
+      fs ? { fs } : {},
+    );
+    if (!saved.ok) {
+      ui.error(`Failed to save selection: ${saved.error}`);
+      return 1;
+    }
   }
 
   return runBackupBatch(selection.selected, batchContext);

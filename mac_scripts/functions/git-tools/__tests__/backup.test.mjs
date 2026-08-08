@@ -1075,3 +1075,152 @@ test("runBackupCommand empty list errors with add hint", async () => {
   assert.match(h.messages.errors.join("\n"), /empty|no repos|not found|missing/i);
   assert.match(h.messages.errors.join("\n"), /gt backup add|backup add/i);
 });
+
+test("backupOneRepo dry-run equal fingerprints skips without clone", async () => {
+  let cloned = false;
+  const { h, context } = baseContext({
+    dryRun: true,
+    projectExists: async () => ({ ok: true, exists: true }),
+    createPrivateProject: async () => assert.fail("createPrivateProject should not run"),
+    runGit: async (args) => {
+      if (args[0] === "ls-remote") {
+        return { status: 0, stdout: "abc\trefs/heads/main\n", stderr: "" };
+      }
+      if (args[0] === "clone") {
+        cloned = true;
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+  const result = await backupOneRepo(SOURCE, context);
+  assert.equal(result.ok, true);
+  assert.equal(result.skipped, true);
+  assert.equal(result.dryRun, true);
+  assert.equal(cloned, false);
+  assert.match(h.messages.statuses.join("\n"), /would skip|unchanged/i);
+});
+
+test("backupOneRepo dry-run missing project plans mirror without create", async () => {
+  const created = [];
+  let cloned = false;
+  const { h, context } = baseContext({
+    dryRun: true,
+    projectExists: async () => ({ ok: true, exists: false }),
+    createPrivateProject: async (_g, name) => {
+      created.push(name);
+      return { ok: true };
+    },
+    runGit: async (args) => {
+      if (args[0] === "clone") {
+        cloned = true;
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+  const result = await backupOneRepo(SOURCE, context);
+  assert.equal(result.ok, true);
+  assert.equal(result.skipped, false);
+  assert.equal(result.dryRun, true);
+  assert.deepEqual(created, []);
+  assert.equal(cloned, false);
+  assert.match(h.messages.statuses.join("\n"), /would create|would mirror/i);
+});
+
+test("runBackupBatch dry-run skip leaves timestamps unchanged", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [{
+    url: SOURCE,
+    lastBackupAt: "2020-01-01T00:00:00.000Z",
+    lastCheckedAt: null,
+  }]);
+  let cloned = false;
+  const { h, context } = baseContext({
+    dryRun: true,
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    projectExists: async () => ({ ok: true, exists: true }),
+    runGit: async (args) => {
+      if (args[0] === "ls-remote") {
+        return { status: 0, stdout: "abc\trefs/heads/main\n", stderr: "" };
+      }
+      if (args[0] === "clone") {
+        cloned = true;
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+  const code = await runBackupBatch([SOURCE], context);
+  assert.equal(code, 0);
+  assert.equal(cloned, false);
+  assert.match(h.messages.statuses.join("\n"), /Dry run \(no changes\)/);
+  const items = h.messages.items.join("\n");
+  assert.match(items, /skip/);
+  assert.match(items, /would skip \(unchanged\)/);
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.repos[0].lastBackupAt, "2020-01-01T00:00:00.000Z");
+  assert.equal(onDisk.repos[0].lastCheckedAt, null);
+});
+
+test("runBackupCommand --all --dry-run --force exits 1", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+  });
+  const code = await runBackupCommand(["--all", "--dry-run", "--force"], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /force.*dry-run|dry-run.*force/i);
+});
+
+test("runBackupCommand interactive dry-run does not persist selectedLast", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [
+    { url: SOURCE, lastBackupAt: null, lastCheckedAt: null, selectedLast: false },
+    { url: SOURCE_B, lastBackupAt: null, lastCheckedAt: null, selectedLast: false },
+  ]);
+  const { context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    stdin: { isTTY: true },
+    dryRun: true,
+    projectExists: async () => ({ ok: true, exists: true }),
+    runGit: async (args) => {
+      if (args[0] === "ls-remote") {
+        return { status: 0, stdout: "abc\trefs/heads/main\n", stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    },
+    runSelector: async ({ items }) => ({
+      type: "submit",
+      selected: [items[1].value],
+    }),
+  });
+  await runBackupCommand([], context);
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.repos[0].selectedLast, false);
+  assert.equal(onDisk.repos[1].selectedLast, false);
+});
+
+test("runBackupCommand rejects --dry-run on add", async () => {
+  const { h, context } = baseContext();
+  const code = await runBackupCommand(["add", SOURCE, "--dry-run"], context);
+  assert.equal(code, 1);
+  assert.match(h.messages.errors.join("\n"), /only valid for interactive backup/i);
+});
+
+test("runBackupCommand --all --dry-run plans mirror with ok summary", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [{ url: SOURCE, lastBackupAt: null, lastCheckedAt: null }]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    projectExists: async () => ({ ok: true, exists: false }),
+    runGit: async () => ({ status: 0, stdout: "", stderr: "" }),
+  });
+  const code = await runBackupCommand(["--all", "--dry-run"], context);
+  assert.equal(code, 0);
+  const items = h.messages.items.join("\n");
+  assert.match(items, /ok/);
+  assert.match(items, /would mirror/);
+  assert.doesNotMatch(items, new RegExp(`→\\s+${projectWebUrl(BACKUP_GROUP, BASE_NAME)}`));
+});
