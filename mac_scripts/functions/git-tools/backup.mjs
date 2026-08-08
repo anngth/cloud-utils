@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import {
   addBackupRepo as addBackupRepoDefault,
   recordLastBackupAt as recordLastBackupAtDefault,
+  recordLastCheckedAt as recordLastCheckedAtDefault,
   removeBackupRepo as removeBackupRepoDefault,
 } from "./backup-list.mjs";
 import {
@@ -26,6 +27,10 @@ import {
   setDefaultBranch as setDefaultBranchDefault,
 } from "./gitlab.mjs";
 import { runSelector as runSelectorDefault } from "./selector.mjs";
+import {
+  fingerprintsEqual,
+  parseLsRemoteFingerprint,
+} from "./refs-fingerprint.mjs";
 import { parseSshGitUrl } from "./ssh-url.mjs";
 import { createUi } from "./ui.mjs";
 
@@ -58,6 +63,7 @@ function resolveContext(context = {}) {
     addBackupRepo = addBackupRepoDefault,
     removeBackupRepo = removeBackupRepoDefault,
     recordLastBackupAt = recordLastBackupAtDefault,
+    recordLastCheckedAt = recordLastCheckedAtDefault,
     loadBackupsDocument = loadBackupsDocumentDefault,
     now = () => new Date(),
     fs,
@@ -85,6 +91,7 @@ function resolveContext(context = {}) {
     addBackupRepo,
     removeBackupRepo,
     recordLastBackupAt,
+    recordLastCheckedAt,
     loadBackupsDocument,
     now,
     fs,
@@ -100,7 +107,7 @@ function resolveContext(context = {}) {
  * @param {string} sourceUrl
  * @param {Record<string, unknown>} context
  * @returns {Promise<
- *   | { ok: true, webUrl: string, projectPath: string }
+ *   | { ok: true, skipped: boolean, webUrl: string, projectPath: string }
  *   | { ok: false, error: string }
  * >}
  */
@@ -169,6 +176,41 @@ export async function backupOneRepo(sourceUrl, context = {}) {
   }
 
   const destUrl = projectSshUrl(group, targetName);
+
+  if (existsResult.exists) {
+    const sourceLs = await runGit(["ls-remote", sourceUrl], { cwd, env });
+    if (sourceLs.status !== 0) {
+      return {
+        ok: false,
+        error:
+          sourceLs.stderr?.trim()
+          || sourceLs.stdout?.trim()
+          || "git ls-remote source failed",
+      };
+    }
+    const destLs = await runGit(["ls-remote", destUrl], { cwd, env });
+    if (destLs.status !== 0) {
+      return {
+        ok: false,
+        error:
+          destLs.stderr?.trim()
+          || destLs.stdout?.trim()
+          || "git ls-remote destination failed",
+      };
+    }
+    const sourceFp = parseLsRemoteFingerprint(sourceLs.stdout);
+    const destFp = parseLsRemoteFingerprint(destLs.stdout);
+    if (fingerprintsEqual(sourceFp, destFp)) {
+      ui.step("Unchanged; skipping mirror");
+      return {
+        ok: true,
+        skipped: true,
+        webUrl: projectWebUrl(group, targetName),
+        projectPath,
+      };
+    }
+  }
+
   const tempRoot = mkdtempSync(join(tmpdir(), "gt-backup-"));
   const mirrorDir = join(tempRoot, "mirror.git");
 
@@ -243,6 +285,7 @@ export async function backupOneRepo(sourceUrl, context = {}) {
 
   return {
     ok: true,
+    skipped: false,
     webUrl: projectWebUrl(group, targetName),
     projectPath,
   };
@@ -256,17 +299,40 @@ export async function backupOneRepo(sourceUrl, context = {}) {
  * @returns {Promise<number>} 0 if all ok, else 1
  */
 export async function runBackupBatch(urls, context = {}) {
-  const { ui, env, resolveGtPaths, recordLastBackupAt, now, fs } =
-    resolveContext(context);
-  const successes = [];
-  const failures = [];
+  const {
+    ui,
+    env,
+    resolveGtPaths,
+    recordLastBackupAt,
+    recordLastCheckedAt,
+    now,
+    fs,
+  } = resolveContext(context);
+  const results = [];
   const paths = resolveGtPaths(env);
   const recordOpts = fs ? { fs } : {};
 
   for (const url of urls ?? []) {
     const result = await backupOneRepo(url, context);
     if (!result.ok) {
-      failures.push({ url, error: result.error });
+      results.push({ kind: "fail", url, error: result.error });
+      continue;
+    }
+
+    if (result.skipped) {
+      const recorded = recordLastCheckedAt(paths, url, {
+        now: now(),
+        ...recordOpts,
+      });
+      if (!recorded.ok) {
+        results.push({
+          kind: "fail",
+          url,
+          error: `Backup skipped but failed to save lastCheckedAt: ${recorded.error}`,
+        });
+        continue;
+      }
+      results.push({ kind: "skip", url });
       continue;
     }
 
@@ -275,28 +341,33 @@ export async function runBackupBatch(urls, context = {}) {
       ...recordOpts,
     });
     if (!recorded.ok) {
-      failures.push({
+      results.push({
+        kind: "fail",
         url,
         error: `Backup succeeded but failed to save lastBackupAt: ${recorded.error}`,
       });
       continue;
     }
 
-    successes.push({ url, webUrl: result.webUrl, projectPath: result.projectPath });
+    results.push({ kind: "ok", url, webUrl: result.webUrl });
   }
 
   ui.step("Backup summary");
-  for (const s of successes) {
-    ui.item(`ok  ${s.url}`);
-    ui.detail(`→ ${s.webUrl}`);
-  }
-  for (const f of failures) {
-    ui.item(`fail  ${f.url}`, RED);
-    ui.detail(`— ${f.error}`, RED);
+  for (const r of results) {
+    if (r.kind === "ok") {
+      ui.item(`ok  ${r.url}`);
+      ui.detail(`→ ${r.webUrl}`);
+    } else if (r.kind === "skip") {
+      ui.item(`skip  ${r.url}`);
+      ui.detail("→ unchanged");
+    } else {
+      ui.item(`fail  ${r.url}`, RED);
+      ui.detail(`— ${r.error}`, RED);
+    }
   }
   ui.listEnd();
 
-  return failures.length === 0 ? 0 : 1;
+  return results.some((r) => r.kind === "fail") ? 1 : 0;
 }
 
 /**

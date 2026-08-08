@@ -19,12 +19,19 @@ function tempPaths() {
 
 function seedRepos(paths, repos) {
   mkdirSync(paths.gtDir, { recursive: true });
-  const normalized = repos.map((r) =>
-    typeof r === "string" ? { url: r, lastBackupAt: null } : r,
-  );
+  const normalized = repos.map((r) => {
+    if (typeof r === "string") {
+      return { url: r, lastBackupAt: null, lastCheckedAt: null };
+    }
+    return {
+      lastBackupAt: null,
+      lastCheckedAt: null,
+      ...r,
+    };
+  });
   writeFileSync(
     paths.backupsFile,
-    `${JSON.stringify({ version: 2, repos: normalized }, null, 2)}\n`,
+    `${JSON.stringify({ version: 3, repos: normalized }, null, 2)}\n`,
     "utf8",
   );
 }
@@ -331,12 +338,28 @@ test("backupOneRepo updates live existing project", async () => {
       created.push(name);
       return { ok: true };
     },
+    runGit: async (args) => {
+      if (args[0] === "ls-remote") {
+        const out = args[1] === SOURCE
+          ? "aaa\trefs/heads/main\n"
+          : "bbb\trefs/heads/main\n";
+        return { status: 0, stdout: out, stderr: "" };
+      }
+      if (args[0] === "show-ref" && args.includes("refs/heads/main")) {
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "show-ref" && args.includes("refs/heads/develop")) {
+        return { status: 1, stdout: "", stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    },
     stdin: { isTTY: false },
   });
 
   const result = await backupOneRepo(SOURCE, context);
 
   assert.equal(result.ok, true);
+  assert.equal(result.skipped, false);
   assert.equal(result.projectPath, `${BACKUP_GROUP}/${BASE_NAME}`);
   assert.deepEqual(created, []);
 });
@@ -357,6 +380,96 @@ test("backupOneRepo recreates when inactive", async () => {
   assert.deepEqual(created, [BASE_NAME]);
   assert.match(h.messages.statuses.join("\n"), /pending deletion|inactive/i);
   assert.match(h.messages.statuses.join("\n"), /Created /);
+});
+
+test("backupOneRepo skips when live fingerprints match", async () => {
+  let cloned = false;
+  const { h, context } = baseContext({
+    projectExists: async () => ({ ok: true, exists: true }),
+    runGit: async (args) => {
+      if (args[0] === "ls-remote") {
+        const out = "abc\trefs/heads/main\n";
+        return { status: 0, stdout: out, stderr: "" };
+      }
+      if (args[0] === "clone") {
+        cloned = true;
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+  const result = await backupOneRepo(SOURCE, context);
+  assert.equal(result.ok, true);
+  assert.equal(result.skipped, true);
+  assert.equal(cloned, false);
+  assert.match(h.messages.statuses.join("\n"), /unchanged|skip/i);
+});
+
+test("backupOneRepo does not skip when fingerprints differ", async () => {
+  let cloned = false;
+  const { context } = baseContext({
+    projectExists: async () => ({ ok: true, exists: true }),
+    runGit: async (args) => {
+      if (args[0] === "ls-remote") {
+        const out = args[1] === SOURCE
+          ? "aaa\trefs/heads/main\n"
+          : "bbb\trefs/heads/main\n";
+        return { status: 0, stdout: out, stderr: "" };
+      }
+      if (args[0] === "clone") {
+        cloned = true;
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 0, stdout: "ref: refs/heads/main\n", stderr: "" };
+    },
+  });
+  const result = await backupOneRepo(SOURCE, context);
+  assert.equal(result.ok, true);
+  assert.equal(result.skipped, false);
+  assert.equal(cloned, true);
+});
+
+test("backupOneRepo never skips when project missing", async () => {
+  let sawLsRemote = false;
+  const { context } = baseContext({
+    projectExists: async () => ({ ok: true, exists: false }),
+    runGit: async (args) => {
+      if (args[0] === "ls-remote") sawLsRemote = true;
+      if (args[0] === "clone") return { status: 0, stdout: "", stderr: "" };
+      return { status: 0, stdout: "ref: refs/heads/main\n", stderr: "" };
+    },
+  });
+  const result = await backupOneRepo(SOURCE, context);
+  assert.equal(result.ok, true);
+  assert.equal(result.skipped, false);
+  assert.equal(sawLsRemote, false);
+});
+
+test("runBackupBatch skip updates lastCheckedAt only and exits 0", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [{
+    url: SOURCE,
+    lastBackupAt: "2020-01-01T00:00:00.000Z",
+    lastCheckedAt: null,
+  }]);
+  const fixed = new Date("2026-08-08T12:00:00.000Z");
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => fixed,
+    projectExists: async () => ({ ok: true, exists: true }),
+    runGit: async (args) => {
+      if (args[0] === "ls-remote") {
+        return { status: 0, stdout: "abc\trefs/heads/main\n", stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+  const code = await runBackupBatch([SOURCE], context);
+  assert.equal(code, 0);
+  assert.match(h.messages.items.join("\n"), /skip/);
+  const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
+  assert.equal(onDisk.repos[0].lastBackupAt, "2020-01-01T00:00:00.000Z");
+  assert.equal(onDisk.repos[0].lastCheckedAt, "2026-08-08T12:00:00.000Z");
 });
 
 test("backupOneRepo clone failure still removes temp dir", async () => {
@@ -387,7 +500,7 @@ test("backupOneRepo clone failure still removes temp dir", async () => {
 test("runBackupBatch continues after a failure and exits 1", async () => {
   const created = [];
   const { h, context } = baseContext({
-    recordLastBackupAt: () => ({ ok: true, document: { version: 2, repos: [] } }),
+    recordLastBackupAt: () => ({ ok: true, document: { version: 3, repos: [] } }),
     projectExists: async (_group, name) => {
       if (name === BASE_NAME) {
         return { ok: false, error: "project lookup failed" };
@@ -417,7 +530,7 @@ test("runBackupBatch continues after a failure and exits 1", async () => {
 
 test("runBackupBatch returns 0 when all succeed", async () => {
   const { h, context } = baseContext({
-    recordLastBackupAt: () => ({ ok: true, document: { version: 2, repos: [] } }),
+    recordLastBackupAt: () => ({ ok: true, document: { version: 3, repos: [] } }),
   });
 
   const code = await runBackupBatch([SOURCE], context);
@@ -507,9 +620,10 @@ test("runBackupCommand --all migrates v1 list on load", async () => {
   const code = await runBackupCommand(["--all"], context);
   assert.equal(code, 0);
   const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
-  assert.equal(onDisk.version, 2);
+  assert.equal(onDisk.version, 3);
   assert.equal(onDisk.repos[0].url, SOURCE);
   assert.ok("lastBackupAt" in onDisk.repos[0]);
+  assert.ok("lastCheckedAt" in onDisk.repos[0]);
 });
 
 test("runBackupCommand add then --all backs up listed repos", async () => {
