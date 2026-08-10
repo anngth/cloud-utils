@@ -1,6 +1,50 @@
 #!/usr/bin/env node
+import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { copyToClipboard } from "./clipboard.mjs";
+import { generateTotp } from "./totp.mjs";
 import { createUi } from "./ui.mjs";
+
+function setTtyEcho(fd, on) {
+  spawnSync("stty", [on ? "echo" : "-echo"], { stdio: [fd, "inherit", "inherit"] });
+}
+
+export async function defaultReadSecret(prompt, deps = {}) {
+  const openTty = deps.openTty ?? (() => fs.openSync("/dev/tty", fs.constants.O_RDWR));
+  let fd;
+  try {
+    fd = openTty();
+  } catch {
+    throw new Error("interactive terminal required");
+  }
+
+  const restore = () => {
+    try { setTtyEcho(fd, true); } catch { /* ignore */ }
+    try { fs.closeSync(fd); } catch { /* ignore */ }
+  };
+
+  try {
+    setTtyEcho(fd, false);
+    fs.writeSync(fd, prompt);
+    let line = "";
+    const buf = Buffer.alloc(1);
+    while (true) {
+      const n = fs.readSync(fd, buf, 0, 1, null);
+      if (n === 0) break;
+      const c = buf[0];
+      if (c === 0x0a || c === 0x0d) break;
+      line += String.fromCharCode(c);
+    }
+    fs.writeSync(fd, "\n");
+    setTtyEcho(fd, true);
+    fs.closeSync(fd);
+    return line;
+  } catch (err) {
+    restore();
+    throw err;
+  }
+}
 
 export async function runCli(argv, dependencies = {}) {
   const {
@@ -22,9 +66,19 @@ export async function runCli(argv, dependencies = {}) {
     return 1;
   }
 
-  // Bare path filled in Task 3
-  ui.error("not implemented");
-  return 1;
+  try {
+    const readSecret = dependencies.readSecret ?? defaultReadSecret;
+    const copy = dependencies.copyToClipboard ?? copyToClipboard;
+    const now = dependencies.now;
+    const secret = await readSecret("Base32 secret: ", dependencies);
+    const otp = generateTotp(secret, now !== undefined ? { now } : {});
+    await copy(otp, dependencies);
+    ui.successCopied(otp);
+    return 0;
+  } catch (err) {
+    ui.error(err?.message ?? String(err));
+    return 1;
+  }
 }
 
 async function main() {
