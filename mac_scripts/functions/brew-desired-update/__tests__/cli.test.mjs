@@ -86,3 +86,46 @@ test("remove delegates to runRemove with names", async () => {
   assert.equal(code, 0);
   assert.deepEqual(capturedArgs, ["cursor", "bat"]);
 });
+
+test("bare bud delegates to runUpdate", async () => {
+  const h = harness();
+  let called = false;
+  const code = await runCli([], {
+    ...h.deps,
+    runUpdate: async (options) => {
+      called = true;
+      assert.deepEqual(options, { exclude: [] });
+      return 0;
+    },
+  });
+  assert.equal(code, 0);
+  assert.ok(called);
+});
+
+test("bud -e slack passes exclude to runUpdate", async () => {
+  const h = harness();
+  let captured = null;
+  const code = await runCli(["-e", "slack"], {
+    ...h.deps,
+    runUpdate: async (options) => {
+      captured = options;
+      return 0;
+    },
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(captured, { exclude: ["slack"] });
+});
+
+test("bud --exclude postman spotify passes exclude to runUpdate", async () => {
+  const h = harness();
+  let captured = null;
+  const code = await runCli(["--exclude", "postman", "spotify"], {
+    ...h.deps,
+    runUpdate: async (options) => {
+      captured = options;
+      return 0;
+    },
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(captured, { exclude: ["postman", "spotify"] });
+});

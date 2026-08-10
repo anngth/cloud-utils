@@ -2,6 +2,7 @@
 import { pathToFileURL } from "node:url";
 import { runListCommand } from "./list.mjs";
 import { runAddCommand, runRemoveCommand } from "./manage.mjs";
+import { parseArgv, runUpdateCommand } from "./update.mjs";
 import { createUi } from "./ui.mjs";
 
 const HELP = new Set(["help", "-h", "--help"]);
@@ -15,13 +16,13 @@ export async function runCli(argv, dependencies = {}) {
     runList = runListCommand,
     runAdd = runAddCommand,
     runRemove = runRemoveCommand,
+    runUpdate = runUpdateCommand,
   } = dependencies;
 
-  const action = argv[0];
+  const { exclude, action, rest } = parseArgv(argv);
 
-  if (action === undefined || action === "-e" || action === "--exclude") {
-    ui.error("Update command not wired yet");
-    return 1;
+  if (action === undefined) {
+    return runUpdate({ exclude }, { env: process.env, ui, stdout, stderr, ...dependencies });
   }
 
   if (HELP.has(action)) {
@@ -36,15 +37,15 @@ export async function runCli(argv, dependencies = {}) {
   }
 
   if (action === "list" || action === "ls") {
-    return runList(argv.slice(1), { env: process.env, ui, stdout, ...dependencies });
+    return runList(rest, { env: process.env, ui, stdout, ...dependencies });
   }
 
   if (action === "add") {
-    return runAdd(argv.slice(1), { env: process.env, ui, ...dependencies });
+    return runAdd(rest, { env: process.env, ui, ...dependencies });
   }
 
   if (action === "remove") {
-    return runRemove(argv.slice(1), { env: process.env, ui, ...dependencies });
+    return runRemove(rest, { env: process.env, ui, ...dependencies });
   }
 
   ui.error(`Command not wired yet: ${action}`);
