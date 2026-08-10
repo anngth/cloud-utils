@@ -40,3 +40,8 @@ test("generateTotp accepts pre-decoded key buffer", () => {
   const key = Buffer.from("12345678901234567890", "ascii");
   assert.equal(generateTotp(key, { now: 59 }), "287082");
 });
+
+test("generateTotp pre-hashes keys longer than 64 bytes with SHA-1", () => {
+  const longKey = Buffer.alloc(65, 1);
+  assert.equal(generateTotp(longKey, { now: 59 }), "135355");
+});

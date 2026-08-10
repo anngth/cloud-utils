@@ -10,7 +10,14 @@ export function copyToClipboard(text, { spawnImpl = spawn } = {}) {
     });
     child.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error("failed to copy code to clipboard"));
+      else {
+        const detail = err.trim();
+        reject(new Error(
+          detail
+            ? `failed to copy code to clipboard: ${detail}`
+            : "failed to copy code to clipboard",
+        ));
+      }
     });
     child.stdin.end(String(text));
   });

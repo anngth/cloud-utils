@@ -53,11 +53,10 @@ export async function defaultReadSecret(prompt, deps = {}) {
 }
 
 export async function runCli(argv, dependencies = {}) {
-  const {
-    stdout = process.stdout,
-    stderr = process.stderr,
-    ui = createUi({ stdout, stderr }),
-  } = dependencies;
+  const ui = dependencies.ui ?? createUi({
+    stdout: dependencies.stdout ?? process.stdout,
+    stderr: dependencies.stderr ?? process.stderr,
+  });
 
   const action = argv[0];
 
