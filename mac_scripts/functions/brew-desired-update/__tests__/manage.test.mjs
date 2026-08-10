@@ -182,3 +182,26 @@ test("applyAdd --formula validates once via brew info", async () => {
     [["info", "--formula", "bat"]],
   );
 });
+
+test("applyAdd reports list size after add", async () => {
+  const messages = [];
+  const doc = { version: 1, formulas: ["gh"], casks: [], taps: [] };
+  await applyAdd(["bat"], {
+    forceType: null,
+    document: doc,
+    deps: {
+      detectBrewType: async () => ({ type: "formula" }),
+      ui: { info: (m) => messages.push(m), warn() {}, error() {} },
+    },
+  });
+  assert.ok(messages.some((m) => m === "Added 'bat' to formulas (now 2)"));
+});
+
+test("applyRemove reports list size after remove", () => {
+  const messages = [];
+  applyRemove(["cursor"], {
+    document: { version: 1, formulas: [], casks: ["cursor", "slack"], taps: [] },
+    ui: { info: (m) => messages.push(m), warn() {} },
+  });
+  assert.ok(messages.some((m) => m === "Removed 'cursor' from casks (now 1)"));
+});

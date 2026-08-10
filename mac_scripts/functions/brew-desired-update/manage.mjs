@@ -175,12 +175,12 @@ async function applyOneAdd(pkgName, { forceType, document, deps, detect }) {
 
   if (tapForFormula) {
     if (addUnique(document.taps, tapForFormula)) {
-      ui?.info(`Added '${tapForFormula}' to taps list`);
+      ui?.info(`Added '${tapForFormula}' to taps (now ${document.taps.length})`);
     }
   }
 
   document[listKey].push(listName);
-  ui?.info(`Added '${listName}' to ${label}s list`);
+  ui?.info(`Added '${listName}' to ${label}s (now ${document[listKey].length})`);
   return true;
 }
 
@@ -232,15 +232,15 @@ export function applyRemove(names, { document, ui }) {
   for (const name of names) {
     if (doc.casks.includes(name)) {
       doc.casks = doc.casks.filter((item) => item !== name);
-      ui?.info(`Removed '${name}' from casks list`);
+      ui?.info(`Removed '${name}' from casks (now ${doc.casks.length})`);
       succeeded += 1;
     } else if (doc.formulas.includes(name)) {
       doc.formulas = doc.formulas.filter((item) => item !== name);
-      ui?.info(`Removed '${name}' from formulas list`);
+      ui?.info(`Removed '${name}' from formulas (now ${doc.formulas.length})`);
       succeeded += 1;
     } else if (doc.taps.includes(name)) {
       doc.taps = doc.taps.filter((item) => item !== name);
-      ui?.info(`Removed '${name}' from taps list`);
+      ui?.info(`Removed '${name}' from taps (now ${doc.taps.length})`);
       succeeded += 1;
     } else {
       ui?.warn(`'${name}' not found in casks, formulae, or taps list`);
