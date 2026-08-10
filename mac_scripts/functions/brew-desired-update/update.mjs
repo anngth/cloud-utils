@@ -1,5 +1,6 @@
 import { ensureTap, loadBrewState, resolveBrewBinary, runBrew } from "./brew.mjs";
 import { loadDesiredDocument } from "./config.mjs";
+import { formatNameList } from "./ui.mjs";
 
 const SUBCOMMANDS = new Set(["add", "remove", "list", "ls", "help"]);
 
@@ -73,28 +74,35 @@ export async function runUpdateCommand({ exclude = [] } = {}, context = {}) {
 
   const { document } = loaded;
 
+  ui.title();
+  ui.step(
+    `Desired lists: ${document.formulas.length} formulae · ${document.taps.length} taps · ${document.casks.length} casks`,
+  );
   ui.step("Loading Homebrew state");
   let state = await loadState({ brewBin, runBrew: runner });
 
-  for (const tap of document.taps) {
-    if (!state.taps.includes(tap)) {
-      ui.active(`Tapping ${tap}`);
+  const missingTaps = document.taps.filter((t) => !state.taps.includes(t));
+  if (missingTaps.length > 0) {
+    ui.active(`Ensuring taps · ${missingTaps.length} missing: ${formatNameList(missingTaps)}`);
+    for (const tap of missingTaps) {
       const ok = await ensureTapFn(tap, { brewBin, runBrew: runner });
       if (!ok) {
         ui.error(`Failed to tap ${tap}`);
         return 1;
       }
     }
+  } else {
+    ui.step("Ensuring taps · all present");
   }
 
-  ui.step("Updating Homebrew");
+  ui.step("Updating Homebrew (brew update)");
   let result = await runner(["update"]);
   if (result.code !== 0) {
     ui.error("brew update failed");
     return 1;
   }
 
-  ui.active("Upgrading formulae");
+  ui.active("Upgrading formulae (brew upgrade --formula)");
   result = await runner(["upgrade", "--formula", "-y"]);
   if (result.code !== 0) {
     ui.error("brew upgrade --formula failed");
@@ -108,7 +116,7 @@ export async function runUpdateCommand({ exclude = [] } = {}, context = {}) {
     return 1;
   }
 
-  ui.step("Loading Homebrew state");
+  ui.step("Reloading Homebrew state");
   state = await loadState({ brewBin, runBrew: runner });
 
   const eligible = collectCasksToUpgrade(document.casks, state.casks);
@@ -116,11 +124,13 @@ export async function runUpdateCommand({ exclude = [] } = {}, context = {}) {
   const eligibleCount = eligible.length;
 
   if (exclude.length > 0) {
-    ui.info(`Excluding casks from upgrade this run: ${exclude.join(" ")}`);
+    ui.info(`Excluding ${exclude.length} cask(s): ${formatNameList(exclude)}`);
   }
 
   if (toUpgrade.length > 0) {
-    ui.active("Upgrading casks · in list, installed");
+    ui.active(
+      `Upgrading casks · ${toUpgrade.length} of ${eligible.length} eligible: ${formatNameList(toUpgrade)}`,
+    );
     result = await runner(["upgrade", "--cask", "-y", ...toUpgrade]);
     if (result.code !== 0) {
       ui.error("brew upgrade --cask failed");
@@ -132,7 +142,7 @@ export async function runUpdateCommand({ exclude = [] } = {}, context = {}) {
     ui.info("No casks in list are installed; skipping cask upgrade.");
   }
 
-  ui.step("Cleanup");
+  ui.step("Cleanup (brew cleanup --prune=1)");
   result = await runner(["cleanup", "--prune=1"]);
   if (result.code !== 0) {
     ui.error("brew cleanup failed");

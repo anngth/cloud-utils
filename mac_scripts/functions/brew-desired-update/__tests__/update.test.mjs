@@ -15,6 +15,15 @@ function silentUi() {
   });
 }
 
+function capturingUi() {
+  const lines = [];
+  const ui = createUi({
+    stdout: { write: (v) => { lines.push(v); } },
+    stderr: { write() {} },
+  });
+  return { ui, text: () => lines.join("").replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "") };
+}
+
 test("parseArgv extracts exclude and bare update", () => {
   assert.deepEqual(parseArgv([]), { exclude: [], action: undefined, rest: [] });
   assert.deepEqual(parseArgv(["-e", "slack"]), {
@@ -110,6 +119,63 @@ test("runUpdateCommand ensures missing desired taps", async () => {
   );
   assert.equal(code, 0);
   assert.deepEqual(tapped, ["mongodb/brew"]);
+});
+
+test("runUpdateCommand logs counts and brew actions", async () => {
+  const { ui, text } = capturingUi();
+  const code = await runUpdateCommand(
+    { exclude: ["slack"] },
+    {
+      brewBin: "/brew",
+      runBrew: async () => ({ code: 0, stdout: "", stderr: "" }),
+      loadDesired: async () => ({
+        ok: true,
+        document: {
+          version: 1,
+          formulas: ["bat"],
+          casks: ["cursor", "slack"],
+          taps: ["mongodb/brew"],
+        },
+      }),
+      loadBrewState: async () => ({
+        formulas: ["bat"],
+        casks: ["cursor", "slack"],
+        taps: [], // missing mongodb/brew
+      }),
+      ensureTap: async () => true,
+      ui,
+    },
+  );
+  assert.equal(code, 0);
+  const out = text();
+  assert.ok(out.includes("BREW DESIRED UPDATE"));
+  assert.ok(out.includes("Desired lists: 1 formulae · 1 taps · 2 casks"));
+  assert.ok(out.includes("Ensuring taps · 1 missing: mongodb/brew"));
+  assert.ok(out.includes("Updating Homebrew (brew update)"));
+  assert.ok(out.includes("Upgrading formulae (brew upgrade --formula)"));
+  assert.ok(out.includes("Reloading Homebrew state"));
+  assert.ok(out.includes("Upgrading casks · 1 of 2 eligible: cursor"));
+  assert.ok(out.includes("Excluding 1 cask(s): slack") || out.includes("Excluding"));
+  assert.ok(out.includes("Cleanup (brew cleanup --prune=1)"));
+});
+
+test("runUpdateCommand reports all taps present", async () => {
+  const { ui, text } = capturingUi();
+  await runUpdateCommand(
+    {},
+    {
+      brewBin: "/brew",
+      runBrew: async () => ({ code: 0, stdout: "", stderr: "" }),
+      loadDesired: async () => ({
+        ok: true,
+        document: { version: 1, formulas: [], casks: [], taps: ["a/b"] },
+      }),
+      loadBrewState: async () => ({ formulas: [], casks: [], taps: ["a/b"] }),
+      ensureTap: async () => true,
+      ui,
+    },
+  );
+  assert.ok(text().includes("Ensuring taps · all present"));
 });
 
 test("runUpdateCommand returns 1 when brew missing", async () => {
