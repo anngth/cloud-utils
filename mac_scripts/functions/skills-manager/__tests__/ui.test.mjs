@@ -426,8 +426,8 @@ test("usage documents every command signature and short flag", () => {
 });
 
 test("selectorNameColor applies cursor, selected, and unselected ladder", () => {
-  assert.equal(selectorNameColor({ isCursor: true, isSelected: true }), "\u001b[92m");
-  assert.equal(selectorNameColor({ isCursor: true, isSelected: false }), "\u001b[92m");
+  assert.equal(selectorNameColor({ isCursor: true, isSelected: true }), "\u001b[97m");
+  assert.equal(selectorNameColor({ isCursor: true, isSelected: false }), "\u001b[97m");
   assert.equal(selectorNameColor({ isCursor: false, isSelected: true }), "\u001b[32m");
   assert.equal(selectorNameColor({ isCursor: false, isSelected: false }), "\u001b[90m");
   assert.match(SELECTOR_DESCRIPTION_COLOR, /\u001b\[2m/);
@@ -447,7 +447,7 @@ test("renderSelector multi-select uses color ladder and a/c hint", () => {
   }, { mode: "install" });
 
   assert.match(stdout, /space toggle, a all, c clear, enter to continue, q to quit/);
-  assert.match(stdout, new RegExp(`\\u001b\\[92malpha`));
+  assert.match(stdout, new RegExp(`\\u001b\\[97malpha`));
   assert.match(stdout, new RegExp(`\\u001b\\[32mbeta`));
 });
 
@@ -606,7 +606,7 @@ test("skill selectors highlight names and separate rows while profile selectors 
   }, { mode: "install" });
   const skillOutput = skills.stdout.read();
   assert.ok(skillOutput.includes(paint("32", "brainstorming")));
-  assert.ok(skillOutput.includes(paint("92", "testing")));
+  assert.ok(skillOutput.includes(paint("97", "testing")));
   assert.match(stripAnsi(skillOutput), /■ brainstorming Explore\n│\n│  □ testing Verify/);
 
   const profiles = makeUi();

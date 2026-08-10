@@ -20,7 +20,7 @@ const C = {
 export const SELECTOR_DESCRIPTION_COLOR = `${C.dim}${C.gray}`;
 
 export function selectorNameColor({ isCursor, isSelected }) {
-  if (isCursor) return C.brightGreen;
+  if (isCursor) return C.white;
   if (isSelected) return C.green;
   return C.gray;
 }
