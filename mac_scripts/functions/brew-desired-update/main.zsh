@@ -251,7 +251,7 @@ bud() {
     rm -f "$f_formulae" "$f_casks" "$f_taps"
   }
 
-  # Shared status grid for `bud list` and default `bud` (set after show: _bud_c_to_upgrade).
+  # Status grid for `bud list` / `bud ls`.
   _bud_show_desired_status() {
     local do_load="${1:-1}"
     local -a f_installed=() f_missing=() f_extra=()
@@ -315,8 +315,6 @@ bud() {
       [[ -z ${want[$c]} ]] && c_extra+=("$c")
     done
 
-    typeset -g _bud_c_to_upgrade=("${c_installed[@]}")
-
     col_width=$(_bud_list_col_width)
     _bud_init_grid_layout "$col_width" \
       "${f_installed[@]}" "${f_missing[@]}" "${f_extra[@]}" \
@@ -332,6 +330,19 @@ bud() {
     _bud_print_section "Casks · in list, installed" green "$col_width" "${c_installed[@]}"
     _bud_print_section "Casks · in list, not installed" yellow "$col_width" "${c_missing[@]}"
     _bud_print_section "Casks · installed, not in list" blue "$col_width" "${c_extra[@]}"
+  }
+
+  # Desired casks that are already installed (for upgrade), without printing status.
+  _bud_collect_casks_to_upgrade() {
+    local -a installed=()
+    local -A has
+    local c
+
+    for c in "${_bud_brew_casks[@]}"; do has[$c]=1; done
+    for c in "${desired[@]}"; do
+      [[ -n ${has[$c]} ]] && installed+=("$c")
+    done
+    typeset -g _bud_c_to_upgrade=("${installed[@]}")
   }
 
   # First line of `brew info` is "==> <token>: ..." — token must match $name (not an old cask alias).
@@ -636,7 +647,7 @@ bud() {
   brew tap --repair
 
   _bud_load_brew_state
-  _bud_show_desired_status 0
+  _bud_collect_casks_to_upgrade
   local -i c_eligible=${#_bud_c_to_upgrade[@]}
   _bud_filter_casks_to_upgrade "${_bud_c_to_upgrade[@]}"
 
