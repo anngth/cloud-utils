@@ -58,18 +58,45 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   }
 
   function usage() {
+    const section = (name) => {
+      out(pipe);
+      active(name);
+    };
+    const command = (syntax, description) => {
+      out(`${pipe}  ${fg(C.green, syntax)}${description ? `  ${fg(C.gray, description)}` : ""}`);
+    };
+    const continuation = (syntax, description) => {
+      if (syntax) {
+        out(`${pipe}      ${fg(C.green, syntax)}${description ? `  ${fg(C.gray, description)}` : ""}`);
+      } else {
+        out(`${pipe}      ${fg(C.gray, description)}`);
+      }
+    };
+    const note = (text) => out(`${pipe}  ${fg(C.gray, text)}`);
+
     title("GT");
     step("Usage: gt <command>");
-    active("Commands");
-    item("push              Force push (safe --force-with-lease)");
-    item("fetch [--sync-upstream]");
-    item("backup [-f|--force] [--dry-run]       Interactive select; preview or force");
-    detail("Selector: space toggle, a all, c clear, enter start, q quit");
-    item("backup --all [-f|--force] [--dry-run]  Backup or preview every listed repo");
-    item("backup stale [--days <n>] [--all] [-f|--force] [--dry-run]  Stale repos only");
-    item("backup add <ssh-url> [<ssh-url> ...]  Add SSH URL(s) to managed list");
-    item("backup remove <index|ssh-url>  Remove by 1-based index or URL");
-    listEnd("Run 'gt --help' for this message.");
+    command("gt (help | -h | --help)", "Show this help");
+
+    section("Core");
+    command("gt push", "Force push (safe --force-with-lease)");
+    command("gt fetch [--sync-upstream]", "Fetch with optional upstream sync");
+
+    section("Backup");
+    command("gt backup [(-f | --force) | --dry-run]");
+    continuation("", "Interactive select; force and dry-run are mutually exclusive");
+    command("gt backup --all [(-f | --force) | --dry-run]");
+    continuation("", "Backup or preview every listed repo");
+    command("gt backup stale [--days <n>] [--all] [(-f | --force) | --dry-run]");
+    continuation("", "Stale repos only (default 7 days)");
+    command("gt backup add <ssh-url> [<ssh-url> ...]", "Add SSH URL(s) to managed list");
+    command("gt backup remove <index|ssh-url>", "Remove by 1-based index or URL");
+
+    section("Notes");
+    note("Selector: space toggle, a all, c clear, enter start, q quit");
+    note("Remove indexes are 1-based (same as skm).");
+    note("--force skips fingerprint short-circuit; cannot combine with --dry-run.");
+    listEnd();
   }
 
   function error(message) {

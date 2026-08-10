@@ -2,24 +2,60 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createUi } from "../ui.mjs";
 
-test("usage documents managed backup list without -n/--new or one-shot URL", () => {
+test("usage matches skm-style sections and signatures", () => {
   let stdout = "";
   const ui = createUi({
     stdout: { write: (value) => { stdout += value; } },
     stderr: { write() {} },
   });
-
   ui.usage();
 
-  assert.match(stdout, /\bbackup\b/);
-  assert.match(stdout, /backup \[-f\|--force\] \[--dry-run\]/);
-  assert.match(stdout, /backup --all \[-f\|--force\] \[--dry-run\]/);
-  assert.match(stdout, /backup stale \[--days <n>\] \[--all\] \[-f\|--force\] \[--dry-run\]/);
-  assert.match(stdout, /backup add <ssh-url> \[<ssh-url> \.\.\.\]/);
-  assert.match(stdout, /backup remove <index\|ssh-url>/);
-  assert.match(stdout, /space toggle, a all, c clear, enter start, q quit/);
+  const lines = stdout
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd());
+
+  assert.equal(lines.find((line) => line.includes("Usage:")), "◇  Usage: gt <command>");
+
+  const sections = ["Core", "Backup", "Notes"];
+  const sectionIndexes = sections.map((section) => lines.indexOf(`◆  ${section}`));
+  assert.ok(sectionIndexes.every((index) => index >= 0), "all help sections are present");
+  assert.deepEqual(sectionIndexes, [...sectionIndexes].sort((a, b) => a - b));
+
+  for (const [first, continuation] of [
+    [
+      "│  gt backup [(-f | --force) | --dry-run]",
+      "│      Interactive select; force and dry-run are mutually exclusive",
+    ],
+    [
+      "│  gt backup --all [(-f | --force) | --dry-run]",
+      "│      Backup or preview every listed repo",
+    ],
+    [
+      "│  gt backup stale [--days <n>] [--all] [(-f | --force) | --dry-run]",
+      "│      Stale repos only (default 7 days)",
+    ],
+  ]) {
+    const index = lines.indexOf(first);
+    assert.ok(index >= 0, `missing wrapped signature: ${first}`);
+    assert.equal(lines[index + 1], continuation);
+  }
+
+  for (const line of [
+    "│  gt (help | -h | --help)  Show this help",
+    "│  gt push  Force push (safe --force-with-lease)",
+    "│  gt fetch [--sync-upstream]  Fetch with optional upstream sync",
+    "│  gt backup add <ssh-url> [<ssh-url> ...]  Add SSH URL(s) to managed list",
+    "│  gt backup remove <index|ssh-url>  Remove by 1-based index or URL",
+    "│  Selector: space toggle, a all, c clear, enter start, q quit",
+    "│  Remove indexes are 1-based (same as skm).",
+    "│  --force skips fingerprint short-circuit; cannot combine with --dry-run.",
+  ]) assert.ok(lines.includes(line), `missing help line: ${line}`);
+
+  assert.doesNotMatch(stdout, /■/);
   assert.doesNotMatch(stdout, /-n|--new/);
   assert.doesNotMatch(stdout, /backup <ssh-url>/);
+  assert.doesNotMatch(stdout, /Run 'gt --help'/);
 });
 
 test("status uses skm-style step marker instead of --- prefix", () => {
