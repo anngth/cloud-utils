@@ -46,9 +46,19 @@ dbt --help
 2fa
 ```
 
+## Commands
+
+| Command | Docs |
+| ------- | ---- |
+| `bud` | [bud.md](bud.md) |
+| `gt` | [gt.md](gt.md) |
+| `skm` | [skm.md](skm.md) |
+| `dbt` | [dbt.md](dbt.md) |
+| `2fa` | [2fa.md](2fa.md) |
+
 ## Local config
 
-Personal data for `bud`, `skm`, and `dbt` lives outside the repo (iCloud by default).
+Personal data for `bud`, `gt`, `skm`, and `dbt` lives outside the repo (iCloud by default).
 
 In `~/.zshrc`:
 
@@ -66,6 +76,8 @@ Layout:
 │   └── taps.txt
 ├── dbt/
 │   └── secrets
+├── gt/
+│   └── backups.json
 └── skm/
     └── sources.json
 ```
@@ -73,12 +85,14 @@ Layout:
 | Tool  | Config                                              | Template/reference in repo                                                    |
 | ----- | --------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `bud` | `bud/casks.txt`, `bud/formulas.txt`, `bud/taps.txt` | `mac_scripts/functions/brew-desired-update/*.example`                         |
+| `gt`  | `gt/backups.json`                                   | `mac_scripts/functions/git-tools/backups.json.example` (reference only)       |
 | `skm` | `skm/sources.json`                                  | `mac_scripts/functions/skills-manager/sources.json.example` (reference only) |
 | `dbt` | `dbt/secrets`                                       | `mac_scripts/functions/db-tools/secrets.example`                              |
 
 On first run, `bud` and `dbt` bootstrap missing files from legacy paths or
 `*.example`. SKM creates `sources.json` automatically; legacy `profiles.json`,
 `projects.json`, and `list.json` are migrated once and retained unchanged.
+`gt backup` creates `backups.json` on first list use (and migrates older schemas).
 
 Optional:
 

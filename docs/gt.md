@@ -1,32 +1,8 @@
-# Commands
-
-Config paths: [setup.md — Local config](setup.md#local-config).
-
-Also see: [bud.md](bud.md) · [skm.md](skm.md)
-
-## dbt
-
-Database tools — `$CLOUD_UTILS_CONFIG_DIR/dbt/secrets`.
-
-```bash
-dbt --help
-dbt connect
-dbt list --status
-dbt sync postgres -s 1 -d 1
-dbt sync mongodb -s 1 -d 1
-dbt sync -c          # clear backup DBs (dry-run: -n)
-dbt sync postgres -c  # postgres only
-```
-
-- **Clear backups** — removes `<database>_backup_YYYYMMDD_HHMMSS`. Postgres: optional `-d <target>`, `-s <source>`.
-- **MongoDB sync** — backs up target before restore; rolls back on failure.
-- **PostgreSQL** — Supabase/`postgres` targets may use a temp dump file; `dbt sync -c` does not remove those files.
-
-Secrets: `VPS_CONFIGS`, `POSTGRES_SOURCES`, `POSTGRES_TARGETS`, `MONGO_SOURCES`, `MONGO_TARGETS` (see `secrets.example` in repo).
-
-## gt
+# gt
 
 Git workflow helpers (`push`, `fetch`, `backup`). Implemented in Node under `mac_scripts/functions/git-tools/`.
+
+Config paths: [setup.md — Local config](setup.md#local-config).
 
 ```bash
 gt fetch
@@ -66,32 +42,9 @@ gt backup remove git@github.com:org/my-app.git
   - `selectedLast` — per-repo flag for the last interactive submit selection; updated on Enter with ≥1 repo selected (whole list rewritten); cancel / empty submit leave flags unchanged; `add` sets `false`.
   - Interactive selector is compact: checkbox + URL only (no Last backup / Last checked lines). Timestamps remain in `backups.json` for skip / stale.
   - v1 string arrays, v2 `{ url, lastBackupAt }`, and v3 lists migrate to v4 on load (`lastCheckedAt: null` for v2; `selectedLast: false` for older schemas).
+  - Example template: [`backups.json.example`](../mac_scripts/functions/git-tools/backups.json.example) (reference only).
 - **Migration:** old one-shot `gt backup <ssh-url>` / `-n` / `--new` are removed. Use `gt backup add <ssh-url> [<ssh-url> ...]`, then `gt backup` or `gt backup --all`.
 - Per URL: missing project → create; live → compare `git ls-remote` fingerprints (heads + tags only) — equal → skip mirror, update `lastCheckedAt` only (`skip` in summary, `→ unchanged`); differ → full mirror (all branches + tags); inactive/soft-deleted → recreate at the base name (never skip). Creates the private `anngth-dev/backups` subgroup when missing (parent `anngth-dev` must already exist). After push, sets the GitLab default branch to `main` if present, otherwise `develop`. Protects `main` and/or `develop` when those branches exist (force-push allowed for later mirror updates).
 - Batch summary lists `ok`, `skip`, and `fail` per URL; exit `0` only when there are no `fail` entries (`ok` and `skip` both succeed).
 - Requires `git`, `glab` (logged in), and SSH access to both the source and GitLab.
 - Backup pushes all branches and tags (not GitLab hidden refs like `refs/environments/*`). `--prune` can delete remote branches/tags that no longer exist on the source.
-
-## skm
-
-Source-catalog skill manager (`mac_scripts/functions/skills-manager/`). See [skm.md](skm.md) for full usage.
-
-```bash
-skm
-skm source add vercel-labs/agent-skills -a
-skm add 1
-skm status
-skm remove --all
-```
-
-- **Config:** `$CLOUD_UTILS_CONFIG_DIR/skm/sources.json` (same config root as `gt`; default under iCloud Backups when unset).
-- **Migration:** legacy `profiles.json` / `projects.json` / `list.json` migrate into `sources.json` on first read and are left on disk unchanged.
-- **Indexes:** `add`, `remove`, and `source remove` accept 1-based catalog indexes or source ids (same convention as `gt backup remove`).
-
-## 2fa
-
-```bash
-2fa
-```
-
-Prompts for Base32 secret (hidden), copies 6-digit TOTP to clipboard, prints `Code copied: <code>`.
