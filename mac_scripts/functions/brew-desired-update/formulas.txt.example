@@ -1,6 +1,0 @@
-# Desired Homebrew formulae (one per line)
-# Copy to $CLOUD_UTILS_CONFIG_DIR/bud/formulas.txt or run `bud` once to bootstrap.
-
-bat
-eza
-gh

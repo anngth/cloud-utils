@@ -1,8 +1,10 @@
 # bud
 
-Homebrew desired lists — `$CLOUD_UTILS_CONFIG_DIR/bud/`. File changes are local only (not in git).
+Homebrew desired lists — `$CLOUD_UTILS_CONFIG_DIR/bud/desired.json`. File changes are local only (not in git).
 
 Config paths: [setup.md — Local config](setup.md#local-config).
+
+Example template: `mac_scripts/functions/brew-desired-update/desired.json.example`.
 
 ```bash
 bud              # brew update/upgrade + sync desired casks
@@ -19,7 +21,9 @@ bud add --tap <user/repo>
 bud remove <user/repo>       # remove from taps list
 ```
 
-Desired taps live in `bud/taps.txt` (one `user/repo` per line). On first run, if the file is missing, `bud` seeds it from `brew tap`.
+## Config (`desired.json`)
+
+Single JSON document with `version`, `formulas`, `casks`, and `taps` arrays. On first run, if `desired.json` is missing, `bud` migrates from legacy `bud/*.txt` (or older `brew/*.txt`) once, writes JSON, then deletes the `bud/*.txt` files. Legacy `brew/*.txt` is never deleted. If the taps list is still empty after migration, `bud` seeds taps from `brew tap`.
 
 ## `bud list`
 

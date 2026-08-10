@@ -71,9 +71,7 @@ Layout:
 ```text
 ~/Library/Mobile Documents/com~apple~CloudDocs/Backups/cloud-utils/
 ├── bud/
-│   ├── casks.txt
-│   ├── formulas.txt
-│   └── taps.txt
+│   └── desired.json
 ├── dbt/
 │   └── secrets
 ├── gt/
@@ -84,13 +82,14 @@ Layout:
 
 | Tool  | Config                                              | Template/reference in repo                                                    |
 | ----- | --------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `bud` | `bud/casks.txt`, `bud/formulas.txt`, `bud/taps.txt` | `mac_scripts/functions/brew-desired-update/*.example`                         |
+| `bud` | `bud/desired.json`                                  | `mac_scripts/functions/brew-desired-update/desired.json.example`              |
 | `gt`  | `gt/backups.json`                                   | `mac_scripts/functions/git-tools/backups.json.example` (reference only)       |
 | `skm` | `skm/sources.json`                                  | `mac_scripts/functions/skills-manager/sources.json.example` (reference only) |
 | `dbt` | `dbt/secrets`                                       | `mac_scripts/functions/db-tools/secrets.example`                              |
 
-On first run, `bud` and `dbt` bootstrap missing files from legacy paths or
-`*.example`. SKM creates `sources.json` automatically; legacy `profiles.json`,
+On first run, `bud` migrates legacy `bud/*.txt` (or `brew/*.txt`) into
+`desired.json` once, then uses JSON only. `dbt` bootstraps missing files from
+legacy paths or `*.example`. SKM creates `sources.json` automatically; legacy `profiles.json`,
 `projects.json`, and `list.json` are migrated once and retained unchanged.
 `gt backup` creates `backups.json` on first list use (and migrates older schemas).
 
