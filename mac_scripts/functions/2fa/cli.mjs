@@ -6,8 +6,14 @@ import { copyToClipboard } from "./clipboard.mjs";
 import { generateTotp } from "./totp.mjs";
 import { createUi } from "./ui.mjs";
 
-function setTtyEcho(fd, on) {
-  spawnSync("stty", [on ? "echo" : "-echo"], { stdio: [fd, "inherit", "inherit"] });
+function setTtyEcho(fd, on, deps = {}) {
+  const spawnSyncImpl = deps.spawnSync ?? spawnSync;
+  const result = spawnSyncImpl("stty", [on ? "echo" : "-echo"], {
+    stdio: [fd, "inherit", "inherit"],
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(on ? "failed to restore terminal echo" : "failed to disable terminal echo");
+  }
 }
 
 export async function defaultReadSecret(prompt, deps = {}) {
@@ -20,12 +26,12 @@ export async function defaultReadSecret(prompt, deps = {}) {
   }
 
   const restore = () => {
-    try { setTtyEcho(fd, true); } catch { /* ignore */ }
+    try { setTtyEcho(fd, true, deps); } catch { /* ignore */ }
     try { fs.closeSync(fd); } catch { /* ignore */ }
   };
 
   try {
-    setTtyEcho(fd, false);
+    setTtyEcho(fd, false, deps);
     fs.writeSync(fd, prompt);
     let line = "";
     const buf = Buffer.alloc(1);
@@ -37,7 +43,7 @@ export async function defaultReadSecret(prompt, deps = {}) {
       line += String.fromCharCode(c);
     }
     fs.writeSync(fd, "\n");
-    setTtyEcho(fd, true);
+    setTtyEcho(fd, true, deps);
     fs.closeSync(fd);
     return line;
   } catch (err) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runCli } from "../cli.mjs";
+import { defaultReadSecret, runCli } from "../cli.mjs";
 import { createUi } from "../ui.mjs";
 
 function cliHarness(overrides = {}) {
@@ -88,4 +88,22 @@ test("bare 2fa without tty exits 1", async () => {
   });
   assert.equal(await runCli([], h.dependencies), 1);
   assert.match(h.stderr(), /interactive terminal required/);
+});
+
+test("defaultReadSecret throws if stty -echo fails before read", async () => {
+  const sttyCalls = [];
+  const deps = {
+    openTty: () => 99,
+    spawnSync: (_cmd, args) => {
+      sttyCalls.push(args[0]);
+      if (args[0] === "-echo") return { status: 1 };
+      return { status: 0 };
+    },
+  };
+
+  await assert.rejects(
+    () => defaultReadSecret("Base32 secret: ", deps),
+    /failed to disable terminal echo/,
+  );
+  assert.deepEqual(sttyCalls, ["-echo", "echo"]);
 });
