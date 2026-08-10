@@ -113,6 +113,27 @@ test("legacy brew txt used when bud txt missing", async () => {
   });
   assert.equal(result.ok, true);
   assert.ok(result.document.formulas.includes("jq"));
+  assert.deepEqual(result.document.taps, ["homebrew/core"]);
+});
+
+test("bootstraps desired.json from example when no sources exist", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bud-boot-"));
+  mkdirSync(join(root, "bud"), { recursive: true });
+  const result = await loadDesiredDocument({
+    env: { CLOUD_UTILS_CONFIG_DIR: root, HOME: "/x" },
+    examplePath,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.bootstrapped, true);
+  assert.equal(result.migrated, undefined);
+  const exampleDoc = JSON.parse(readFileSync(examplePath, "utf8"));
+  assert.deepEqual(result.document, {
+    version: 1,
+    formulas: [...exampleDoc.formulas].sort(),
+    casks: [...exampleDoc.casks].sort(),
+    taps: [...exampleDoc.taps].sort(),
+  });
+  assert.equal(existsSync(join(root, "bud", "desired.json")), true);
 });
 
 test("invalid desired.json does not migrate or overwrite", async () => {

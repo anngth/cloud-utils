@@ -114,6 +114,7 @@ async function applyOneAdd(pkgName, { forceType, document, deps, detect }) {
   let listName = pkgName;
   let tapForFormula = "";
   let detectedViaBrew = false;
+  let validatedViaBrew = false;
 
   if (!pkgType) {
     if (isTapFormulaSpec(pkgName)) {
@@ -145,6 +146,7 @@ async function applyOneAdd(pkgName, { forceType, document, deps, detect }) {
       ui?.warn(`'${pkgName}' not found as a Homebrew ${pkgType}`);
       return false;
     }
+    validatedViaBrew = true;
   }
 
   const listKey = pkgType === "cask" ? "casks" : pkgType === "formula" ? "formulas" : "taps";
@@ -163,7 +165,7 @@ async function applyOneAdd(pkgName, { forceType, document, deps, detect }) {
     }
   }
 
-  if (pkgType === "formula" && !detectedViaBrew && !isTapFormulaSpec(pkgName) && runner) {
+  if (pkgType === "formula" && !detectedViaBrew && !validatedViaBrew && !isTapFormulaSpec(pkgName) && runner) {
     const info = await runner(["info", "--formula", pkgName]);
     if (info.code !== 0) {
       ui?.warn(`'${pkgName}' not found as a Homebrew formula`);

@@ -125,18 +125,16 @@ export async function loadDesiredDocument({
       files[name] = {
         path: budTxt,
         lines: parseDesiredTxt(fs.readFileSync(budTxt, "utf8")),
-        fromBud: true,
       };
       anySource = true;
     } else if (fs.existsSync(legacy)) {
       files[name] = {
         path: legacy,
         lines: parseDesiredTxt(fs.readFileSync(legacy, "utf8")),
-        fromBud: false,
       };
       anySource = true;
     } else {
-      files[name] = { path: null, lines: [], fromBud: false };
+      files[name] = { path: null, lines: [] };
     }
   }
 

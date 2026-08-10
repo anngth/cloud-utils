@@ -159,3 +159,26 @@ test("detectBrewType returns dual when both match", async () => {
   });
   assert.deepEqual(result, { error: "dual" });
 });
+
+test("applyAdd --formula validates once via brew info", async () => {
+  const infoCalls = [];
+  const { document, failed } = await applyAdd(["bat"], {
+    forceType: "formula",
+    document: { version: 1, formulas: [], casks: [], taps: [] },
+    deps: {
+      ui: silentUi(),
+      brewBin: "/brew",
+      runBrew: async (args) => {
+        infoCalls.push(args);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      brewInfoToken: async () => "bat",
+    },
+  });
+  assert.equal(failed, 0);
+  assert.deepEqual(document.formulas, ["bat"]);
+  assert.deepEqual(
+    infoCalls.filter((args) => args[0] === "info" && args[1] === "--formula"),
+    [["info", "--formula", "bat"]],
+  );
+});
