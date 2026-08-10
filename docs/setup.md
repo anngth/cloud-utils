@@ -87,8 +87,8 @@ Layout:
 | `skm` | `skm/sources.json`                                  | `mac_scripts/functions/skills-manager/sources.json.example` (reference only) |
 | `dbt` | `dbt/secrets`                                       | `mac_scripts/functions/db-tools/secrets.example`                              |
 
-On first run, `bud` migrates legacy `bud/*.txt` (or `brew/*.txt`) into
-`desired.json` once, then uses JSON only. `dbt` bootstraps missing files from
+On first run, `bud` bootstraps missing `desired.json` from
+`desired.json.example`. `dbt` bootstraps missing files from
 legacy paths or `*.example`. SKM creates `sources.json` automatically; legacy `profiles.json`,
 `projects.json`, and `list.json` are migrated once and retained unchanged.
 `gt backup` creates `backups.json` on first list use (and migrates older schemas).

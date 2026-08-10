@@ -70,9 +70,6 @@ export async function runUpdateCommand({ exclude = [] } = {}, context = {}) {
     ui.error(loaded.error);
     return 1;
   }
-  if (loaded.migrated) {
-    ui.info("Migrated bud lists to desired.json");
-  }
 
   const { document } = loaded;
 

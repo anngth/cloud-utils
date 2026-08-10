@@ -23,7 +23,7 @@ bud remove <user/repo>       # remove from taps list
 
 ## Config (`desired.json`)
 
-Single JSON document with `version`, `formulas`, `casks`, and `taps` arrays. On first run, if `desired.json` is missing, `bud` migrates from legacy `bud/*.txt` (or older `brew/*.txt`) once, writes JSON, then deletes the `bud/*.txt` files. Legacy `brew/*.txt` is never deleted. If the taps list is still empty after migration, `bud` seeds taps from `brew tap`.
+Single JSON document with `version`, `formulas`, `casks`, and `taps` arrays. On first run, if `desired.json` is missing, `bud` bootstraps from `desired.json.example`. If the taps list is still empty after bootstrap, `bud` seeds taps from `brew tap`.
 
 ## `bud list`
 

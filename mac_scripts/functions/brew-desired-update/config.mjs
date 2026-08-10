@@ -81,17 +81,6 @@ export function normalizeDesiredDocument(doc) {
   return normalized;
 }
 
-export function parseDesiredTxt(contents) {
-  const lines = [];
-  for (const line of contents.split(/\r?\n/)) {
-    if (!line || /^\s*#/.test(line)) {
-      continue;
-    }
-    lines.push(line);
-  }
-  return lines;
-}
-
 /**
  * @param {{ env?: Record<string, string | undefined>, fs?: typeof defaultFs, examplePath?: string, listBrewTaps?: () => Promise<string[]> }} [options]
  */
@@ -101,7 +90,7 @@ export async function loadDesiredDocument({
   examplePath,
   listBrewTaps,
 } = {}) {
-  const { budDir, desiredFile, configDir } = resolveBudPaths(env);
+  const { desiredFile } = resolveBudPaths(env);
   const resolvedExamplePath = examplePath ?? resolveBudPaths(env).exampleFile;
 
   const existing = readDesiredDocument(desiredFile, fs);
@@ -115,62 +104,27 @@ export async function loadDesiredDocument({
     return { ok: false, error: existing.error ?? "invalid desired.json" };
   }
 
-  const names = ["formulas", "casks", "taps"];
-  const files = {};
-  let anySource = false;
-  for (const name of names) {
-    const budTxt = join(budDir, `${name}.txt`);
-    const legacy = join(configDir, "brew", `${name}.txt`);
-    if (fs.existsSync(budTxt)) {
-      files[name] = {
-        path: budTxt,
-        lines: parseDesiredTxt(fs.readFileSync(budTxt, "utf8")),
-      };
-      anySource = true;
-    } else if (fs.existsSync(legacy)) {
-      files[name] = {
-        path: legacy,
-        lines: parseDesiredTxt(fs.readFileSync(legacy, "utf8")),
-      };
-      anySource = true;
-    } else {
-      files[name] = { path: null, lines: [] };
-    }
-  }
-
-  let document;
-  let bootstrapped = false;
-
-  if (!anySource) {
-    let exampleRaw;
-    try {
-      exampleRaw = fs.readFileSync(resolvedExamplePath, "utf8");
-    } catch (error) {
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : `Could not read example file: ${resolvedExamplePath}`,
-      };
-    }
-    try {
-      document = JSON.parse(exampleRaw);
-    } catch {
-      return { ok: false, error: `Invalid JSON in example file: ${resolvedExamplePath}` };
-    }
-    if (!isValidDesiredDocument(document)) {
-      return { ok: false, error: "invalid example file" };
-    }
-    bootstrapped = true;
-  } else {
-    document = {
-      version: 1,
-      formulas: files.formulas.lines,
-      casks: files.casks.lines,
-      taps: files.taps.lines,
+  let exampleRaw;
+  try {
+    exampleRaw = fs.readFileSync(resolvedExamplePath, "utf8");
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : `Could not read example file: ${resolvedExamplePath}`,
     };
   }
 
-  const tapsFileExisted = Boolean(files.taps?.path);
-  if (document.taps.length === 0 && !tapsFileExisted && listBrewTaps) {
+  let document;
+  try {
+    document = JSON.parse(exampleRaw);
+  } catch {
+    return { ok: false, error: `Invalid JSON in example file: ${resolvedExamplePath}` };
+  }
+  if (!isValidDesiredDocument(document)) {
+    return { ok: false, error: "invalid example file" };
+  }
+
+  if (document.taps.length === 0 && listBrewTaps) {
     document = { ...document, taps: await listBrewTaps() };
   }
 
@@ -181,17 +135,7 @@ export async function loadDesiredDocument({
     return { ok: false, error: written.error };
   }
 
-  for (const name of names) {
-    const txtPath = join(budDir, `${name}.txt`);
-    if (fs.existsSync(txtPath)) {
-      fs.rmSync(txtPath);
-    }
-  }
-
-  if (bootstrapped) {
-    return { ok: true, document, bootstrapped: true };
-  }
-  return { ok: true, document, migrated: true };
+  return { ok: true, document, bootstrapped: true };
 }
 
 export function readDesiredDocument(filePath, fs = defaultFs) {

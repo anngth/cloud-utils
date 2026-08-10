@@ -18,9 +18,7 @@ import {
   isValidDesiredDocument,
   readDesiredDocument,
   writeDesiredDocument,
-  normalizeDesiredDocument,
   loadDesiredDocument,
-  EMPTY_DESIRED,
 } from "../config.mjs";
 
 const examplePath = join(dirname(fileURLToPath(import.meta.url)), "../desired.json.example");
@@ -78,45 +76,7 @@ test("readDesiredDocument missing and invalid", () => {
   assert.equal(readDesiredDocument(bad).ok, false);
 });
 
-test("migrate merges bud txt files, writes JSON, deletes bud txt only", async () => {
-  const root = mkdtempSync(join(tmpdir(), "bud-mig-"));
-  const budDir = join(root, "bud");
-  mkdirSync(budDir);
-  writeFileSync(join(budDir, "formulas.txt"), "# hi\nbat\n\ngh\n");
-  writeFileSync(join(budDir, "casks.txt"), "cursor\n");
-  writeFileSync(join(budDir, "taps.txt"), "mongodb/brew\n");
-  const brewDir = join(root, "brew");
-  mkdirSync(brewDir);
-  writeFileSync(join(brewDir, "casks.txt"), "should-not-win\n");
-
-  const result = await loadDesiredDocument({
-    env: { CLOUD_UTILS_CONFIG_DIR: root, HOME: "/Users/me" },
-    examplePath,
-  });
-  assert.equal(result.ok, true);
-  assert.equal(result.migrated, true);
-  assert.deepEqual(result.document.casks, ["cursor"]);
-  assert.equal(existsSync(join(budDir, "desired.json")), true);
-  assert.equal(existsSync(join(budDir, "casks.txt")), false);
-  assert.equal(existsSync(join(brewDir, "casks.txt")), true);
-});
-
-test("legacy brew txt used when bud txt missing", async () => {
-  const root = mkdtempSync(join(tmpdir(), "bud-leg-"));
-  mkdirSync(join(root, "brew"), { recursive: true });
-  mkdirSync(join(root, "bud"), { recursive: true });
-  writeFileSync(join(root, "brew", "formulas.txt"), "jq\n");
-  const result = await loadDesiredDocument({
-    env: { CLOUD_UTILS_CONFIG_DIR: root, HOME: "/x" },
-    examplePath,
-    listBrewTaps: async () => ["homebrew/core"],
-  });
-  assert.equal(result.ok, true);
-  assert.ok(result.document.formulas.includes("jq"));
-  assert.deepEqual(result.document.taps, ["homebrew/core"]);
-});
-
-test("bootstraps desired.json from example when no sources exist", async () => {
+test("bootstraps desired.json from example when missing", async () => {
   const root = mkdtempSync(join(tmpdir(), "bud-boot-"));
   mkdirSync(join(root, "bud"), { recursive: true });
   const result = await loadDesiredDocument({
@@ -136,25 +96,63 @@ test("bootstraps desired.json from example when no sources exist", async () => {
   assert.equal(existsSync(join(root, "bud", "desired.json")), true);
 });
 
-test("invalid desired.json does not migrate or overwrite", async () => {
+test("bootstraps seeds empty taps from listBrewTaps", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bud-seed-"));
+  mkdirSync(join(root, "bud"), { recursive: true });
+  const emptyExample = join(root, "empty-example.json");
+  writeFileSync(emptyExample, `${JSON.stringify({
+    version: 1,
+    formulas: ["bat"],
+    casks: [],
+    taps: [],
+  }, null, 2)}\n`);
+
+  const result = await loadDesiredDocument({
+    env: { CLOUD_UTILS_CONFIG_DIR: root, HOME: "/x" },
+    examplePath: emptyExample,
+    listBrewTaps: async () => ["homebrew/core"],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.bootstrapped, true);
+  assert.deepEqual(result.document.taps, ["homebrew/core"]);
+  assert.deepEqual(result.document.formulas, ["bat"]);
+});
+
+test("ignores leftover txt files when desired.json is missing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bud-ignore-txt-"));
+  const budDir = join(root, "bud");
+  mkdirSync(budDir, { recursive: true });
+  writeFileSync(join(budDir, "casks.txt"), "should-be-ignored\n");
+
+  const result = await loadDesiredDocument({
+    env: { CLOUD_UTILS_CONFIG_DIR: root, HOME: "/x" },
+    examplePath,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.bootstrapped, true);
+  assert.equal(result.migrated, undefined);
+  assert.ok(!result.document.casks.includes("should-be-ignored"));
+  assert.equal(existsSync(join(budDir, "casks.txt")), true);
+});
+
+test("invalid desired.json does not overwrite", async () => {
   const root = mkdtempSync(join(tmpdir(), "bud-bad-"));
   const budDir = join(root, "bud");
   mkdirSync(budDir, { recursive: true });
-  writeFileSync(join(budDir, "desired.json"), "{\"version\":1}\n");
-  writeFileSync(join(budDir, "casks.txt"), "cursor\n");
+  const raw = "{\"version\":1}\n";
+  writeFileSync(join(budDir, "desired.json"), raw);
   const result = await loadDesiredDocument({
     env: { CLOUD_UTILS_CONFIG_DIR: root, HOME: "/x" },
     examplePath,
   });
   assert.equal(result.ok, false);
-  assert.equal(existsSync(join(budDir, "casks.txt")), true);
+  assert.equal(readFileSync(join(budDir, "desired.json"), "utf8"), raw);
 });
 
-test("failed write does not delete txt", async () => {
+test("failed bootstrap write leaves no desired.json", async () => {
   const root = mkdtempSync(join(tmpdir(), "bud-fail-"));
   const budDir = join(root, "bud");
   mkdirSync(budDir, { recursive: true });
-  writeFileSync(join(budDir, "casks.txt"), "cursor\n");
   const result = await loadDesiredDocument({
     env: { CLOUD_UTILS_CONFIG_DIR: root, HOME: "/x" },
     examplePath,
@@ -164,5 +162,5 @@ test("failed write does not delete txt", async () => {
     },
   });
   assert.equal(result.ok, false);
-  assert.equal(existsSync(join(budDir, "casks.txt")), true);
+  assert.equal(existsSync(join(budDir, "desired.json")), false);
 });

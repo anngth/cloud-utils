@@ -151,9 +151,6 @@ export async function runListCommand(_args, context = {}) {
     ui.error(loaded.error);
     return 1;
   }
-  if (loaded.migrated) {
-    ui.info("Migrated bud lists to desired.json");
-  }
 
   const state = await loadState({ brewBin });
   const partitions = partitionLists({ desired: loaded.document, installed: state });

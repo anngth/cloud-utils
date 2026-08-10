@@ -286,9 +286,6 @@ export async function runAddCommand(args, context = {}) {
     ui.error(loaded.error);
     return 1;
   }
-  if (loaded.migrated) {
-    ui.info("Migrated bud lists to desired.json");
-  }
 
   const { document, succeeded, failed } = await add(names, {
     forceType,
@@ -332,9 +329,6 @@ export async function runRemoveCommand(args, context = {}) {
   if (!loaded.ok) {
     ui.error(loaded.error);
     return 1;
-  }
-  if (loaded.migrated) {
-    ui.info("Migrated bud lists to desired.json");
   }
 
   const { document, succeeded, failed } = remove(names, {
