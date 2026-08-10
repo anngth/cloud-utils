@@ -1,7 +1,10 @@
+import { formatGrid, initGridLayout } from "./list.mjs";
+
 const C = {
   cyan: "\u001b[36m",
   green: "\u001b[32m",
   brightGreen: "\u001b[92m",
+  blue: "\u001b[34m",
   red: "\u001b[31m",
   yellow: "\u001b[33m",
   black: "\u001b[30m",
@@ -75,6 +78,55 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     err(fg(C.red, `❌ ${message}`));
   }
 
+  const STATUS_SECTIONS = [
+    { key: "formulas", field: "installed", title: "Formulae · in list, installed", color: C.green },
+    { key: "formulas", field: "missing", title: "Formulae · in list, not installed", color: C.yellow },
+    { key: "formulas", field: "extra", title: "Formulae · installed, not in list", color: C.blue },
+    { key: "taps", field: "installed", title: "Taps · in list, tapped", color: C.green },
+    { key: "taps", field: "missing", title: "Taps · in list, not tapped", color: C.yellow },
+    { key: "taps", field: "extra", title: "Taps · tapped, not in list", color: C.blue },
+    { key: "casks", field: "installed", title: "Casks · in list, installed", color: C.green },
+    { key: "casks", field: "missing", title: "Casks · in list, not installed", color: C.yellow },
+    { key: "casks", field: "extra", title: "Casks · installed, not in list", color: C.blue },
+  ];
+
+  function desiredStatus(partitions, { columns = 120 } = {}) {
+    let termWidth = columns;
+    if (termWidth < 20) {
+      termWidth = 120;
+    }
+    const usableWidth = termWidth - 2;
+
+    const allItems = STATUS_SECTIONS.flatMap(
+      ({ key, field }) => partitions[key]?.[field] ?? [],
+    );
+    const layout = allItems.length > 0 ? initGridLayout(usableWidth, allItems) : null;
+
+    title("BUD");
+    step("Desired vs installed");
+
+    for (const section of STATUS_SECTIONS) {
+      const items = partitions[section.key]?.[section.field] ?? [];
+      if (!items.length) {
+        continue;
+      }
+
+      out(pipe);
+      out(`${pipe}  ${fg(section.color, "▸")} ${fg(C.brightGreen, section.title)} ${fg(C.gray, `(${items.length})`)}`);
+      if (layout) {
+        for (const line of formatGrid(items, layout)) {
+          out(`${pipe}${line}`);
+        }
+      } else {
+        for (const item of items) {
+          out(`${pipe}  ${item}`);
+        }
+      }
+    }
+
+    listEnd();
+  }
+
   return {
     usage,
     error,
@@ -84,5 +136,6 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     step,
     active,
     listEnd,
+    desiredStatus,
   };
 }

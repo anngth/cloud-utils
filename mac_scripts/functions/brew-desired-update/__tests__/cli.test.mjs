@@ -31,3 +31,30 @@ test("unknown command prints error on stderr and help on stdout", async () => {
   assert.match(h.stdout(), /Usage: bud/);
   assert.doesNotMatch(h.stderr() + h.stdout(), /Use '.*--help'/);
 });
+
+test("list exits 0 and prints section header", async () => {
+  const h = harness();
+  const code = await runCli(["list"], {
+    ...h.deps,
+    runList: async () => {
+      h.deps.stdout.write("Formulae · in list, installed\n");
+      return 0;
+    },
+  });
+  assert.equal(code, 0);
+  assert.match(h.stdout(), /Formulae · in list, installed/);
+});
+
+test("ls alias calls list command", async () => {
+  const h = harness();
+  let called = false;
+  const code = await runCli(["ls"], {
+    ...h.deps,
+    runList: async () => {
+      called = true;
+      return 0;
+    },
+  });
+  assert.equal(code, 0);
+  assert.ok(called);
+});

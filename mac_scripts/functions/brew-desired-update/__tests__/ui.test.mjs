@@ -23,5 +23,30 @@ test("usage matches skm-style BUD sections", () => {
   assert.ok(lines.some((l) => l.includes("bud (ls | list)")));
   assert.ok(lines.some((l) => l.includes("bud add <name...>")));
   assert.ok(lines.some((l) => l.includes("bud remove <name...>")));
-  assert.ok(lines.some((l) => /does not install missing/i.test(l)));
+  assert.ok(/does not install missing/i.test(stdout));
+});
+
+test("desiredStatus renders sections and skips empty", () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (v) => { stdout += v; } },
+    stderr: { write() {} },
+  });
+  ui.desiredStatus({
+    formulas: { installed: ["bat"], missing: ["missing"], extra: [] },
+    taps: { installed: [], missing: [], extra: [] },
+    casks: { installed: [], missing: [], extra: ["slack"] },
+  }, { columns: 80 });
+
+  const text = stripAnsi(stdout);
+  assert.ok(text.includes("BUD"));
+  assert.ok(text.includes("Formulae · in list, installed"));
+  assert.ok(text.includes("Formulae · in list, not installed"));
+  assert.ok(text.includes("Casks · installed, not in list"));
+  assert.ok(text.includes("bat"));
+  assert.ok(text.includes("missing"));
+  assert.ok(text.includes("slack"));
+  assert.doesNotMatch(text, /Formulae · installed, not in list/);
+  assert.doesNotMatch(text, /Taps ·/);
+  assert.ok(text.includes("└"));
 });

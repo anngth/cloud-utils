@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url";
+import { runListCommand } from "./list.mjs";
 import { createUi } from "./ui.mjs";
 
 const HELP = new Set(["help", "-h", "--help"]);
@@ -10,6 +11,7 @@ export async function runCli(argv, dependencies = {}) {
     stdout = process.stdout,
     stderr = process.stderr,
     ui = createUi({ stdout, stderr }),
+    runList = runListCommand,
   } = dependencies;
 
   const action = argv[0];
@@ -28,6 +30,10 @@ export async function runCli(argv, dependencies = {}) {
     ui.error(`Unknown command: ${action}`);
     ui.usage();
     return 1;
+  }
+
+  if (action === "list" || action === "ls") {
+    return runList(argv.slice(1), { env: process.env, ui, stdout, ...dependencies });
   }
 
   ui.error(`Command not wired yet: ${action}`);
