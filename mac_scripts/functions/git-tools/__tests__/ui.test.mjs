@@ -178,3 +178,44 @@ test("renderBackupSelector shows checkbox lines without timestamp labels", () =>
   const plain = stdout.replace(/\x1B\[[0-9;]*m/g, "");
   assert.match(plain, /org\/a\.git[\s\S]*│\n│\s+2\s+/);
 });
+
+test("cancelledBackupSelector keeps repo list and Selection cancelled footer", () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (v) => { stdout += v; } },
+    stderr: { write() {} },
+  });
+  ui.cancelledBackupSelector(
+    "Select repos to backup",
+    {
+      items: [
+        { value: "git@github.com:org/a.git", label: "git@github.com:org/a.git" },
+        { value: "git@gitlab.com:acme/b.git", label: "git@gitlab.com:acme/b.git" },
+      ],
+      cursor: 0,
+      selected: new Set([0]),
+    },
+    { listPath: "~/gt/backups.json" },
+  );
+
+  assert.match(stdout, /\u001b\[2J\u001b\[H/);
+  assert.match(stdout, /REPO BACKUP/);
+  assert.match(stdout, /git@github\.com:org\/a\.git/);
+  assert.match(stdout, /git@gitlab\.com:acme\/b\.git/);
+  assert.match(stdout, /Selection cancelled/);
+  assert.match(stdout, /\u001b\[31m.*Selection cancelled|\u001b\[91m.*Selection cancelled|Selection cancelled/);
+});
+
+test("renderBackupSelector without cancelled has no Selection cancelled footer", () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (v) => { stdout += v; } },
+    stderr: { write() {} },
+  });
+  ui.renderBackupSelector("Select repos to backup", {
+    items: [{ value: "git@github.com:org/a.git", label: "git@github.com:org/a.git" }],
+    cursor: 0,
+    selected: new Set(),
+  });
+  assert.doesNotMatch(stdout, /Selection cancelled/);
+});

@@ -51,6 +51,7 @@ function uiHarness() {
     ends: [],
     items: [],
     titles: [],
+    cancelledCalls: [],
   };
   return {
     messages,
@@ -91,6 +92,9 @@ function uiHarness() {
         messages.lines.push(message);
       },
       renderBackupSelector() {},
+      cancelledBackupSelector(heading, state, opts) {
+        messages.cancelledCalls.push({ heading, state, opts });
+      },
     },
   };
 }
@@ -716,6 +720,49 @@ test("runBackupCommand selection write failure skips batch", async () => {
   assert.doesNotMatch(h.messages.statuses.join("\n"), /Backup summary/);
 });
 
+test("runBackupCommand cancel redraws selector with Selection cancelled", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [SOURCE, SOURCE_B]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    stdin: { isTTY: true },
+    runSelector: async ({ items }) => ({
+      type: "cancel",
+      selected: [],
+      state: { items, cursor: 0, selected: new Set() },
+    }),
+  });
+  const code = await runBackupCommand([], context);
+  assert.equal(code, 1);
+  assert.equal(h.messages.cancelledCalls.length, 1);
+  assert.equal(h.messages.cancelledCalls[0].heading, "Select repos to backup");
+  assert.equal(h.messages.cancelledCalls[0].state.items.length, 2);
+  assert.match(String(h.messages.cancelledCalls[0].opts?.listPath ?? ""), /backups\.json/);
+});
+
+test("runBackupCommand stale cancel redraws selector", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [
+    { url: SOURCE, lastCheckedAt: null },
+    { url: SOURCE_B, lastCheckedAt: "2026-08-08T12:00:00.000Z" },
+  ]);
+  const { h, context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => new Date("2026-08-08T12:00:00.000Z"),
+    stdin: { isTTY: true },
+    runSelector: async ({ items }) => ({
+      type: "cancel",
+      selected: [],
+      state: { items, cursor: 0, selected: new Set() },
+    }),
+  });
+  const code = await runBackupCommand(["stale"], context);
+  assert.equal(code, 1);
+  assert.equal(h.messages.cancelledCalls.length, 1);
+  assert.equal(h.messages.cancelledCalls[0].heading, "Select stale repos to backup");
+  assert.equal(h.messages.cancelledCalls[0].state.items.length, 1);
+});
+
 test("runBackupCommand cancel does not change selectedLast", async () => {
   const paths = tempPaths();
   seedRepos(paths, [
@@ -724,7 +771,11 @@ test("runBackupCommand cancel does not change selectedLast", async () => {
   const { context } = baseContext({
     env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
     stdin: { isTTY: true },
-    runSelector: async () => ({ type: "cancel", selected: [] }),
+    runSelector: async ({ items }) => ({
+      type: "cancel",
+      selected: [],
+      state: { items, cursor: 0, selected: new Set() },
+    }),
   });
   await runBackupCommand([], context);
   const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
@@ -896,7 +947,11 @@ test("runBackupCommand cancel exits 1 without backing up", async () => {
   const { h, context } = baseContext({
     env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
     stdin: { isTTY: true },
-    runSelector: async () => ({ type: "cancel", selected: [] }),
+    runSelector: async ({ items }) => ({
+      type: "cancel",
+      selected: [],
+      state: { items, cursor: 0, selected: new Set() },
+    }),
     createPrivateProject: async (_group, name) => {
       created.push(name);
       return { ok: true };
@@ -1324,7 +1379,11 @@ test("runBackupCommand stale --days 1 changes stale set", async () => {
     stdin: { isTTY: true },
     runSelector: async ({ items }) => {
       capturedItems = items;
-      return { type: "cancel", selected: [] };
+      return {
+        type: "cancel",
+        selected: [],
+        state: { items, cursor: 0, selected: new Set() },
+      };
     },
   });
   await runBackupCommand(["stale", "--days", "1"], context);

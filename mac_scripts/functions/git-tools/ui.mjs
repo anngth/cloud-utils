@@ -116,7 +116,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out(message);
   }
 
-  function renderBackupSelector(heading, state, { listPath, now } = {}) {
+  function renderBackupSelector(heading, state, { listPath, now, cancelled = false } = {}) {
     stdout.write("\u001b[2J\u001b[H");
     title("REPO BACKUP");
     if (listPath) {
@@ -135,7 +135,15 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
       out(`${pipe}  ${number}  ${boxColor}${box}${C.reset}  ${fg(labelColor, label)}`);
       out(pipe);
     });
-    listEnd();
+    if (cancelled) {
+      out(`${fg(C.cyan, "└")}  ${fg(C.red, "Selection cancelled")}`);
+    } else {
+      listEnd();
+    }
+  }
+
+  function cancelledBackupSelector(heading, state, opts = {}) {
+    renderBackupSelector(heading, state, { ...opts, cancelled: true });
   }
 
   return {
@@ -153,5 +161,6 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     warn,
     listEnd,
     renderBackupSelector,
+    cancelledBackupSelector,
   };
 }

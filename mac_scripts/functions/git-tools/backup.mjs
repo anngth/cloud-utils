@@ -714,6 +714,9 @@ export async function runBackupCommand(args = [], context = {}) {
     });
 
     if (selection.type === "cancel") {
+      if (selection.state) {
+        ui.cancelledBackupSelector(heading, selection.state, { listPath });
+      }
       return 1;
     }
 
@@ -814,6 +817,9 @@ export async function runBackupCommand(args = [], context = {}) {
   });
 
   if (selection.type === "cancel") {
+    if (selection.state) {
+      ui.cancelledBackupSelector(heading, selection.state, { listPath });
+    }
     return 1;
   }
 
