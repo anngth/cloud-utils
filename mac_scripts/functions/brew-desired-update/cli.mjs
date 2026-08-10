@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url";
 import { runListCommand } from "./list.mjs";
+import { runAddCommand, runRemoveCommand } from "./manage.mjs";
 import { createUi } from "./ui.mjs";
 
 const HELP = new Set(["help", "-h", "--help"]);
@@ -12,6 +13,8 @@ export async function runCli(argv, dependencies = {}) {
     stderr = process.stderr,
     ui = createUi({ stdout, stderr }),
     runList = runListCommand,
+    runAdd = runAddCommand,
+    runRemove = runRemoveCommand,
   } = dependencies;
 
   const action = argv[0];
@@ -34,6 +37,14 @@ export async function runCli(argv, dependencies = {}) {
 
   if (action === "list" || action === "ls") {
     return runList(argv.slice(1), { env: process.env, ui, stdout, ...dependencies });
+  }
+
+  if (action === "add") {
+    return runAdd(argv.slice(1), { env: process.env, ui, ...dependencies });
+  }
+
+  if (action === "remove") {
+    return runRemove(argv.slice(1), { env: process.env, ui, ...dependencies });
   }
 
   ui.error(`Command not wired yet: ${action}`);

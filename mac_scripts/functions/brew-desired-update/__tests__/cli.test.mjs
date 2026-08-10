@@ -58,3 +58,31 @@ test("ls alias calls list command", async () => {
   assert.equal(code, 0);
   assert.ok(called);
 });
+
+test("add --formula bat delegates to runAdd with remaining args", async () => {
+  const h = harness();
+  let capturedArgs = null;
+  const code = await runCli(["add", "--formula", "bat"], {
+    ...h.deps,
+    runAdd: async (args) => {
+      capturedArgs = args;
+      return 0;
+    },
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(capturedArgs, ["--formula", "bat"]);
+});
+
+test("remove delegates to runRemove with names", async () => {
+  const h = harness();
+  let capturedArgs = null;
+  const code = await runCli(["remove", "cursor", "bat"], {
+    ...h.deps,
+    runRemove: async (args) => {
+      capturedArgs = args;
+      return 0;
+    },
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(capturedArgs, ["cursor", "bat"]);
+});
