@@ -17,12 +17,19 @@ const C = {
 
 const fg = (color, text) => `${color}${text}${C.fgReset}`;
 
+export function formatNameList(names, { limit = 8 } = {}) {
+  if (!Array.isArray(names) || names.length === 0) return "";
+  if (names.length <= limit) return names.join(" ");
+  const shown = names.slice(0, limit).join(" ");
+  return `${shown} … (+${names.length - limit} more)`;
+}
+
 export function createUi({ stdout = process.stdout, stderr = process.stderr } = {}) {
   const out = (line = "") => stdout.write(`${line}\n`);
   const err = (line) => stderr.write(`${line}\n`);
   const pipe = fg(C.cyan, "│");
 
-  function title(label = "BUD") {
+  function title(label = "BREW DESIRED UPDATE") {
     out();
     out(`   ${C.bgCyan}${C.black} ${label} ${C.fgReset}${C.bgReset}`);
     out(pipe);
@@ -59,7 +66,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     };
     const note = (text) => out(`${pipe}  ${fg(C.gray, text)}`);
 
-    title("BUD");
+    title();
     step("Usage: bud [command]");
     command("bud (help | -h | --help)", "Show this help");
     section("Update");
@@ -90,7 +97,12 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     { key: "casks", field: "extra", title: "Casks · installed, not in list", color: C.blue },
   ];
 
-  function desiredStatus(partitions, { columns = 120 } = {}) {
+  function desiredStatus(partitions, { columns = 120, desiredCounts } = {}) {
+    const counts = {
+      formulas: desiredCounts?.formulas ?? 0,
+      taps: desiredCounts?.taps ?? 0,
+      casks: desiredCounts?.casks ?? 0,
+    };
     let termWidth = columns;
     if (termWidth < 20) {
       termWidth = 120;
@@ -102,8 +114,8 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     );
     const layout = allItems.length > 0 ? initGridLayout(usableWidth, allItems) : null;
 
-    title("BUD");
-    step("Desired vs installed");
+    title();
+    step(`Desired vs installed · ${counts.formulas} formulae · ${counts.taps} taps · ${counts.casks} casks`);
 
     for (const section of STATUS_SECTIONS) {
       const items = partitions[section.key]?.[section.field] ?? [];

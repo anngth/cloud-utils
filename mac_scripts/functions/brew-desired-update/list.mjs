@@ -155,6 +155,13 @@ export async function runListCommand(_args, context = {}) {
   const state = await loadState({ brewBin });
   const partitions = partitionLists({ desired: loaded.document, installed: state });
   const columns = stdout.columns || 120;
-  ui.desiredStatus(partitions, { columns });
+  ui.desiredStatus(partitions, {
+    columns,
+    desiredCounts: {
+      formulas: loaded.document.formulas.length,
+      taps: loaded.document.taps.length,
+      casks: loaded.document.casks.length,
+    },
+  });
   return 0;
 }
