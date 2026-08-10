@@ -74,9 +74,12 @@ test("rejects removed legacy commands", async () => {
     const harness = cliHarness({ hasNpx: false });
     assert.equal(await runCli([command], harness.dependencies), 1);
     assert.match(harness.stderr(), new RegExp(`Unknown command: ${command}`));
+    assert.match(harness.stdout(), /usage/);
+    assert.doesNotMatch(harness.stderr(), /skm --help/);
     assert.deepEqual(harness.calls, []);
     assert.equal(harness.initialized(), 0);
     assert.equal(harness.read(), 0);
+    assert.equal(harness.npxChecks(), 0);
   }
 });
 
@@ -85,13 +88,26 @@ for (const command of ["constructor", "toString", "__proto__"]) {
     const harness = cliHarness({ hasNpx: false });
     assert.equal(await runCli([command], harness.dependencies), 1);
     assert.match(harness.stderr(), new RegExp(`Unknown command: ${command}`));
-    assert.match(harness.stderr(), /skm --help/);
+    assert.match(harness.stdout(), /usage/);
+    assert.doesNotMatch(harness.stderr(), /skm --help/);
     assert.deepEqual(harness.calls, []);
     assert.equal(harness.npxChecks(), 0);
     assert.equal(harness.initialized(), 0);
     assert.equal(harness.read(), 0);
   });
 }
+
+test("unknown top-level command prints error and full help", async () => {
+  const harness = cliHarness({ hasNpx: false });
+  assert.equal(await runCli(["foo"], harness.dependencies), 1);
+  assert.match(harness.stderr(), /Unknown command: foo/);
+  assert.match(harness.stdout(), /usage/);
+  assert.doesNotMatch(harness.stderr(), /skm --help/);
+  assert.doesNotMatch(harness.stderr(), /Unknown command: foo[\s\S]*usage/);
+  assert.deepEqual(harness.calls, []);
+  assert.equal(harness.initialized(), 0);
+  assert.equal(harness.npxChecks(), 0);
+});
 
 test("help aliases render without bootstrapping or checking npx", async () => {
   for (const alias of ["help", "-h", "--help"]) {

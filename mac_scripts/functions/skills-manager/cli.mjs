@@ -88,7 +88,7 @@ export async function runCli(argv, dependencies = {}) {
 
   if (action !== undefined && !Object.hasOwn(routes, action)) {
     ui.error(`Unknown command: ${action}`);
-    ui.usageLine?.("Use 'skm --help' for usage information");
+    ui.usage();
     return 1;
   }
   if (action === undefined && (!stdin.isTTY || !stdout.isTTY)) {
