@@ -3,7 +3,9 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import {
   createBrewRunner,
+  createLineFramer,
   formatBrewCommand,
+  isBrewProbe,
   resolveBrewBinary,
   runBrew,
   loadBrewState,
@@ -123,6 +125,77 @@ test("runBrew logs command and forwards chunks live", async () => {
   assert.equal(result.stdout, "out1out2");
   assert.equal(result.stderr, "err1");
   assert.equal(result.code, 0);
+});
+
+test("isBrewProbe classifies list info bare tap trust help", () => {
+  assert.equal(isBrewProbe(["list", "--formula"]), true);
+  assert.equal(isBrewProbe(["info", "--cask", "x"]), true);
+  assert.equal(isBrewProbe(["tap"]), true);
+  assert.equal(isBrewProbe(["trust", "--help"]), true);
+  assert.equal(isBrewProbe(["--help"]), true);
+  assert.equal(isBrewProbe(["tap", "mongodb/brew"]), false);
+  assert.equal(isBrewProbe(["tap", "--repair"]), false);
+  assert.equal(isBrewProbe(["trust", "--tap", "mongodb/brew"]), false);
+  assert.equal(isBrewProbe(["upgrade", "--cask", "-y", "x"]), false);
+  assert.equal(isBrewProbe(["update"]), false);
+});
+
+test("createLineFramer prefixes lines across partial chunks", () => {
+  const chunks = [];
+  const sink = { write: (c) => chunks.push(String(c)) };
+  const f = createLineFramer("│  ", sink);
+  f.write("ab\nc");
+  f.write("d\n");
+  f.flush();
+  assert.deepEqual(chunks, ["│  ab\n", "│  cd\n"]);
+});
+
+test("runBrew streamOutput false buffers without writing", async () => {
+  const outChunks = [];
+  const spawn = () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from("pkg\n"));
+      child.emit("close", 0);
+    });
+    return child;
+  };
+  const result = await runBrew(["list", "--formula"], {
+    brewBin: "/brew",
+    spawn,
+    onCommand() {},
+    streamOutput: false,
+    stdout: { write: (c) => outChunks.push(String(c)) },
+    stderr: { write() {} },
+  });
+  assert.deepEqual(outChunks, []);
+  assert.equal(result.stdout, "pkg\n");
+});
+
+test("runBrew with linePrefix frames live output; buffers stay raw", async () => {
+  const outChunks = [];
+  const spawn = () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from("==> hi\n"));
+      child.emit("close", 0);
+    });
+    return child;
+  };
+  const result = await runBrew(["update"], {
+    brewBin: "/brew",
+    spawn,
+    onCommand() {},
+    linePrefix: "│  ",
+    stdout: { write: (c) => outChunks.push(String(c)) },
+    stderr: { write() {} },
+  });
+  assert.deepEqual(outChunks, ["│  ==> hi\n"]);
+  assert.equal(result.stdout, "==> hi\n");
 });
 
 test("loadBrewState strips tap prefixes", async () => {

@@ -66,6 +66,46 @@ export function formatBrewCommand(args) {
 
 /**
  * @param {string[]} args
+ * @returns {boolean}
+ */
+export function isBrewProbe(args) {
+  const [cmd, ...rest] = args;
+  if (cmd === "list" || cmd === "info") return true;
+  if (cmd === "tap" && rest.length === 0) return true;
+  if (cmd === "trust" && rest.includes("--help")) return true;
+  if (cmd === "--help") return true;
+  return false;
+}
+
+/**
+ * @param {string} linePrefix
+ * @param {{ write: (chunk: string | Buffer) => void }} sink
+ * @returns {{ write: (chunk: string | Buffer) => void, flush: () => void }}
+ */
+export function createLineFramer(linePrefix, sink) {
+  let pending = "";
+  return {
+    write(chunk) {
+      pending += String(chunk);
+      for (;;) {
+        const i = pending.indexOf("\n");
+        if (i === -1) break;
+        const line = pending.slice(0, i + 1);
+        pending = pending.slice(i + 1);
+        sink.write(`${linePrefix}${line}`);
+      }
+    },
+    flush() {
+      if (pending.length) {
+        sink.write(`${linePrefix}${pending}`);
+        pending = "";
+      }
+    },
+  };
+}
+
+/**
+ * @param {string[]} args
  * @param {{
  *   brewBin: string,
  *   spawn?: typeof defaultSpawn,
@@ -73,6 +113,8 @@ export function formatBrewCommand(args) {
  *   onCommand?: (line: string) => void,
  *   stdout?: { write: (chunk: string | Buffer) => void },
  *   stderr?: { write: (chunk: string | Buffer) => void },
+ *   streamOutput?: boolean,
+ *   linePrefix?: string,
  * }} options
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
@@ -85,6 +127,8 @@ export function runBrew(
     onCommand = (line) => process.stdout.write(`${line}\n`),
     stdout: outStream = process.stdout,
     stderr: errStream = process.stderr,
+    streamOutput = true,
+    linePrefix = "",
   } = {},
 ) {
   return new Promise((resolve) => {
@@ -95,20 +139,31 @@ export function runBrew(
     });
     let stdout = "";
     let stderr = "";
+    const outFramer = streamOutput && linePrefix
+      ? createLineFramer(linePrefix, outStream)
+      : null;
+    const errFramer = streamOutput && linePrefix
+      ? createLineFramer(linePrefix, errStream)
+      : null;
     child.stdout?.on("data", (chunk) => {
       stdout += chunk;
-      outStream.write(chunk);
+      if (!streamOutput) return;
+      if (outFramer) outFramer.write(chunk);
+      else outStream.write(chunk);
     });
     child.stderr?.on("data", (chunk) => {
       stderr += chunk;
-      errStream.write(chunk);
+      if (!streamOutput) return;
+      if (errFramer) errFramer.write(chunk);
+      else errStream.write(chunk);
     });
-    child.on("close", (code) => {
+    const finish = (code) => {
+      outFramer?.flush();
+      errFramer?.flush();
       resolve({ code: code ?? 1, stdout, stderr });
-    });
-    child.on("error", () => {
-      resolve({ code: 1, stdout, stderr });
-    });
+    };
+    child.on("close", finish);
+    child.on("error", () => finish(1));
   });
 }
 
