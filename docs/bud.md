@@ -2,7 +2,7 @@
 
 Homebrew desired lists — `$CLOUD_UTILS_CONFIG_DIR/bud/desired.json`. File changes are local only (not in git).
 
-`bud` prints each `brew` command and streams its output live.
+`bud` prints each `brew` command. Probe commands (`list`, `info`, …) show the command only; update/upgrade/cleanup stream under the UI pipe.
 
 Config paths: [setup.md — Local config](setup.md#local-config).
 

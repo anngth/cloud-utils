@@ -170,9 +170,10 @@ export function runBrew(
 /**
  * @param {{
  *   brewBin: string,
- *   ui?: { command?: (line: string) => void },
+ *   ui?: { command?: (line: string) => void, streamPrefix?: string },
  *   stdout?: { write: (chunk: string | Buffer) => void },
  *   stderr?: { write: (chunk: string | Buffer) => void },
+ *   spawn?: typeof defaultSpawn,
  * }} options
  * @returns {(args: string[]) => Promise<{ code: number, stdout: string, stderr: string }>}
  */
@@ -181,16 +182,23 @@ export function createBrewRunner({
   ui,
   stdout = process.stdout,
   stderr = process.stderr,
+  spawn,
 }) {
-  return (args) => runBrew(args, {
-    brewBin,
-    stdout,
-    stderr,
-    onCommand: (line) => {
-      if (ui?.command) ui.command(line);
-      else stdout.write(`${line}\n`);
-    },
-  });
+  return (args) => {
+    const probe = isBrewProbe(args);
+    return runBrew(args, {
+      brewBin,
+      spawn,
+      stdout,
+      stderr,
+      streamOutput: !probe,
+      linePrefix: probe ? "" : (ui?.streamPrefix ?? ""),
+      onCommand: (line) => {
+        if (ui?.command) ui.command(line);
+        else stdout.write(`${line}\n`);
+      },
+    });
+  };
 }
 
 /**

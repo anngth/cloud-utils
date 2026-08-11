@@ -28,6 +28,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   const out = (line = "") => stdout.write(`${line}\n`);
   const err = (line) => stderr.write(`${line}\n`);
   const pipe = fg(C.cyan, "│");
+  const streamPrefix = `${pipe}  `;
 
   function title(label = "BREW DESIRED UPDATE") {
     out();
@@ -154,5 +155,6 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     active,
     listEnd,
     desiredStatus,
+    streamPrefix,
   };
 }

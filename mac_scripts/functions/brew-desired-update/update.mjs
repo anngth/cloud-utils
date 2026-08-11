@@ -129,7 +129,7 @@ export async function runUpdateCommand({ exclude = [] } = {}, context = {}) {
 
   if (toUpgrade.length > 0) {
     ui.active(
-      `Upgrading casks · ${toUpgrade.length} of ${eligible.length} eligible: ${formatNameList(toUpgrade)}`,
+      `Upgrading casks · ${toUpgrade.length} of ${eligible.length} eligible`,
     );
     result = await runner(["upgrade", "--cask", "-y", ...toUpgrade]);
     if (result.code !== 0) {

@@ -293,3 +293,52 @@ test("createBrewRunner invokes ui.command before spawn", async () => {
   assert.deepEqual(commands, ["$ brew update"]);
   assert.equal(result.code, 1);
 });
+
+test("createBrewRunner does not stream probe list output", async () => {
+  const outChunks = [];
+  const commands = [];
+  const spawn = () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from("bat\n"));
+      child.emit("close", 0);
+    });
+    return child;
+  };
+  const runner = createBrewRunner({
+    brewBin: "/brew",
+    spawn,
+    ui: { command: (l) => commands.push(l), streamPrefix: "│  " },
+    stdout: { write: (c) => outChunks.push(String(c)) },
+    stderr: { write() {} },
+  });
+  const result = await runner(["list", "--formula"]);
+  assert.deepEqual(commands, ["$ brew list --formula"]);
+  assert.deepEqual(outChunks, []);
+  assert.equal(result.stdout, "bat\n");
+});
+
+test("createBrewRunner frames live upgrade output", async () => {
+  const outChunks = [];
+  const spawn = () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from("==> x\n"));
+      child.emit("close", 0);
+    });
+    return child;
+  };
+  const runner = createBrewRunner({
+    brewBin: "/brew",
+    spawn,
+    ui: { command() {}, streamPrefix: "│  " },
+    stdout: { write: (c) => outChunks.push(String(c)) },
+    stderr: { write() {} },
+  });
+  await runner(["upgrade", "--formula", "-y"]);
+  assert.deepEqual(outChunks, ["│  ==> x\n"]);
+});

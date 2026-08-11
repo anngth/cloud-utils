@@ -154,7 +154,8 @@ test("runUpdateCommand logs counts and brew actions", async () => {
   assert.ok(out.includes("Updating Homebrew (brew update)"));
   assert.ok(out.includes("Upgrading formulae (brew upgrade --formula)"));
   assert.ok(out.includes("Reloading Homebrew state"));
-  assert.ok(out.includes("Upgrading casks · 1 of 2 eligible: cursor"));
+  assert.ok(out.includes("Upgrading casks · 1 of 2 eligible"));
+  assert.ok(!out.includes("eligible: cursor"));
   assert.ok(out.includes("Excluding 1 cask(s): slack") || out.includes("Excluding"));
   assert.ok(out.includes("Cleanup (brew cleanup --prune=1)"));
 });
