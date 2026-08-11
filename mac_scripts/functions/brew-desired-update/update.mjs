@@ -1,4 +1,4 @@
-import { ensureTap, loadBrewState, resolveBrewBinary, runBrew } from "./brew.mjs";
+import { createBrewRunner, ensureTap, loadBrewState, resolveBrewBinary } from "./brew.mjs";
 import { loadDesiredDocument } from "./config.mjs";
 import { formatNameList } from "./ui.mjs";
 
@@ -64,7 +64,7 @@ export async function runUpdateCommand({ exclude = [] } = {}, context = {}) {
     return 1;
   }
 
-  const runner = runBrewFn ?? ((args) => runBrew(args, { brewBin }));
+  const runner = runBrewFn ?? createBrewRunner({ brewBin, ui });
 
   const loaded = await loadDesired({ env });
   if (!loaded.ok) {

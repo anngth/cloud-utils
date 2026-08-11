@@ -77,3 +77,32 @@ test("runListCommand renders partitions on success", async () => {
   assert.equal(code, 0);
   assert.equal(output, "rendered");
 });
+
+test("runListCommand passes default runner into loadState and listTaps", async () => {
+  const loadOpts = [];
+  const tapOpts = [];
+  const code = await runListCommand([], {
+    env: { PATH: "/bin" },
+    stdout: { columns: 80 },
+    ui: { error() {}, info() {}, desiredStatus() {}, command() {} },
+    resolveBrew: () => "/opt/homebrew/bin/brew",
+    loadDesired: async ({ listBrewTaps }) => {
+      await listBrewTaps();
+      return {
+        ok: true,
+        document: { version: 1, formulas: [], casks: [], taps: [] },
+      };
+    },
+    loadState: async (opts) => {
+      loadOpts.push(opts);
+      return { formulas: [], casks: [], taps: [] };
+    },
+    listTaps: async (opts) => {
+      tapOpts.push(opts);
+      return [];
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(typeof loadOpts[0]?.runBrew, "function");
+  assert.equal(typeof tapOpts[0]?.runBrew, "function");
+});

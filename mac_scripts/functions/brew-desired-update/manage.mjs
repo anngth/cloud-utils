@@ -1,4 +1,4 @@
-import { brewInfoToken, resolveBrewBinary, runBrew } from "./brew.mjs";
+import { brewInfoToken, createBrewRunner, resolveBrewBinary } from "./brew.mjs";
 import {
   loadDesiredDocument,
   normalizeDesiredDocument,
@@ -108,7 +108,8 @@ function addUnique(list, item) {
  */
 async function applyOneAdd(pkgName, { forceType, document, deps, detect }) {
   const { ui, brewBin, runBrew: runBrewFn } = deps;
-  const runner = runBrewFn ?? (brewBin ? ((args) => runBrew(args, { brewBin })) : null);
+  const runner = runBrewFn ?? (brewBin ? createBrewRunner({ brewBin, ui }) : null);
+  const brewDeps = runner ? { ...deps, runBrew: runner } : deps;
 
   let pkgType = forceType;
   let listName = pkgName;
@@ -124,7 +125,7 @@ async function applyOneAdd(pkgName, { forceType, document, deps, detect }) {
     } else if (pkgName.includes("/")) {
       pkgType = "tap";
     } else {
-      const detected = await detect(pkgName, deps);
+      const detected = await detect(pkgName, brewDeps);
       if (detected.error) {
         return false;
       }
@@ -159,7 +160,7 @@ async function applyOneAdd(pkgName, { forceType, document, deps, detect }) {
 
   if (pkgType === "formula" && !tapForFormula && runner) {
     const infoToken = deps.brewInfoToken ?? brewInfoToken;
-    const token = await infoToken("formula", pkgName, { brewBin, runBrew: runBrewFn });
+    const token = await infoToken("formula", pkgName, { brewBin, runBrew: runner });
     if (token?.includes("/")) {
       tapForFormula = token.slice(0, token.lastIndexOf("/"));
     }
@@ -290,7 +291,7 @@ export async function runAddCommand(args, context = {}) {
   const { document, succeeded, failed } = await add(names, {
     forceType,
     document: loaded.document,
-    deps: { ui, brewBin, runBrew: context.runBrew },
+    deps: { ui, brewBin, runBrew: context.runBrew ?? createBrewRunner({ brewBin, ui }) },
   });
 
   if (succeeded > 0) {

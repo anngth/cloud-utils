@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 import {
+  createBrewRunner,
   formatBrewCommand,
   resolveBrewBinary,
   runBrew,
@@ -202,4 +203,20 @@ test("listBrewTaps returns tap lines", async () => {
     await listBrewTaps({ brewBin: "/brew", runBrew }),
     ["homebrew/core", "mongodb/brew"],
   );
+});
+
+test("createBrewRunner invokes ui.command before spawn", async () => {
+  const commands = [];
+  const ui = { command: (line) => commands.push(line) };
+  const runner = createBrewRunner({
+    brewBin: "/nonexistent-brew-bin-for-test",
+    ui,
+    stdout: { write() {} },
+    stderr: { write() {} },
+  });
+
+  const result = await runner(["update"]);
+
+  assert.deepEqual(commands, ["$ brew update"]);
+  assert.equal(result.code, 1);
 });

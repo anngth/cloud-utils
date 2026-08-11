@@ -1,5 +1,6 @@
 import { loadDesiredDocument } from "./config.mjs";
 import {
+  createBrewRunner,
   listBrewTaps,
   loadBrewState,
   resolveBrewBinary,
@@ -143,16 +144,18 @@ export async function runListCommand(_args, context = {}) {
     return 1;
   }
 
+  const runner = context.runBrew ?? createBrewRunner({ brewBin, ui });
+
   const loaded = await loadDesired({
     env,
-    listBrewTaps: () => listTaps({ brewBin }),
+    listBrewTaps: () => listTaps({ brewBin, runBrew: runner }),
   });
   if (!loaded.ok) {
     ui.error(loaded.error);
     return 1;
   }
 
-  const state = await loadState({ brewBin });
+  const state = await loadState({ brewBin, runBrew: runner });
   const partitions = partitionLists({ desired: loaded.document, installed: state });
   const columns = stdout.columns || 120;
   ui.desiredStatus(partitions, {

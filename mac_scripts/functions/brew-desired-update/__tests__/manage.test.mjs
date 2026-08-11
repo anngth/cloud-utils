@@ -5,6 +5,7 @@ import {
   applyRemove,
   detectBrewType,
   parseManageArgs,
+  runAddCommand,
 } from "../manage.mjs";
 import { createUi } from "../ui.mjs";
 
@@ -204,4 +205,28 @@ test("applyRemove reports list size after remove", () => {
     ui: { info: (m) => messages.push(m), warn() {} },
   });
   assert.ok(messages.some((m) => m === "Removed 'cursor' from casks (now 1)"));
+});
+
+test("runAddCommand supplies default logging runner when runBrew omitted", async () => {
+  let depsRunBrew;
+  const code = await runAddCommand(["bat"], {
+    env: {},
+    resolveBrew: () => "/brew",
+    loadDesired: async () => ({
+      ok: true,
+      document: { version: 1, formulas: [], casks: [], taps: [] },
+    }),
+    writeDesired: () => ({ ok: true }),
+    add: async (_names, { deps }) => {
+      depsRunBrew = deps.runBrew;
+      return {
+        document: { version: 1, formulas: ["bat"], casks: [], taps: [] },
+        succeeded: 0,
+        failed: 0,
+      };
+    },
+    ui: silentUi(),
+  });
+  assert.equal(code, 0);
+  assert.equal(typeof depsRunBrew, "function");
 });
