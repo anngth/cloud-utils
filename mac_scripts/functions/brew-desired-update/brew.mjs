@@ -53,11 +53,42 @@ export function resolveBrewBinary({ env = process.env, fs = defaultFs, pathEnv }
 
 /**
  * @param {string[]} args
- * @param {{ brewBin: string, spawn?: typeof defaultSpawn, cwd?: string }} options
+ * @returns {string}
+ */
+export function formatBrewCommand(args) {
+  const quoted = args.map((arg) => {
+    if (arg === "") return "''";
+    if (/^[A-Za-z0-9_./:=+-]+$/.test(arg)) return arg;
+    return `'${String(arg).replace(/'/g, `'\\''`)}'`;
+  });
+  return `$ brew ${quoted.join(" ")}`;
+}
+
+/**
+ * @param {string[]} args
+ * @param {{
+ *   brewBin: string,
+ *   spawn?: typeof defaultSpawn,
+ *   cwd?: string,
+ *   onCommand?: (line: string) => void,
+ *   stdout?: { write: (chunk: string | Buffer) => void },
+ *   stderr?: { write: (chunk: string | Buffer) => void },
+ * }} options
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
-export function runBrew(args, { brewBin, spawn = defaultSpawn, cwd } = {}) {
+export function runBrew(
+  args,
+  {
+    brewBin,
+    spawn = defaultSpawn,
+    cwd,
+    onCommand = (line) => process.stdout.write(`${line}\n`),
+    stdout: outStream = process.stdout,
+    stderr: errStream = process.stderr,
+  } = {},
+) {
   return new Promise((resolve) => {
+    onCommand(formatBrewCommand(args));
     const child = spawn(brewBin, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
@@ -66,9 +97,11 @@ export function runBrew(args, { brewBin, spawn = defaultSpawn, cwd } = {}) {
     let stderr = "";
     child.stdout?.on("data", (chunk) => {
       stdout += chunk;
+      outStream.write(chunk);
     });
     child.stderr?.on("data", (chunk) => {
       stderr += chunk;
+      errStream.write(chunk);
     });
     child.on("close", (code) => {
       resolve({ code: code ?? 1, stdout, stderr });
@@ -76,6 +109,32 @@ export function runBrew(args, { brewBin, spawn = defaultSpawn, cwd } = {}) {
     child.on("error", () => {
       resolve({ code: 1, stdout, stderr });
     });
+  });
+}
+
+/**
+ * @param {{
+ *   brewBin: string,
+ *   ui?: { command?: (line: string) => void },
+ *   stdout?: { write: (chunk: string | Buffer) => void },
+ *   stderr?: { write: (chunk: string | Buffer) => void },
+ * }} options
+ * @returns {(args: string[]) => Promise<{ code: number, stdout: string, stderr: string }>}
+ */
+export function createBrewRunner({
+  brewBin,
+  ui,
+  stdout = process.stdout,
+  stderr = process.stderr,
+}) {
+  return (args) => runBrew(args, {
+    brewBin,
+    stdout,
+    stderr,
+    onCommand: (line) => {
+      if (ui?.command) ui.command(line);
+      else stdout.write(`${line}\n`);
+    },
   });
 }
 
@@ -168,8 +227,13 @@ export async function listBrewTaps({ brewBin, runBrew } = {}) {
 
 /**
  * @param {string[]} args
- * @param {{ brewBin: string }} options
+ * @param {{
+ *   brewBin: string,
+ *   onCommand?: (line: string) => void,
+ *   stdout?: { write: (chunk: string | Buffer) => void },
+ *   stderr?: { write: (chunk: string | Buffer) => void },
+ * }} options
  */
-function runBrewImpl(args, { brewBin }) {
-  return runBrew(args, { brewBin });
+function runBrewImpl(args, { brewBin, onCommand, stdout, stderr }) {
+  return runBrew(args, { brewBin, onCommand, stdout, stderr });
 }

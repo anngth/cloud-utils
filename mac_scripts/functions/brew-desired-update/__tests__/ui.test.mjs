@@ -37,6 +37,17 @@ test("usage matches skm-style sections with BREW DESIRED UPDATE badge", () => {
   assert.ok(/does not install missing/i.test(stdout));
 });
 
+test("command renders brew line under pipe", () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (v) => { stdout += v; } },
+    stderr: { write() {} },
+  });
+  ui.command("$ brew update");
+  const text = stripAnsi(stdout);
+  assert.match(text, /│\s+\$ brew update/);
+});
+
 test("desiredStatus renders sections and skips empty", () => {
   let stdout = "";
   const ui = createUi({

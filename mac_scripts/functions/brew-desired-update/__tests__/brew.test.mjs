@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 import {
+  formatBrewCommand,
   resolveBrewBinary,
   runBrew,
   loadBrewState,
@@ -54,6 +55,14 @@ test("resolveBrewBinary prefers PATH then opt homebrew", () => {
   );
 });
 
+test("formatBrewCommand quotes args with spaces", () => {
+  assert.equal(formatBrewCommand(["update"]), "$ brew update");
+  assert.equal(
+    formatBrewCommand(["upgrade", "--cask", "-y", "my cask"]),
+    "$ brew upgrade --cask -y 'my cask'",
+  );
+});
+
 test("runBrew collects stdout stderr and exit code", async () => {
   const spawn = (cmd, args, options) => {
     assert.equal(cmd, "/brew");
@@ -70,10 +79,49 @@ test("runBrew collects stdout stderr and exit code", async () => {
     return child;
   };
 
-  const result = await runBrew(["--version"], { brewBin: "/brew", spawn });
+  const result = await runBrew(["--version"], {
+    brewBin: "/brew",
+    spawn,
+    onCommand() {},
+    stdout: { write() {} },
+    stderr: { write() {} },
+  });
   assert.equal(result.code, 0);
   assert.equal(result.stdout, "Homebrew 4\n");
   assert.equal(result.stderr, "warn\n");
+});
+
+test("runBrew logs command and forwards chunks live", async () => {
+  const commands = [];
+  const outChunks = [];
+  const errChunks = [];
+  const spawn = () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from("out1"));
+      child.stderr.emit("data", Buffer.from("err1"));
+      child.stdout.emit("data", Buffer.from("out2"));
+      child.emit("close", 0);
+    });
+    return child;
+  };
+
+  const result = await runBrew(["upgrade", "--formula", "-y"], {
+    brewBin: "/brew",
+    spawn,
+    onCommand: (line) => commands.push(line),
+    stdout: { write: (c) => outChunks.push(String(c)) },
+    stderr: { write: (c) => errChunks.push(String(c)) },
+  });
+
+  assert.deepEqual(commands, ["$ brew upgrade --formula -y"]);
+  assert.deepEqual(outChunks, ["out1", "out2"]);
+  assert.deepEqual(errChunks, ["err1"]);
+  assert.equal(result.stdout, "out1out2");
+  assert.equal(result.stderr, "err1");
+  assert.equal(result.code, 0);
 });
 
 test("loadBrewState strips tap prefixes", async () => {

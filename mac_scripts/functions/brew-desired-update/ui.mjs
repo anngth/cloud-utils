@@ -52,6 +52,10 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out(`${pipe}  ${fg(C.gray, text)}`);
   }
 
+  function command(line) {
+    out(`${pipe}  ${fg(C.green, line)}`);
+  }
+
   function listEnd(text = "") {
     out(`${fg(C.cyan, "└")}${text ? `  ${fg(C.brightGreen, text)}` : ""}`);
   }
@@ -144,6 +148,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     error,
     warn,
     info,
+    command,
     title,
     step,
     active,
