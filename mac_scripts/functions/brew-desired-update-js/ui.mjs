@@ -1,7 +1,6 @@
 import { formatGrid, initGridLayout } from "./list.mjs";
 
 const C = {
-  cyan: "\u001b[36m",
   green: "\u001b[32m",
   brightGreen: "\u001b[92m",
   blue: "\u001b[34m",
@@ -9,6 +8,7 @@ const C = {
   yellow: "\u001b[33m",
   black: "\u001b[30m",
   gray: "\u001b[90m",
+  gray240: "\u001b[38;5;240m",
   bgCyan: "\u001b[46m",
   fgReset: "\u001b[39m",
   bgReset: "\u001b[49m",
@@ -25,65 +25,65 @@ export function formatNameList(names, { limit = 8 } = {}) {
 }
 
 export function createUi({ stdout = process.stdout, stderr = process.stderr } = {}) {
-  const out = (line = "") => stdout.write(`${line}\n`);
+  let lastWasBlank = true;
+  const out = (line = "") => {
+    stdout.write(`${line}\n`);
+    lastWasBlank = line === "";
+  };
   const err = (line) => stderr.write(`${line}\n`);
-  const pipe = fg(C.cyan, "│");
-  const streamPrefix = `${pipe}  `;
 
   function title(label = "BREW DESIRED UPDATE") {
     out();
-    out(`   ${C.bgCyan}${C.black} ${label} ${C.fgReset}${C.bgReset}`);
-    out(pipe);
+    out(`  ${C.bgCyan}${C.black} ${label} ${C.fgReset}${C.bgReset}`);
+    out();
   }
 
   function step(text) {
-    out(`${fg(C.green, "◇")}  ${text}`);
-    out(pipe);
+    if (!lastWasBlank) out();
+    out(`${fg(C.green, "◇")} ${text}`);
   }
 
   function active(text) {
-    out(`${fg(C.cyan, "◆")}  ${text}`);
+    out(`${C.green}◆ ${text}${C.reset}`);
   }
 
   function warn(text) {
-    out(`${pipe}  ${fg(C.yellow, "■")} ${text}`);
+    out(`${fg(C.yellow, "■")} ${text}`);
   }
 
   function info(text) {
-    out(`${pipe}  ${fg(C.gray, text)}`);
+    out(`${C.gray240}${text}${C.fgReset}`);
   }
 
   function command(line) {
-    out(`${pipe}  ${fg(C.green, line)}`);
-  }
-
-  function listEnd(text = "") {
-    out(`${fg(C.cyan, "└")}${text ? `  ${fg(C.brightGreen, text)}` : ""}`);
+    if (line.startsWith("$")) {
+      out(`${fg(C.green, "$")}${line.slice(1)}`);
+      return;
+    }
+    out(line);
   }
 
   function usage() {
     const section = (name) => {
-      out(pipe);
       active(name);
     };
     const command = (syntax, description) => {
-      out(`${pipe}  ${fg(C.green, syntax)}${description ? `  ${fg(C.gray, description)}` : ""}`);
+      out(`${fg(C.green, syntax)}${description ? `  ${fg(C.gray, description)}` : ""}`);
     };
-    const note = (text) => out(`${pipe}  ${fg(C.gray, text)}`);
+    const note = (text) => out(fg(C.gray, text));
 
     title();
-    step("Usage: budj [command]");
-    command("budj (help | -h | --help)", "Show this help");
+    active("Usage: bud [command]");
+    command("bud (help | -h | --help)", "Show this help");
     section("Update");
-    command("budj [(-e | --exclude) <cask>...]", "Update brew; upgrade desired casks");
+    command("bud [(-e | --exclude) <cask>...]", "Update brew; upgrade desired casks");
     section("Lists");
-    command("budj (ls | list)", "Desired vs installed (formulae, taps, casks)");
-    command("budj add <name...> [--cask | --formula | --tap]");
-    command("budj remove <name...>");
+    command("bud (ls | list)", "Desired vs installed (formulae, taps, casks)");
+    command("bud add <name...> [--cask | --formula | --tap]");
+    command("bud remove <name...>");
     section("Notes");
-    note("Bare budj does not install missing packages; it upgrades installed desired casks.");
+    note("Bare bud does not install missing packages; it upgrades installed desired casks.");
     note("user/repo = tap; user/repo/formula adds tap + formula.");
-    listEnd();
   }
 
   function error(message) {
@@ -120,7 +120,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     const layout = allItems.length > 0 ? initGridLayout(usableWidth, allItems) : null;
 
     title();
-    step(`Desired vs installed · ${counts.formulas} formulae · ${counts.taps} taps · ${counts.casks} casks`);
+    active(`Desired vs installed · ${counts.formulas} formulae · ${counts.taps} taps · ${counts.casks} casks`);
 
     for (const section of STATUS_SECTIONS) {
       const items = partitions[section.key]?.[section.field] ?? [];
@@ -128,20 +128,17 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
         continue;
       }
 
-      out(pipe);
-      out(`${pipe}  ${fg(section.color, "▸")} ${fg(C.brightGreen, section.title)} ${fg(C.gray, `(${items.length})`)}`);
+      out(`${fg(section.color, "▸")} ${fg(C.brightGreen, section.title)} ${fg(C.gray, `(${items.length})`)}`);
       if (layout) {
         for (const line of formatGrid(items, layout)) {
-          out(`${pipe}${line}`);
+          out(line);
         }
       } else {
         for (const item of items) {
-          out(`${pipe}  ${item}`);
+          out(`  ${item}`);
         }
       }
     }
-
-    listEnd();
   }
 
   return {
@@ -153,8 +150,6 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     title,
     step,
     active,
-    listEnd,
     desiredStatus,
-    streamPrefix,
   };
 }

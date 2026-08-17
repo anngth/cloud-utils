@@ -146,7 +146,12 @@ budz() {
   }
 
   _bud_command() {
-    print -r -- "$1"
+    local line="$1"
+    if [[ "$line" == \$* ]]; then
+      print -P "%F{green}\$%f${line#\$}"
+    else
+      print -r -- "$line"
+    fi
   }
 
   _bud_format_brew_command() {
@@ -762,7 +767,7 @@ budz() {
     _bud_ensure_desired_taps || return 1
     _bud_done
   else
-    _bud_done "Ensuring taps · all present"
+    _bud_done "Ensured taps · all present"
   fi
 
   _bud_begin "Updating Homebrew"

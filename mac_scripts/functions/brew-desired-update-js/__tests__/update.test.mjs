@@ -150,14 +150,24 @@ test("runUpdateCommand logs counts and brew actions", async () => {
   const out = text();
   assert.ok(out.includes("BREW DESIRED UPDATE"));
   assert.ok(out.includes("Desired lists: 1 formulae · 1 taps · 2 casks"));
+  assert.ok(out.includes("Loading Homebrew state"));
+  assert.ok(out.includes("Loaded Homebrew state"));
   assert.ok(out.includes("Ensuring taps · 1 missing: mongodb/brew"));
-  assert.ok(out.includes("Updating Homebrew (brew update)"));
-  assert.ok(out.includes("Upgrading formulae (brew upgrade --formula)"));
+  assert.ok(out.includes("Ensured taps · 1 missing: mongodb/brew"));
+  assert.ok(out.includes("Updating Homebrew"));
+  assert.ok(out.includes("Updated Homebrew"));
+  assert.ok(!out.includes("Updating Homebrew (brew update)"));
+  assert.ok(out.includes("Upgrading formulae"));
+  assert.ok(out.includes("Upgraded formulae"));
   assert.ok(out.includes("Reloading Homebrew state"));
+  assert.ok(out.includes("Reloaded Homebrew state"));
   assert.ok(out.includes("Upgrading casks · 1 of 2 eligible"));
+  assert.ok(out.includes("Upgraded casks · 1 of 2 eligible"));
   assert.ok(!out.includes("eligible: cursor"));
   assert.ok(out.includes("Excluding 1 cask(s): slack") || out.includes("Excluding"));
-  assert.ok(out.includes("Cleanup (brew cleanup --prune=1)"));
+  assert.ok(out.includes("Cleaning up Homebrew"));
+  assert.ok(out.includes("Cleaned up Homebrew"));
+  assert.ok(!out.includes("Cleanup (brew cleanup --prune=1)"));
 });
 
 test("runUpdateCommand reports all taps present", async () => {
@@ -176,7 +186,8 @@ test("runUpdateCommand reports all taps present", async () => {
       ui,
     },
   );
-  assert.ok(text().includes("Ensuring taps · all present"));
+  assert.ok(text().includes("Ensured taps · all present"));
+  assert.ok(!text().includes("Ensuring taps · all present"));
 });
 
 test("runUpdateCommand returns 1 when brew missing", async () => {

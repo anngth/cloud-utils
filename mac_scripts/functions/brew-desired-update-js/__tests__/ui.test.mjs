@@ -25,27 +25,52 @@ test("usage matches skm-style sections with BREW DESIRED UPDATE badge", () => {
 
   assert.ok(lines.some((l) => l.includes("BREW DESIRED UPDATE")));
   assert.ok(!lines.some((l) => l.trim() === "BUD" || l.includes(" BUD ")));
-  assert.equal(lines.find((l) => l.includes("Usage:")), "◇  Usage: budj [command]");
+  assert.equal(lines.find((l) => l.includes("BREW DESIRED UPDATE")), "   BREW DESIRED UPDATE");
+  assert.equal(lines.find((l) => l.includes("Usage:")), "◆ Usage: bud [command]");
   for (const section of ["Update", "Lists", "Notes"]) {
-    assert.ok(lines.includes(`◆  ${section}`), section);
+    assert.ok(lines.includes(`◆ ${section}`), section);
   }
-  assert.ok(lines.some((l) => l.includes("budj (help | -h | --help)")));
-  assert.ok(lines.some((l) => l.includes("budj [(-e | --exclude) <cask>...]")));
-  assert.ok(lines.some((l) => l.includes("budj (ls | list)")));
-  assert.ok(lines.some((l) => l.includes("budj add <name...>")));
-  assert.ok(lines.some((l) => l.includes("budj remove <name...>")));
+  assert.ok(lines.some((l) => l.includes("bud (help | -h | --help)")));
+  assert.ok(lines.some((l) => l.includes("bud [(-e | --exclude) <cask>...]")));
+  assert.ok(lines.some((l) => l.includes("bud (ls | list)")));
+  assert.ok(lines.some((l) => l.includes("bud add <name...>")));
+  assert.ok(lines.some((l) => l.includes("bud remove <name...>")));
   assert.ok(/does not install missing/i.test(stdout));
+  assert.doesNotMatch(stripAnsi(stdout), /│|└/);
 });
 
-test("command renders brew line under pipe", () => {
+test("command renders brew line without pipe; dollar is green", () => {
   let stdout = "";
   const ui = createUi({
     stdout: { write: (v) => { stdout += v; } },
     stderr: { write() {} },
   });
   ui.command("$ brew update");
-  const text = stripAnsi(stdout);
-  assert.match(text, /│\s+\$ brew update/);
+  assert.equal(stripAnsi(stdout), "$ brew update\n");
+  assert.equal(stdout, `\u001b[32m$\u001b[39m brew update\n`);
+});
+
+test("title has one blank below; begin has a blank above; brew and done are flush", () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (v) => { stdout += v; } },
+    stderr: { write() {} },
+  });
+  ui.title();
+  ui.active("Desired lists: 1 formulae");
+  ui.step("Cleaning up Homebrew");
+  ui.command("$ brew cleanup --prune=1");
+  ui.active("Cleaned up Homebrew");
+
+  const stripped = stripAnsi(stdout);
+  assert.equal(
+    stripped,
+    "\n   BREW DESIRED UPDATE \n\n◆ Desired lists: 1 formulae\n\n◇ Cleaning up Homebrew\n$ brew cleanup --prune=1\n◆ Cleaned up Homebrew\n",
+  );
+  assert.match(stdout, /\u001b\[32m◇\u001b\[39m Cleaning up Homebrew/);
+  assert.match(stdout, /\u001b\[32m\$\u001b\[39m brew cleanup --prune=1/);
+  assert.match(stdout, /\u001b\[32m◆ Desired lists: 1 formulae\u001b\[0m/);
+  assert.match(stdout, /\u001b\[32m◆ Cleaned up Homebrew\u001b\[0m/);
 });
 
 test("desiredStatus renders sections and skips empty", () => {
@@ -74,5 +99,5 @@ test("desiredStatus renders sections and skips empty", () => {
   assert.ok(text.includes("slack"));
   assert.doesNotMatch(text, /Formulae · installed, not in list/);
   assert.doesNotMatch(text, /Taps ·/);
-  assert.ok(text.includes("└"));
+  assert.doesNotMatch(text, /│|└/);
 });

@@ -75,7 +75,7 @@ export async function detectBrewType(name, deps) {
 
   if (isCask && isFormula) {
     ui?.warn(`'${name}' exists as both cask and formula`);
-    ui?.info(`Use 'budj add --cask ${name}' or 'budj add --formula ${name}'`);
+    ui?.info(`Use 'bud add --cask ${name}' or 'bud add --formula ${name}'`);
     return { error: "dual" };
   }
   if (isCask) {
