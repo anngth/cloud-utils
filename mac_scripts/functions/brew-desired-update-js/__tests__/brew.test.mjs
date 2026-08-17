@@ -66,48 +66,48 @@ test("formatBrewCommand quotes args with spaces", () => {
   );
 });
 
-test("runBrew collects stdout stderr and exit code", async () => {
+test("runBrew probe pipes, logs command, buffers, does not write", async () => {
+  const commands = [];
+  const outChunks = [];
   const spawn = (cmd, args, options) => {
     assert.equal(cmd, "/brew");
-    assert.deepEqual(args, ["--version"]);
+    assert.deepEqual(args, ["list", "--formula"]);
     assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe"]);
     const child = new EventEmitter();
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
     queueMicrotask(() => {
-      child.stdout.emit("data", Buffer.from("Homebrew 4\n"));
+      child.stdout.emit("data", Buffer.from("bat\n"));
       child.stderr.emit("data", Buffer.from("warn\n"));
       child.emit("close", 0);
     });
     return child;
   };
 
-  const result = await runBrew(["--version"], {
+  const result = await runBrew(["list", "--formula"], {
     brewBin: "/brew",
     spawn,
-    onCommand() {},
-    stdout: { write() {} },
-    stderr: { write() {} },
+    onCommand: (line) => commands.push(line),
+    stdout: { write: (c) => outChunks.push(String(c)) },
+    stderr: { write: (c) => outChunks.push(String(c)) },
   });
+
+  assert.deepEqual(commands, ["$ brew list --formula"]);
+  assert.deepEqual(outChunks, []);
   assert.equal(result.code, 0);
-  assert.equal(result.stdout, "Homebrew 4\n");
+  assert.equal(result.stdout, "bat\n");
   assert.equal(result.stderr, "warn\n");
 });
 
-test("runBrew logs command and forwards chunks live", async () => {
+test("runBrew interactive inherits stdio and returns empty buffers", async () => {
   const commands = [];
   const outChunks = [];
-  const errChunks = [];
-  const spawn = () => {
+  const spawn = (cmd, args, options) => {
+    assert.equal(cmd, "/brew");
+    assert.deepEqual(args, ["upgrade", "--formula", "-y"]);
+    assert.equal(options.stdio, "inherit");
     const child = new EventEmitter();
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
-    queueMicrotask(() => {
-      child.stdout.emit("data", Buffer.from("out1"));
-      child.stderr.emit("data", Buffer.from("err1"));
-      child.stdout.emit("data", Buffer.from("out2"));
-      child.emit("close", 0);
-    });
+    queueMicrotask(() => child.emit("close", 0));
     return child;
   };
 
@@ -116,15 +116,73 @@ test("runBrew logs command and forwards chunks live", async () => {
     spawn,
     onCommand: (line) => commands.push(line),
     stdout: { write: (c) => outChunks.push(String(c)) },
-    stderr: { write: (c) => errChunks.push(String(c)) },
+    stderr: { write: (c) => outChunks.push(String(c)) },
   });
 
   assert.deepEqual(commands, ["$ brew upgrade --formula -y"]);
-  assert.deepEqual(outChunks, ["out1", "out2"]);
-  assert.deepEqual(errChunks, ["err1"]);
-  assert.equal(result.stdout, "out1out2");
-  assert.equal(result.stderr, "err1");
+  assert.deepEqual(outChunks, []);
   assert.equal(result.code, 0);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+});
+
+test("runBrew --version is interactive (not a probe)", async () => {
+  const spawn = (cmd, args, options) => {
+    assert.deepEqual(args, ["--version"]);
+    assert.equal(options.stdio, "inherit");
+    const child = new EventEmitter();
+    queueMicrotask(() => child.emit("close", 0));
+    return child;
+  };
+  const result = await runBrew(["--version"], {
+    brewBin: "/brew",
+    spawn,
+    onCommand() {},
+  });
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, "");
+});
+
+test("runBrew mode probe overrides interactive args", async () => {
+  const spawn = (cmd, args, options) => {
+    assert.deepEqual(args, ["update"]);
+    assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe"]);
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from("updated\n"));
+      child.emit("close", 0);
+    });
+    return child;
+  };
+  const result = await runBrew(["update"], {
+    brewBin: "/brew",
+    spawn,
+    mode: "probe",
+    onCommand() {},
+  });
+  assert.equal(result.stdout, "updated\n");
+  assert.equal(result.code, 0);
+});
+
+test("runBrew mode interactive overrides probe args", async () => {
+  const spawn = (cmd, args, options) => {
+    assert.deepEqual(args, ["list", "--formula"]);
+    assert.equal(options.stdio, "inherit");
+    const child = new EventEmitter();
+    queueMicrotask(() => child.emit("close", 3));
+    return child;
+  };
+  const result = await runBrew(["list", "--formula"], {
+    brewBin: "/brew",
+    spawn,
+    mode: "interactive",
+    onCommand() {},
+  });
+  assert.equal(result.code, 3);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
 });
 
 test("isBrewProbe classifies list info bare tap trust help", () => {
@@ -148,54 +206,6 @@ test("createLineFramer prefixes lines across partial chunks", () => {
   f.write("d\n");
   f.flush();
   assert.deepEqual(chunks, ["│  ab\n", "│  cd\n"]);
-});
-
-test("runBrew streamOutput false buffers without writing", async () => {
-  const outChunks = [];
-  const spawn = () => {
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
-    queueMicrotask(() => {
-      child.stdout.emit("data", Buffer.from("pkg\n"));
-      child.emit("close", 0);
-    });
-    return child;
-  };
-  const result = await runBrew(["list", "--formula"], {
-    brewBin: "/brew",
-    spawn,
-    onCommand() {},
-    streamOutput: false,
-    stdout: { write: (c) => outChunks.push(String(c)) },
-    stderr: { write() {} },
-  });
-  assert.deepEqual(outChunks, []);
-  assert.equal(result.stdout, "pkg\n");
-});
-
-test("runBrew with linePrefix frames live output; buffers stay raw", async () => {
-  const outChunks = [];
-  const spawn = () => {
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
-    queueMicrotask(() => {
-      child.stdout.emit("data", Buffer.from("==> hi\n"));
-      child.emit("close", 0);
-    });
-    return child;
-  };
-  const result = await runBrew(["update"], {
-    brewBin: "/brew",
-    spawn,
-    onCommand() {},
-    linePrefix: "│  ",
-    stdout: { write: (c) => outChunks.push(String(c)) },
-    stderr: { write() {} },
-  });
-  assert.deepEqual(outChunks, ["│  ==> hi\n"]);
-  assert.equal(result.stdout, "==> hi\n");
 });
 
 test("loadBrewState strips tap prefixes", async () => {
@@ -318,27 +328,4 @@ test("createBrewRunner does not stream probe list output", async () => {
   assert.deepEqual(commands, ["$ brew list --formula"]);
   assert.deepEqual(outChunks, []);
   assert.equal(result.stdout, "bat\n");
-});
-
-test("createBrewRunner frames live upgrade output", async () => {
-  const outChunks = [];
-  const spawn = () => {
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
-    queueMicrotask(() => {
-      child.stdout.emit("data", Buffer.from("==> x\n"));
-      child.emit("close", 0);
-    });
-    return child;
-  };
-  const runner = createBrewRunner({
-    brewBin: "/brew",
-    spawn,
-    ui: { command() {}, streamPrefix: "│  " },
-    stdout: { write: (c) => outChunks.push(String(c)) },
-    stderr: { write() {} },
-  });
-  await runner(["upgrade", "--formula", "-y"]);
-  assert.deepEqual(outChunks, ["│  ==> x\n"]);
 });

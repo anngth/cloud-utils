@@ -113,8 +113,7 @@ export function createLineFramer(linePrefix, sink) {
  *   onCommand?: (line: string) => void,
  *   stdout?: { write: (chunk: string | Buffer) => void },
  *   stderr?: { write: (chunk: string | Buffer) => void },
- *   streamOutput?: boolean,
- *   linePrefix?: string,
+ *   mode?: "probe" | "interactive",
  * }} options
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
@@ -125,43 +124,32 @@ export function runBrew(
     spawn = defaultSpawn,
     cwd,
     onCommand = (line) => process.stdout.write(`${line}\n`),
-    stdout: outStream = process.stdout,
-    stderr: errStream = process.stderr,
-    streamOutput = true,
-    linePrefix = "",
+    mode,
   } = {},
 ) {
+  const resolvedMode = mode ?? (isBrewProbe(args) ? "probe" : "interactive");
   return new Promise((resolve) => {
     onCommand(formatBrewCommand(args));
+    if (resolvedMode === "interactive") {
+      const child = spawn(brewBin, args, { cwd, stdio: "inherit" });
+      const finish = (code) => resolve({ code: code ?? 1, stdout: "", stderr: "" });
+      child.on("close", finish);
+      child.on("error", () => finish(1));
+      return;
+    }
     const child = spawn(brewBin, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
-    const outFramer = streamOutput && linePrefix
-      ? createLineFramer(linePrefix, outStream)
-      : null;
-    const errFramer = streamOutput && linePrefix
-      ? createLineFramer(linePrefix, errStream)
-      : null;
     child.stdout?.on("data", (chunk) => {
       stdout += chunk;
-      if (!streamOutput) return;
-      if (outFramer) outFramer.write(chunk);
-      else outStream.write(chunk);
     });
     child.stderr?.on("data", (chunk) => {
       stderr += chunk;
-      if (!streamOutput) return;
-      if (errFramer) errFramer.write(chunk);
-      else errStream.write(chunk);
     });
-    const finish = (code) => {
-      outFramer?.flush();
-      errFramer?.flush();
-      resolve({ code: code ?? 1, stdout, stderr });
-    };
+    const finish = (code) => resolve({ code: code ?? 1, stdout, stderr });
     child.on("close", finish);
     child.on("error", () => finish(1));
   });
