@@ -72,16 +72,16 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     const note = (text) => out(`${pipe}  ${fg(C.gray, text)}`);
 
     title();
-    step("Usage: bud [command]");
-    command("bud (help | -h | --help)", "Show this help");
+    step("Usage: budj [command]");
+    command("budj (help | -h | --help)", "Show this help");
     section("Update");
-    command("bud [(-e | --exclude) <cask>...]", "Update brew; upgrade desired casks");
+    command("budj [(-e | --exclude) <cask>...]", "Update brew; upgrade desired casks");
     section("Lists");
-    command("bud (ls | list)", "Desired vs installed (formulae, taps, casks)");
-    command("bud add <name...> [--cask | --formula | --tap]");
-    command("bud remove <name...>");
+    command("budj (ls | list)", "Desired vs installed (formulae, taps, casks)");
+    command("budj add <name...> [--cask | --formula | --tap]");
+    command("budj remove <name...>");
     section("Notes");
-    note("Bare bud does not install missing packages; it upgrades installed desired casks.");
+    note("Bare budj does not install missing packages; it upgrades installed desired casks.");
     note("user/repo = tap; user/repo/formula adds tap + formula.");
     listEnd();
   }

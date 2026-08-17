@@ -35,6 +35,7 @@ brew install mongosh mongodb-database-tools
 
 - `libpq` — PostgreSQL clients (`psql`, `pg_dump`, `pg_restore`). `dbt` can also use `postgresql@18`.
 - `mongosh` / `mongodb-database-tools` — used by `dbt sync mongodb`.
+- `python3` — used by `bud` to read/write `desired.json`. Install with `brew install python` if `python3` is missing.
 
 ## Verify
 
@@ -51,6 +52,7 @@ dbt --help
 | Command | Docs |
 | ------- | ---- |
 | `bud` | [bud.md](bud.md) |
+| `budj` | [budj.md](budj.md) — JS variant, same `bud/desired.json` |
 | `gt` | [gt.md](gt.md) |
 | `skm` | [skm.md](skm.md) |
 | `dbt` | [dbt.md](dbt.md) |
@@ -82,7 +84,7 @@ Layout:
 
 | Tool  | Config                                              | Template/reference in repo                                                    |
 | ----- | --------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `bud` | `bud/desired.json`                                  | `mac_scripts/functions/brew-desired-update/desired.json.example`              |
+| `bud` | `bud/desired.json`                                  | `mac_scripts/functions/brew-desired-update-js/desired.json.example`           |
 | `gt`  | `gt/backups.json`                                   | `mac_scripts/functions/git-tools/backups.json.example` (reference only)       |
 | `skm` | `skm/sources.json`                                  | `mac_scripts/functions/skills-manager/sources.json.example` (reference only) |
 | `dbt` | `dbt/secrets`                                       | `mac_scripts/functions/db-tools/secrets.example`                              |

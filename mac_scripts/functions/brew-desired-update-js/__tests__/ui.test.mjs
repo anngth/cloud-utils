@@ -25,15 +25,15 @@ test("usage matches skm-style sections with BREW DESIRED UPDATE badge", () => {
 
   assert.ok(lines.some((l) => l.includes("BREW DESIRED UPDATE")));
   assert.ok(!lines.some((l) => l.trim() === "BUD" || l.includes(" BUD ")));
-  assert.equal(lines.find((l) => l.includes("Usage:")), "◇  Usage: bud [command]");
+  assert.equal(lines.find((l) => l.includes("Usage:")), "◇  Usage: budj [command]");
   for (const section of ["Update", "Lists", "Notes"]) {
     assert.ok(lines.includes(`◆  ${section}`), section);
   }
-  assert.ok(lines.some((l) => l.includes("bud (help | -h | --help)")));
-  assert.ok(lines.some((l) => l.includes("bud [(-e | --exclude) <cask>...]")));
-  assert.ok(lines.some((l) => l.includes("bud (ls | list)")));
-  assert.ok(lines.some((l) => l.includes("bud add <name...>")));
-  assert.ok(lines.some((l) => l.includes("bud remove <name...>")));
+  assert.ok(lines.some((l) => l.includes("budj (help | -h | --help)")));
+  assert.ok(lines.some((l) => l.includes("budj [(-e | --exclude) <cask>...]")));
+  assert.ok(lines.some((l) => l.includes("budj (ls | list)")));
+  assert.ok(lines.some((l) => l.includes("budj add <name...>")));
+  assert.ok(lines.some((l) => l.includes("budj remove <name...>")));
   assert.ok(/does not install missing/i.test(stdout));
 });
 

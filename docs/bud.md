@@ -2,11 +2,11 @@
 
 Homebrew desired lists — `$CLOUD_UTILS_CONFIG_DIR/bud/desired.json`. File changes are local only (not in git).
 
-`bud` prints each `brew` command. Probe commands (`list`, `info`, …) show the command only; update/upgrade/cleanup stream under the UI pipe.
+`bud` is the zsh CLI. JS variant (same JSON): [`budj`](budj.md).
 
 Config paths: [setup.md — Local config](setup.md#local-config).
 
-Example template: `mac_scripts/functions/brew-desired-update/desired.json.example`.
+Example template: `mac_scripts/functions/brew-desired-update-js/desired.json.example`.
 
 ```bash
 bud              # brew update/upgrade + sync desired casks
