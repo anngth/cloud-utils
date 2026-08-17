@@ -3,7 +3,6 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import {
   createBrewRunner,
-  createLineFramer,
   formatBrewCommand,
   isBrewProbe,
   resolveBrewBinary,
@@ -198,14 +197,28 @@ test("isBrewProbe classifies list info bare tap trust help", () => {
   assert.equal(isBrewProbe(["update"]), false);
 });
 
-test("createLineFramer prefixes lines across partial chunks", () => {
-  const chunks = [];
-  const sink = { write: (c) => chunks.push(String(c)) };
-  const f = createLineFramer("│  ", sink);
-  f.write("ab\nc");
-  f.write("d\n");
-  f.flush();
-  assert.deepEqual(chunks, ["│  ab\n", "│  cd\n"]);
+test("createBrewRunner inherits stdio for upgrade and ignores streamPrefix", async () => {
+  let stdio;
+  const outChunks = [];
+  const spawn = (cmd, args, options) => {
+    stdio = options.stdio;
+    const child = new EventEmitter();
+    queueMicrotask(() => child.emit("close", 0));
+    return child;
+  };
+  const runner = createBrewRunner({
+    brewBin: "/brew",
+    spawn,
+    ui: { command() {}, streamPrefix: "│  " },
+    stdout: { write: (c) => outChunks.push(String(c)) },
+    stderr: { write() {} },
+  });
+  const result = await runner(["upgrade", "--formula", "-y"]);
+  assert.equal(stdio, "inherit");
+  assert.deepEqual(outChunks, []);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+  assert.equal(result.code, 0);
 });
 
 test("loadBrewState strips tap prefixes", async () => {

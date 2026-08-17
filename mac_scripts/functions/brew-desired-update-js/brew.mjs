@@ -78,33 +78,6 @@ export function isBrewProbe(args) {
 }
 
 /**
- * @param {string} linePrefix
- * @param {{ write: (chunk: string | Buffer) => void }} sink
- * @returns {{ write: (chunk: string | Buffer) => void, flush: () => void }}
- */
-export function createLineFramer(linePrefix, sink) {
-  let pending = "";
-  return {
-    write(chunk) {
-      pending += String(chunk);
-      for (;;) {
-        const i = pending.indexOf("\n");
-        if (i === -1) break;
-        const line = pending.slice(0, i + 1);
-        pending = pending.slice(i + 1);
-        sink.write(`${linePrefix}${line}`);
-      }
-    },
-    flush() {
-      if (pending.length) {
-        sink.write(`${linePrefix}${pending}`);
-        pending = "";
-      }
-    },
-  };
-}
-
-/**
  * @param {string[]} args
  * @param {{
  *   brewBin: string,
@@ -158,9 +131,8 @@ export function runBrew(
 /**
  * @param {{
  *   brewBin: string,
- *   ui?: { command?: (line: string) => void, streamPrefix?: string },
+ *   ui?: { command?: (line: string) => void },
  *   stdout?: { write: (chunk: string | Buffer) => void },
- *   stderr?: { write: (chunk: string | Buffer) => void },
  *   spawn?: typeof defaultSpawn,
  * }} options
  * @returns {(args: string[]) => Promise<{ code: number, stdout: string, stderr: string }>}
@@ -169,24 +141,16 @@ export function createBrewRunner({
   brewBin,
   ui,
   stdout = process.stdout,
-  stderr = process.stderr,
   spawn,
 }) {
-  return (args) => {
-    const probe = isBrewProbe(args);
-    return runBrew(args, {
-      brewBin,
-      spawn,
-      stdout,
-      stderr,
-      streamOutput: !probe,
-      linePrefix: probe ? "" : (ui?.streamPrefix ?? ""),
-      onCommand: (line) => {
-        if (ui?.command) ui.command(line);
-        else stdout.write(`${line}\n`);
-      },
-    });
-  };
+  return (args) => runBrew(args, {
+    brewBin,
+    spawn,
+    onCommand: (line) => {
+      if (ui?.command) ui.command(line);
+      else stdout.write(`${line}\n`);
+    },
+  });
 }
 
 /**
