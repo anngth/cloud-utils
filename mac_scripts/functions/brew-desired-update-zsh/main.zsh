@@ -87,10 +87,99 @@ bud() {
     _bud_load_desired_arrays || return 1
   fi
 
+  _bud_title() {
+    local label="${1:-BREW DESIRED UPDATE}"
+    echo
+    print -P "  %K{cyan}%F{black} ${label} %f%k"
+    echo
+  }
+
+  typeset -g _bud_current_step=""
+  typeset -g _bud_begin_dirty=0
+
+  _bud_finish_text() {
+    local text="$1"
+    case "$text" in
+      "Loading Homebrew state") print -r -- "Loaded Homebrew state" ;;
+      "Updating Homebrew") print -r -- "Updated Homebrew" ;;
+      "Upgrading formulae") print -r -- "Upgraded formulae" ;;
+      "Repairing taps") print -r -- "Repaired taps" ;;
+      "Reloading Homebrew state") print -r -- "Reloaded Homebrew state" ;;
+      "Cleaning up Homebrew") print -r -- "Cleaned up Homebrew" ;;
+      "Adding required tap:"*) print -r -- "Added required tap:${text#Adding required tap:}" ;;
+      "Ensuring taps ·"*) print -r -- "Ensured taps ·${text#Ensuring taps ·}" ;;
+      "Upgrading casks ·"*) print -r -- "Upgraded casks ·${text#Upgrading casks ·}" ;;
+      *) print -r -- "$text" ;;
+    esac
+  }
+
+  _bud_begin() {
+    _bud_current_step="$1"
+    _bud_begin_dirty=0
+    echo
+    print -P "%F{green}◇%f $1"
+  }
+
+  _bud_done() {
+    local text="$1"
+    if [[ -z "$text" && -n "$_bud_current_step" ]]; then
+      text="$(_bud_finish_text "$_bud_current_step")"
+    elif [[ -z "$text" ]]; then
+      text=""
+    fi
+    [[ -z "$text" ]] && return 0
+
+    if [[ -t 1 && -n "$_bud_current_step" && $_bud_begin_dirty -eq 0 ]]; then
+      printf '\033[1A\033[2K'
+      print -P "%F{green}◆ $text%f"
+      printf '\033[2A\033[1M\033[1B'
+      _bud_current_step=""
+      return
+    fi
+
+    print -P "%F{green}◆ $text%f"
+    _bud_current_step=""
+  }
+
+  _bud_info() {
+    print -P "%F{240}$1%f"
+  }
+
+  _bud_command() {
+    print -r -- "$1"
+  }
+
+  _bud_format_brew_command() {
+    local -a quoted=()
+    local arg q
+    for arg in "$@"; do
+      if [[ -z "$arg" ]]; then
+        quoted+=("''")
+      elif [[ "$arg" == [[:alnum:]_./:=+-]# ]]; then
+        quoted+=("$arg")
+      else
+        q=${arg//\'/\'\\\'\'}
+        quoted+=("'$q'")
+      fi
+    done
+    print -r -- "\$ brew ${quoted[*]}"
+  }
+
+  _bud_log_brew() {
+    _bud_begin_dirty=1
+    _bud_command "$(_bud_format_brew_command "$@")"
+  }
+
+  _bud_brew() {
+    _bud_log_brew "$@"
+    command brew "$@"
+  }
+
   _bud_trust_tap() {
     local tap="$1"
-    brew trust --help >/dev/null 2>&1 || return 0
-    brew trust --tap "$tap" || return 1
+    _bud_log_brew trust --help
+    command brew trust --help >/dev/null 2>&1 || return 0
+    _bud_brew trust --tap "$tap" || return 1
   }
 
   _bud_ensure_desired_taps() {
@@ -100,9 +189,8 @@ bud() {
     for tap in "${_bud_brew_taps[@]}"; do has_tap[$tap]=1; done
     for tap in "${desired_taps[@]}"; do
       if [[ -z ${has_tap[$tap]} ]]; then
-        echo "🔧 Tapping $tap"
         _bud_trust_tap "$tap" || return 1
-        brew tap "$tap" || return 1
+        _bud_brew tap "$tap" || return 1
       fi
     done
   }
@@ -226,9 +314,12 @@ bud() {
     local f_formulae="$tmp.f" f_casks="$tmp.c" f_taps="$tmp.t"
     local -a raw
 
-    brew list --formula 2>/dev/null >|$f_formulae &
-    brew list --cask --full-name 2>/dev/null >|$f_casks &
-    brew tap 2>/dev/null >|$f_taps &
+    _bud_log_brew list --formula
+    _bud_log_brew list --cask --full-name
+    _bud_log_brew tap
+    command brew list --formula 2>/dev/null >|$f_formulae &
+    command brew list --cask --full-name 2>/dev/null >|$f_casks &
+    command brew tap 2>/dev/null >|$f_taps &
     wait
 
     raw=("${(@f)$(<"$f_formulae")}")
@@ -254,12 +345,12 @@ bud() {
     local col_width
 
     if (( do_load )); then
-      if [[ -t 2 ]]; then
-        print -nu2 "Loading Homebrew state..."
-      fi
+      _bud_begin "Loading Homebrew state"
       _bud_load_brew_state
-      [[ -t 2 ]] && print -nu2 $'\r\033[K'
+      _bud_done
     fi
+
+    _bud_done "Desired vs installed · ${#desired_formulas[@]} formulae · ${#desired_taps[@]} taps · ${#desired[@]} casks"
 
     if (( ${#desired_taps[@]} )); then
       for t in "${desired_taps[@]}"; do want_tap[$t]=1; done
@@ -341,7 +432,8 @@ bud() {
   # First line of `brew info` is "==> <token>: ..." — token must match $name (not an old cask alias).
   _bud_brew_token() {
     local brew_type="$1" pkg="$2"
-    brew info --${brew_type} "$pkg" 2>/dev/null | sed -n '1s/^==> \([^: (]*\).*/\1/p'
+    _bud_log_brew info --${brew_type} "$pkg"
+    command brew info --${brew_type} "$pkg" 2>/dev/null | sed -n '1s/^==> \([^: (]*\).*/\1/p'
   }
 
   # Core tokens match exactly; tap packages match by short name (e.g. acli → atlassian/acli/acli).
@@ -443,6 +535,8 @@ bud() {
   local -a pkg_names=()
   local -a exclude_casks_cli=()
   local force_type=""
+
+  _bud_title
   
   while [[ $# -gt 0 ]]; do
     case $1 in
@@ -482,6 +576,7 @@ bud() {
         shift
         ;;
       -h|--help)
+        _bud_done "Usage: bud [command]"
         echo "Usage: bud [COMMAND] [OPTIONS]"
         echo ""
         echo "Commands:"
@@ -510,7 +605,6 @@ bud() {
     case "$action" in
       list)
         _bud_show_desired_status 1
-        echo ""
         return 0
         ;;
       add|remove)
@@ -569,20 +663,26 @@ bud() {
           elif [[ "$pkg_type" == formula ]] && _bud_is_tap_formula_spec "$pkg_name"; then
             list_name=$(_bud_formula_name_from_spec "$pkg_name")
             tap_for_formula=$(_bud_tap_from_formula_spec "$pkg_name")
-          elif ! brew info --${pkg_type} "$pkg_name" >/dev/null 2>&1; then
-            print -P "%F{yellow}⚠️  '$pkg_name' not found as a Homebrew $(_bud_label_for_type "$pkg_type")%f"
-            failed=1
-            continue
+          else
+            _bud_log_brew info --${pkg_type} "$pkg_name"
+            if ! command brew info --${pkg_type} "$pkg_name" >/dev/null 2>&1; then
+              print -P "%F{yellow}⚠️  '$pkg_name' not found as a Homebrew $(_bud_label_for_type "$pkg_type")%f"
+              failed=1
+              continue
+            fi
           fi
 
           if [[ "$pkg_type" == formula && -z "$tap_for_formula" ]]; then
             tap_for_formula=$(_bud_tap_for_installed_formula "$pkg_name" 2>/dev/null) || true
           fi
 
-          if [[ "$pkg_type" == formula ]] && ! brew info --formula "$pkg_name" >/dev/null 2>&1; then
-            print -P "%F{yellow}⚠️  '$pkg_name' not found as a Homebrew formula%f"
-            failed=1
-            continue
+          if [[ "$pkg_type" == formula ]]; then
+            _bud_log_brew info --formula "$pkg_name"
+            if ! command brew info --formula "$pkg_name" >/dev/null 2>&1; then
+              print -P "%F{yellow}⚠️  '$pkg_name' not found as a Homebrew formula%f"
+              failed=1
+              continue
+            fi
           fi
 
           local label="$(_bud_label_for_type "$pkg_type")"
@@ -607,14 +707,17 @@ bud() {
 
           if [[ "$pkg_type" == cask ]]; then
             local tap_info
-            tap_info=$(brew search --cask "$pkg_name" 2>/dev/null | grep "$pkg_name" | grep "/" | head -1)
+            _bud_log_brew search --cask "$pkg_name"
+            tap_info=$(command brew search --cask "$pkg_name" 2>/dev/null | grep "$pkg_name" | grep "/" | head -1)
             if [[ -n "$tap_info" ]]; then
               local tap_name=$(echo "$tap_info" | cut -d'/' -f1-2 | sed 's/^[[:space:]]*//')
               if [[ -n "$tap_name" && "$tap_name" != "homebrew/cask" && "$tap_name" != "homebrew/cask-fonts" ]]; then
-                if ! brew tap | grep -q "^$tap_name$"; then
-                  echo "🔧 Adding required tap: $tap_name"
+                _bud_log_brew tap
+                if ! command brew tap | grep -q "^$tap_name$"; then
+                  _bud_begin "Adding required tap: $tap_name"
                   _bud_trust_tap "$tap_name" || { failed=1; continue; }
-                  brew tap "$tap_name" || { failed=1; continue; }
+                  _bud_brew tap "$tap_name" || { failed=1; continue; }
+                  _bud_done
                 fi
               fi
             fi
@@ -641,39 +744,62 @@ bud() {
 
   typeset -gUa _bud_exclude_casks=("${exclude_casks_cli[@]}")
 
-  _bud_load_brew_state
-  _bud_ensure_desired_taps || return 1
+  _bud_done "Desired lists: ${#desired_formulas[@]} formulae · ${#desired_taps[@]} taps · ${#desired[@]} casks"
 
-  brew update
-  brew upgrade --formula -y
-  brew tap --repair
-
+  _bud_begin "Loading Homebrew state"
   _bud_load_brew_state
+  _bud_done
+
+  local -a missing_taps=()
+  local tap
+  local -A has_tap
+  for tap in "${_bud_brew_taps[@]}"; do has_tap[$tap]=1; done
+  for tap in "${desired_taps[@]}"; do
+    [[ -z ${has_tap[$tap]} ]] && missing_taps+=("$tap")
+  done
+  if (( ${#missing_taps[@]} )); then
+    _bud_begin "Ensuring taps · ${#missing_taps[@]} missing: ${missing_taps[*]}"
+    _bud_ensure_desired_taps || return 1
+    _bud_done
+  else
+    _bud_done "Ensuring taps · all present"
+  fi
+
+  _bud_begin "Updating Homebrew"
+  _bud_brew update || return 1
+  _bud_done
+
+  _bud_begin "Upgrading formulae"
+  _bud_brew upgrade --formula -y || return 1
+  _bud_done
+
+  _bud_begin "Repairing taps"
+  _bud_brew tap --repair || return 1
+  _bud_done
+
+  _bud_begin "Reloading Homebrew state"
+  _bud_load_brew_state
+  _bud_done
   _bud_collect_casks_to_upgrade
   local -i c_eligible=${#_bud_c_to_upgrade[@]}
   _bud_filter_casks_to_upgrade "${_bud_c_to_upgrade[@]}"
 
   if (( ${#_bud_exclude_casks[@]} )); then
-    echo ""
-    echo "⏭️  Excluding casks from upgrade this run: ${_bud_exclude_casks[*]}"
+    _bud_info "Excluding ${#_bud_exclude_casks[@]} cask(s): ${_bud_exclude_casks[*]}"
   fi
 
   if (( ${#_bud_c_to_upgrade[@]} )); then
-    echo ""
-    echo "🔧 Upgrading casks · in list, installed:"
-    brew upgrade --cask -y "${_bud_c_to_upgrade[@]}"
+    _bud_begin "Upgrading casks · ${#_bud_c_to_upgrade[@]} of ${c_eligible} eligible"
+    _bud_brew upgrade --cask -y "${_bud_c_to_upgrade[@]}" || return 1
+    _bud_done
+  elif (( c_eligible && ${#_bud_exclude_casks[@]} )); then
+    _bud_info "All eligible casks were excluded; no cask upgrade."
   else
-    echo ""
-    if (( c_eligible && ${#_bud_exclude_casks[@]} )); then
-      echo "ℹ️  All eligible casks were excluded; no cask upgrade."
-    else
-      echo "ℹ️  No casks in list are installed; skipping cask upgrade."
-    fi
+    _bud_info "No casks in list are installed; skipping cask upgrade."
   fi
 
-  # Cleanup
-  echo ""
-  brew cleanup --prune=1 
-  #--prune=all - this is too aggressive and will remove too many packages
+  _bud_begin "Cleaning up Homebrew"
+  _bud_brew cleanup --prune=1 || return 1
+  _bud_done
 }
 
