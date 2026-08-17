@@ -1,4 +1,7 @@
 #!/bin/zsh
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-source "$SCRIPT_DIR/functions/brew-desired-update-zsh/main.zsh"
-bud "$@"
+if ! command -v node >/dev/null 2>&1; then
+  print -P "%F{red}❌ node is required to run bud%f" >&2
+  exit 1
+fi
+exec node "$SCRIPT_DIR/functions/brew-desired-update-js/cli.mjs" "$@"

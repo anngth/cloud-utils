@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read/write bud desired.json for the zsh bud CLI."""
+"""Read/write bud desired.json for the zsh budz CLI."""
 
 import json
 import os

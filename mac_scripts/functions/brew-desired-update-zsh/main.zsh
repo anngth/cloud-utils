@@ -1,5 +1,5 @@
 
-bud() {
+budz() {
   emulate -L zsh
   
   # Ensure Homebrew
@@ -335,7 +335,7 @@ bud() {
     rm -f "$f_formulae" "$f_casks" "$f_taps"
   }
 
-  # Status grid for `bud list` / `bud ls`.
+  # Status grid for `budz list` / `budz ls`.
   _bud_show_desired_status() {
     local do_load="${1:-1}"
     local -a f_installed=() f_missing=() f_extra=()
@@ -495,7 +495,7 @@ bud() {
 
     if (( is_cask && is_formula )); then
       print -P "%F{yellow}⚠️  '$name' exists as both cask and formula%f" >&2
-      print -P "%F{blue}💡 Use 'bud add --cask $name' or 'bud add --formula $name'%f" >&2
+      print -P "%F{blue}💡 Use 'budz add --cask $name' or 'budz add --formula $name'%f" >&2
       return 1
     elif (( is_cask )); then
       echo cask
@@ -576,8 +576,8 @@ bud() {
         shift
         ;;
       -h|--help)
-        _bud_done "Usage: bud [command]"
-        echo "Usage: bud [COMMAND] [OPTIONS]"
+        _bud_done "Usage: budz [command]"
+        echo "Usage: budz [COMMAND] [OPTIONS]"
         echo ""
         echo "Commands:"
         echo "  add <name...>      Add casks/formulae/taps (auto-detected; user/repo = tap)"

@@ -8,7 +8,7 @@ Scripts for VPS setup, Docker, macOS helpers (Homebrew, DB sync, skills, git), M
 Tool usage:
 
 - [bud](docs/bud.md)
-- [budj](docs/budj.md)
+- [budz](docs/budz.md)
 - [gt](docs/gt.md)
 - [skm](docs/skm.md)
 - [dbt](docs/dbt.md)
