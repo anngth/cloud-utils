@@ -6,6 +6,7 @@ import {
   detectBrewType,
   parseManageArgs,
   runAddCommand,
+  runRemoveCommand,
 } from "../manage.mjs";
 import { createUi } from "../ui.mjs";
 
@@ -330,6 +331,88 @@ test("applyAdd dual type steps then warns without active", async () => {
   assert.ok(calls.some((c) => c.startsWith("warn:")));
   assert.ok(calls.some((c) => c.startsWith("info:")));
   assert.ok(!calls.some((c) => c.startsWith("active:")));
+});
+
+function commandUi() {
+  const calls = [];
+  return {
+    calls,
+    title() { calls.push("title"); },
+    step(m) { calls.push(`step:${m}`); },
+    active(m) { calls.push(`active:${m}`); },
+    info(m) { calls.push(`info:${m}`); },
+    warn(m) { calls.push(`warn:${m}`); },
+    error(m) { calls.push(`error:${m}`); },
+  };
+}
+
+test("runAddCommand titles after load then saves via info", async () => {
+  const ui = commandUi();
+  const code = await runAddCommand(["bat"], {
+    env: { CLOUD_UTILS_CONFIG_DIR: "/tmp/bud-ui-spec" },
+    ui,
+    resolveBrew: () => "/brew",
+    loadDesired: async () => ({
+      ok: true,
+      document: { version: 1, formulas: [], casks: [], taps: [] },
+    }),
+    writeDesired: () => ({ ok: true }),
+    add: async () => ({
+      document: { version: 1, formulas: ["bat"], casks: [], taps: [] },
+      succeeded: 1,
+      failed: 0,
+    }),
+  });
+  assert.equal(code, 0);
+  assert.equal(ui.calls[0], "title");
+  assert.equal(
+    ui.calls.at(-1),
+    "info:Changes saved to /tmp/bud-ui-spec/bud/desired.json",
+  );
+});
+
+test("runAddCommand does not title when Homebrew is missing", async () => {
+  const ui = commandUi();
+  const code = await runAddCommand(["bat"], {
+    env: {},
+    ui,
+    resolveBrew: () => null,
+  });
+  assert.equal(code, 1);
+  assert.ok(ui.calls.some((c) => c.startsWith("error:")));
+  assert.ok(!ui.calls.includes("title"));
+});
+
+test("runRemoveCommand titles after load then saves via info", async () => {
+  const ui = commandUi();
+  const code = await runRemoveCommand(["cursor"], {
+    env: { CLOUD_UTILS_CONFIG_DIR: "/tmp/bud-ui-spec" },
+    ui,
+    loadDesired: async () => ({
+      ok: true,
+      document: { version: 1, formulas: [], casks: ["cursor"], taps: [] },
+    }),
+    writeDesired: () => ({ ok: true }),
+    remove: () => ({
+      document: { version: 1, formulas: [], casks: [], taps: [] },
+      succeeded: 1,
+      failed: 0,
+    }),
+  });
+  assert.equal(code, 0);
+  assert.equal(ui.calls[0], "title");
+  assert.equal(
+    ui.calls.at(-1),
+    "info:Changes saved to /tmp/bud-ui-spec/bud/desired.json",
+  );
+});
+
+test("runRemoveCommand does not title when names are missing", async () => {
+  const ui = commandUi();
+  const code = await runRemoveCommand([], { ui });
+  assert.equal(code, 1);
+  assert.ok(ui.calls.some((c) => c.startsWith("error:")));
+  assert.ok(!ui.calls.includes("title"));
 });
 
 test("runAddCommand supplies default logging runner when runBrew omitted", async () => {

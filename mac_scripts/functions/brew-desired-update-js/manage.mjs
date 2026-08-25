@@ -291,6 +291,8 @@ export async function runAddCommand(args, context = {}) {
     return 1;
   }
 
+  ui.title();
+
   const { document, succeeded, failed } = await add(names, {
     forceType,
     document: loaded.document,
@@ -334,6 +336,8 @@ export async function runRemoveCommand(args, context = {}) {
     ui.error(loaded.error);
     return 1;
   }
+
+  ui.title();
 
   const { document, succeeded, failed } = remove(names, {
     document: loaded.document,
