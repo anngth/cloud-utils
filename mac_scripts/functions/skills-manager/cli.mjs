@@ -177,6 +177,24 @@ export async function runCli(argv, dependencies = {}) {
       ], { multiple: false, title: message });
       return result.type === "submit" && result.selected[0] === true;
     },
+    confirmApply: async ({ install, remove, catalog }) => {
+      const heading = "Apply these changes?";
+      const result = await select([
+        { value: true, label: "Yes" },
+        { value: false, label: "No" },
+      ], {
+        multiple: false,
+        title: heading,
+        render: (state) => ui.applyPreview({
+          install,
+          remove,
+          catalog,
+          heading,
+          confirmState: state,
+        }),
+      });
+      return result.type === "submit" && result.selected[0] === true;
+    },
     runSourceCommand,
     runStatusCommand,
     runAddCommand,

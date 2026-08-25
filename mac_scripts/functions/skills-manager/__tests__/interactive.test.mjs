@@ -40,8 +40,6 @@ function interactiveHarness({
       warn: (message) => { stderr += `${message}\n`; },
       catalogSelector: (title, state) => uiCalls.push(["catalogSelector", title, state]),
       cancelledCatalogSelector: (title, state) => uiCalls.push(["cancelledCatalogSelector", title, state]),
-      installPlan: (value) => uiCalls.push(["installPlan", value]),
-      uninstallPlan: (value) => uiCalls.push(["uninstallPlan", value]),
       executionSummary: (value, options) => uiCalls.push(["executionSummary", value, options]),
     },
     resolveProjectRoot: () => root,
@@ -50,8 +48,8 @@ function interactiveHarness({
       calls.push(["selectCatalogItems", items, options]);
       return selection;
     },
-    confirm: async (message) => {
-      calls.push(["confirm", message]);
+    confirmApply: async (preview) => {
+      calls.push(["confirmApply", preview]);
       return confirmed;
     },
     requireNpx: () => npxAvailable,
@@ -130,6 +128,8 @@ test("submit installs newly selected missing skills", async () => {
     ["skill-a", "skill-b"],
   );
   assert.equal(harness.calls.some(([name]) => name === "executeUninstallPlan"), false);
+  assert.equal(harness.uiCalls.filter(([name]) => name === "executionSummary").length, 1);
+  assert.equal(harness.uiCalls[0][2].operation, "changes");
 });
 
 test("submit uninstalls deselected catalog skills", async () => {
@@ -148,6 +148,8 @@ test("submit uninstalls deselected catalog skills", async () => {
   const uninstallCall = harness.calls.find(([name]) => name === "executeUninstallPlan");
   assert.ok(uninstallCall);
   assert.deepEqual(uninstallCall[1].remove.map((item) => item.skill), ["skill-b"]);
+  assert.equal(harness.uiCalls.filter(([name]) => name === "executionSummary").length, 1);
+  assert.equal(harness.uiCalls[0][2].operation, "changes");
 });
 
 test("no-op when selection matches disk exits without confirmation", async () => {
@@ -159,25 +161,28 @@ test("no-op when selection matches disk exits without confirmation", async () =>
     },
   });
   assert.equal(await runInteractive(harness.context), 0);
-  assert.equal(harness.calls.some(([name]) => name === "confirm"), false);
+  assert.equal(harness.calls.some(([name]) => name === "confirmApply"), false);
   assert.equal(harness.calls.some(([name]) => name === "executeInstallPlan"), false);
   assert.equal(harness.calls.some(([name]) => name === "executeUninstallPlan"), false);
 });
 
-test("mismatch conflicts block interactive submit without force", async () => {
+test("submit with work confirms via apply preview not plan cards", async () => {
   const harness = interactiveHarness({
-    installed: new Map([["skill-a", actualSkill("skill-a", "wrong/repo")]]),
+    installed: new Map(),
     selection: {
       type: "submit",
       selected: [requirementKey("a/one", "skill-a")],
     },
   });
-  assert.equal(await runInteractive(harness.context), 1);
-  assert.match(harness.stderr(), /conflict|mismatch|blocked/i);
-  assert.equal(harness.calls.some(([name]) => name === "executeInstallPlan"), false);
+  assert.equal(await runInteractive(harness.context), 0);
+  const preview = harness.calls.find(([name]) => name === "confirmApply");
+  assert.ok(preview);
+  assert.deepEqual(preview[1].install.map((item) => item.skill), ["skill-a"]);
+  assert.deepEqual(preview[1].remove, []);
+  assert.equal(preview[1].catalog, SAMPLE_CATALOG);
 });
 
-test("confirmation cancellation exits non-zero", async () => {
+test("confirmation cancellation exits without execution or plan output", async () => {
   const harness = interactiveHarness({
     installed: new Map(),
     selection: {
@@ -188,4 +193,35 @@ test("confirmation cancellation exits non-zero", async () => {
   });
   assert.equal(await runInteractive(harness.context), 1);
   assert.equal(harness.calls.some(([name]) => name === "executeInstallPlan"), false);
+  assert.equal(harness.uiCalls.filter(([name]) => name === "executionSummary").length, 0);
+});
+
+test("selected mismatch aborts before preview", async () => {
+  const harness = interactiveHarness({
+    installed: new Map([["skill-a", actualSkill("skill-a", "wrong/repo")]]),
+    selection: {
+      type: "submit",
+      selected: [requirementKey("a/one", "skill-a")],
+    },
+  });
+  assert.equal(await runInteractive(harness.context), 1);
+  assert.match(harness.stderr(), /Blocked by installed skill conflicts: skill-a/);
+  assert.equal(harness.calls.some(([name]) => name === "confirmApply"), false);
+});
+
+test("deselected mismatch is uninstalled while missing skills install", async () => {
+  const harness = interactiveHarness({
+    installed: new Map([["skill-a", actualSkill("skill-a", "wrong/repo")]]),
+    selection: {
+      type: "submit",
+      selected: [requirementKey("a/one", "skill-b")],
+    },
+  });
+  assert.equal(await runInteractive(harness.context), 0);
+  const installCall = harness.calls.find(([name]) => name === "executeInstallPlan");
+  const uninstallCall = harness.calls.find(([name]) => name === "executeUninstallPlan");
+  assert.deepEqual(installCall[1].install.map((item) => item.skill), ["skill-b"]);
+  assert.deepEqual(uninstallCall[1].remove.map((item) => item.skill), ["skill-a"]);
+  assert.equal(harness.uiCalls.filter(([name]) => name === "executionSummary").length, 1);
+  assert.equal(harness.uiCalls[0][2].operation, "changes");
 });

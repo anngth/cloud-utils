@@ -48,10 +48,10 @@ function desiredConflictMessage(conflicts) {
 }
 
 function planHasWork(installPlan, uninstallPlan) {
-  return installPlan.install.length > 0
-    || installPlan.replace.length > 0
-    || uninstallPlan.remove.length > 0;
+  return installPlan.install.length > 0 || uninstallPlan.remove.length > 0;
 }
+
+const emptyExecution = { ok: true, succeeded: [], failed: [] };
 
 export async function runInteractive(context) {
   try {
@@ -83,53 +83,44 @@ export async function runInteractive(context) {
     }
 
     const installStatus = classifyStatus(desired, installedState);
-    const installPlan = createInstallPlan(installStatus, { force: false });
+    const installPlan = createInstallPlan(installStatus);
     const uninstallPlan = createUninstallPlan({
       selected: toRemove,
       remaining: desired,
       installedState,
-      force: false,
       linkedSelected: [],
     });
 
-    if (installPlan.conflicts.length > 0 || uninstallPlan.conflicts.length > 0) {
-      const names = [
-        ...installPlan.conflicts.map((item) => item.skill),
-        ...uninstallPlan.conflicts.map((item) => item.skill),
-      ];
-      throw new Error(`Blocked by installed skill conflicts: ${[...new Set(names)].join(", ")}`);
+    if (installPlan.conflicts.length > 0) {
+      const names = [...new Set(installPlan.conflicts.map((item) => item.skill))];
+      throw new Error(`Blocked by installed skill conflicts: ${names.join(", ")}`);
     }
 
     if (!planHasWork(installPlan, uninstallPlan)) return 0;
 
-    context.ui.installPlan({
-      projectRoot,
-      profileNames: [],
-      plan: installPlan,
+    const confirmed = await context.confirmApply({
+      install: installPlan.install,
+      remove: uninstallPlan.remove,
+      catalog,
     });
-    context.ui.uninstallPlan({
-      projectRoot,
-      profileNames: [],
-      plan: uninstallPlan,
-    });
-
-    const confirmed = await context.confirm("Apply these changes?");
     if (!confirmed) return 1;
 
     if (context.requireNpx && !context.requireNpx()) return 1;
 
-    let exitCode = 0;
-    if (installPlan.install.length > 0 || installPlan.replace.length > 0) {
-      const result = await context.executeInstallPlan(installPlan, { projectRoot });
-      context.ui.executionSummary(result);
-      if (!result.ok) exitCode = 1;
-    }
-    if (uninstallPlan.remove.length > 0) {
-      const result = await context.executeUninstallPlan(uninstallPlan, { projectRoot });
-      context.ui.executionSummary(result, { operation: "uninstall" });
-      if (!result.ok) exitCode = 1;
-    }
-    return exitCode;
+    const installResult = installPlan.install.length > 0
+      ? await context.executeInstallPlan(installPlan, { projectRoot })
+      : emptyExecution;
+    const uninstallResult = uninstallPlan.remove.length > 0
+      ? await context.executeUninstallPlan(uninstallPlan, { projectRoot })
+      : emptyExecution;
+
+    const ok = installResult.ok && uninstallResult.ok;
+    context.ui.executionSummary({
+      ok,
+      succeeded: [...installResult.succeeded, ...uninstallResult.succeeded],
+      failed: [...installResult.failed, ...uninstallResult.failed],
+    }, { operation: "changes" });
+    return ok ? 0 : 1;
   } catch (error) {
     context.ui.error(error instanceof Error ? error.message : String(error));
     return 1;
