@@ -61,7 +61,6 @@ class Ui:
             desc = f"  {_fg(GRAY_240, description)}" if description else ""
             self._out(f"{_fg(GREEN, syntax)}{desc}")
 
-        self.title()
         self.active("Usage: bud [command]")
         command("bud (help | -h | --help)", "Show this help")
         self.active("Update")

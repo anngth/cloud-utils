@@ -122,6 +122,17 @@ class ErrorTests(unittest.TestCase):
 
 
 class UsageTests(unittest.TestCase):
+    def test_usage_does_not_print_title_banner(self):
+        buf = io.StringIO()
+        ui = Ui(stdout=buf)
+        ui.usage()
+        raw = buf.getvalue()
+        plain = strip_ansi(raw)
+        self.assertNotIn("BREW DESIRED UPDATE", plain)
+        self.assertNotIn("\033[42m", raw)
+        first = next(line for line in plain.splitlines() if line)
+        self.assertEqual(first, "◆ Usage: bud [command]")
+
     def test_usage_prints_canonical_help(self):
         buf = io.StringIO()
         ui = Ui(stdout=buf)
