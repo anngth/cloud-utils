@@ -146,6 +146,8 @@ export async function runListCommand(_args, context = {}) {
 
   const runner = context.runBrew ?? createBrewRunner({ brewBin, ui });
 
+  ui.title();
+
   const loaded = await loadDesired({
     env,
     listBrewTaps: () => listTaps({ brewBin, runBrew: runner }),
@@ -155,7 +157,9 @@ export async function runListCommand(_args, context = {}) {
     return 1;
   }
 
+  ui.step("Loading Homebrew state");
   const state = await loadState({ brewBin, runBrew: runner });
+  ui.active("Loaded Homebrew state");
   const partitions = partitionLists({ desired: loaded.document, installed: state });
   const columns = stdout.columns || 120;
   ui.desiredStatus(partitions, {

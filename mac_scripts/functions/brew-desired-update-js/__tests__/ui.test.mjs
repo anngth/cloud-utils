@@ -89,7 +89,7 @@ test("desiredStatus renders sections and skips empty", () => {
   });
 
   const text = stripAnsi(stdout);
-  assert.ok(text.includes("BREW DESIRED UPDATE"));
+  assert.equal([...stripAnsi(stdout).matchAll(/BREW DESIRED UPDATE/g)].length, 0);
   assert.ok(text.includes("Desired vs installed · 2 formulae · 0 taps · 1 casks"));
   assert.ok(text.includes("Formulae · in list, installed"));
   assert.ok(text.includes("Formulae · in list, not installed"));
@@ -100,4 +100,33 @@ test("desiredStatus renders sections and skips empty", () => {
   assert.doesNotMatch(text, /Formulae · installed, not in list/);
   assert.doesNotMatch(text, /Taps ·/);
   assert.doesNotMatch(text, /│|└/);
+});
+
+test("list session composes badge once then load step then desiredStatus", () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (v) => { stdout += v; } },
+    stderr: { write() {} },
+  });
+  ui.title();
+  ui.step("Loading Homebrew state");
+  ui.command("$ brew list --formula");
+  ui.active("Loaded Homebrew state");
+  ui.desiredStatus({
+    formulas: { installed: ["bat"], missing: [], extra: [] },
+    taps: { installed: [], missing: [], extra: [] },
+    casks: { installed: [], missing: [], extra: [] },
+  }, {
+    columns: 80,
+    desiredCounts: { formulas: 1, taps: 0, casks: 0 },
+  });
+
+  const text = stripAnsi(stdout);
+  assert.equal([...text.matchAll(/BREW DESIRED UPDATE/g)].length, 1);
+  assert.match(text, /◇ Loading Homebrew state/);
+  assert.match(text, /\$ brew list --formula/);
+  assert.match(text, /◆ Loaded Homebrew state/);
+  assert.match(text, /◆ Desired vs installed · 1 formulae · 0 taps · 0 casks/);
+  assert.match(text, /Formulae · in list, installed/);
+  assert.match(text, /bat/);
 });

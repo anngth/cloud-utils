@@ -43,6 +43,53 @@ test("formatGrid is column-major", () => {
   assert.equal(lines[1].trim().replace(/\s+/g, " "), "b d");
 });
 
+function recordingUi() {
+  const calls = [];
+  return {
+    calls,
+    error(m) { calls.push(`error:${m}`); },
+    title() { calls.push("title"); },
+    step(text) { calls.push(`step:${text}`); },
+    active(text) { calls.push(`active:${text}`); },
+    desiredStatus() { calls.push("desiredStatus"); },
+  };
+}
+
+test("runListCommand titles then loads then desiredStatus", async () => {
+  const ui = recordingUi();
+  const code = await runListCommand([], {
+    env: { PATH: "/bin" },
+    stdout: { columns: 80 },
+    ui,
+    resolveBrew: () => "/opt/homebrew/bin/brew",
+    loadDesired: async () => ({
+      ok: true,
+      document: { version: 1, formulas: ["bat"], casks: [], taps: [] },
+    }),
+    loadState: async () => ({ formulas: ["bat"], casks: [], taps: [] }),
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(ui.calls, [
+    "title",
+    "step:Loading Homebrew state",
+    "active:Loaded Homebrew state",
+    "desiredStatus",
+  ]);
+});
+
+test("runListCommand titles before loadDesired failure", async () => {
+  const ui = recordingUi();
+  const code = await runListCommand([], {
+    env: { PATH: "/bin" },
+    stdout: { columns: 80 },
+    ui,
+    resolveBrew: () => "/opt/homebrew/bin/brew",
+    loadDesired: async () => ({ ok: false, error: "invalid desired.json" }),
+  });
+  assert.equal(code, 1);
+  assert.deepEqual(ui.calls, ["title", "error:invalid desired.json"]);
+});
+
 test("runListCommand returns 1 when brew missing", async () => {
   let err = "";
   const code = await runListCommand([], {
@@ -59,6 +106,9 @@ test("runListCommand renders partitions on success", async () => {
   const ui = {
     error() {},
     info() {},
+    title() {},
+    step() {},
+    active() {},
     desiredStatus() {
       output = "rendered";
     },
@@ -84,7 +134,15 @@ test("runListCommand passes default runner into loadState and listTaps", async (
   const code = await runListCommand([], {
     env: { PATH: "/bin" },
     stdout: { columns: 80 },
-    ui: { error() {}, info() {}, desiredStatus() {}, command() {} },
+    ui: {
+      error() {},
+      info() {},
+      title() {},
+      step() {},
+      active() {},
+      desiredStatus() {},
+      command() {},
+    },
     resolveBrew: () => "/opt/homebrew/bin/brew",
     loadDesired: async ({ listBrewTaps }) => {
       await listBrewTaps();

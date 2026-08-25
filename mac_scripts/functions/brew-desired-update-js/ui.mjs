@@ -119,7 +119,6 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     );
     const layout = allItems.length > 0 ? initGridLayout(usableWidth, allItems) : null;
 
-    title();
     active(`Desired vs installed · ${counts.formulas} formulae · ${counts.taps} taps · ${counts.casks} casks`);
 
     for (const section of STATUS_SECTIONS) {
