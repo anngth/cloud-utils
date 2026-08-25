@@ -1,6 +1,0 @@
-{
-  "version": 1,
-  "formulas": ["bat", "eza", "gh"],
-  "casks": ["cursor"],
-  "taps": ["mongodb/brew"]
-}

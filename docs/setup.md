@@ -35,7 +35,7 @@ brew install mongosh mongodb-database-tools
 
 - `libpq` — PostgreSQL clients (`psql`, `pg_dump`, `pg_restore`). `dbt` can also use `postgresql@18`.
 - `mongosh` / `mongodb-database-tools` — used by `dbt sync mongodb`.
-- `python3` — used by `budz` to read/write `desired.json`. Install with `brew install python` if `python3` is missing.
+- `python3` — required to run `bud`. Install with `brew install python` if `python3` is missing.
 
 ## Verify
 
@@ -51,8 +51,7 @@ dbt --help
 
 | Command | Docs |
 | ------- | ---- |
-| `bud` | [bud.md](bud.md) — JS CLI |
-| `budz` | [budz.md](budz.md) — zsh variant, same `bud/desired.json` |
+| `bud` | [bud.md](bud.md) — Python CLI |
 | `gt` | [gt.md](gt.md) |
 | `skm` | [skm.md](skm.md) |
 | `dbt` | [dbt.md](dbt.md) |
@@ -60,7 +59,7 @@ dbt --help
 
 ## Local config
 
-Personal data for `bud`/`budz`, `gt`, `skm`, and `dbt` lives outside the repo (iCloud by default).
+Personal data for `bud`, `gt`, `skm`, and `dbt` lives outside the repo (iCloud by default).
 
 In `~/.zshrc`:
 
@@ -84,12 +83,12 @@ Layout:
 
 | Tool  | Config                                              | Template/reference in repo                                                    |
 | ----- | --------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `bud` / `budz` | `bud/desired.json`                                  | `mac_scripts/functions/brew-desired-update-js/desired.json.example`           |
+| `bud` | `bud/desired.json`                                  | `mac_scripts/functions/brew-desired-update/desired.json.example`           |
 | `gt`  | `gt/backups.json`                                   | `mac_scripts/functions/git-tools/backups.json.example` (reference only)       |
 | `skm` | `skm/sources.json`                                  | `mac_scripts/functions/skills-manager/sources.json.example` (reference only) |
 | `dbt` | `dbt/secrets`                                       | `mac_scripts/functions/db-tools/secrets.example`                              |
 
-On first run, `bud` / `budz` bootstraps missing `desired.json` from
+On first run, `bud` bootstraps missing `desired.json` from
 `desired.json.example`. `dbt` bootstraps missing files from
 legacy paths or `*.example`. SKM creates `sources.json` automatically; legacy `profiles.json`,
 `projects.json`, and `list.json` are migrated once and retained unchanged.

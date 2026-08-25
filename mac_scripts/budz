@@ -1,4 +1,0 @@
-#!/bin/zsh
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-source "$SCRIPT_DIR/functions/brew-desired-update-zsh/main.zsh"
-budz "$@"
