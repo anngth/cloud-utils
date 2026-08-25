@@ -50,6 +50,10 @@ redisdata/
 temp/
 tmp/
 
+# Python
+__pycache__/
+*.py[cod]
+
 # User-specific application data that shouldn't be shared
 StirlingPDF/logs/
 StirlingPDF/pipeline/
