@@ -140,16 +140,10 @@ const INSTALLED = new Map([
 
 
 test("install selects missing and blocks conflicts without force", () => {
-  const plan = createInstallPlan(STATUS, { force: false });
+  const plan = createInstallPlan(STATUS);
   assert.deepEqual(plan.install.map(name), ["missing"]);
-  assert.deepEqual(plan.replace, []);
+  assert.equal("replace" in plan, false);
   assert.deepEqual(plan.conflicts.map(name), ["wrong", "unknown"]);
-});
-
-test("install force moves mismatch and untracked entries into replacement", () => {
-  const plan = createInstallPlan(STATUS, { force: true });
-  assert.deepEqual(plan.replace.map(name), ["wrong", "unknown"]);
-  assert.deepEqual(plan.conflicts, []);
 });
 
 test("temporary selected keys filter installs without removing non-force conflicts", () => {
@@ -160,7 +154,6 @@ test("temporary selected keys filter installs without removing non-force conflic
     profiles: [],
   }];
   const plan = createInstallPlan({ ...STATUS, desiredConflicts }, {
-    force: false,
     selectedKeys: new Set([missing.key]),
   });
   assert.deepEqual(plan.install.map(name), ["missing"]);
@@ -169,25 +162,15 @@ test("temporary selected keys filter installs without removing non-force conflic
   assert.equal(STATUS.missing.length, 1);
 });
 
-test("temporary selected keys filter forced replacements", () => {
-  const wrong = STATUS.mismatches[0];
-  const plan = createInstallPlan(STATUS, {
-    force: true,
-    selectedKeys: new Set([wrong.key]),
-  });
-  assert.deepEqual(plan.replace.map(name), ["wrong"]);
-  assert.deepEqual(plan.conflicts, []);
-});
-
 test("desired-source conflicts block their mutation while safe installs continue", () => {
   const status = classifyStatus(
     catalogRequirements(CONFLICTING_WITH_SAFE_CATALOG),
     new Map(),
   );
-  const plan = createInstallPlan(status, { force: true });
+  const plan = createInstallPlan(status);
 
   assert.deepEqual(plan.install.map(name), ["testing"]);
-  assert.deepEqual(plan.replace, []);
+  assert.equal("replace" in plan, false);
   assert.deepEqual(plan.desiredConflicts.map((item) => item.skill), ["review"]);
 });
 
@@ -196,7 +179,6 @@ test("uninstall retains requirements from remaining catalog skills", () => {
     selected: catalogRequirements(FRONTEND_CATALOG),
     remaining: catalogRequirements(QUALITY_CATALOG),
     installedState: INSTALLED,
-    force: false,
     linkedSelected: ["frontend"],
   });
   assert.deepEqual(plan.remove.map(name), ["frontend-design"]);
@@ -209,7 +191,6 @@ test("uninstall retention compares source and skill pair keys", () => {
     selected: catalogRequirements(CONFLICTING_CATALOG_A_ONLY),
     remaining: catalogRequirements(CONFLICTING_CATALOG_B_ONLY),
     installedState: new Map([["review", actual("review", "a/repo")]]),
-    force: false,
     linkedSelected: ["a"],
   });
 
@@ -217,7 +198,7 @@ test("uninstall retention compares source and skill pair keys", () => {
   assert.deepEqual(plan.retain, []);
 });
 
-test("uninstall skips mismatched and untracked actual entries unless forced", () => {
+test("uninstall removes mismatched and untracked catalog skills", () => {
   const selected = {
     requirements: [
       { key: '["a/repo","wrong"]', source: "a/repo", skill: "wrong" },
@@ -225,39 +206,25 @@ test("uninstall skips mismatched and untracked actual entries unless forced", ()
     ],
     desiredConflicts: [],
   };
-  const installedState = new Map([
-    ["wrong", actual("wrong", "other/repo")],
-    ["unknown", actual("unknown", null)],
-  ]);
-
-  const blocked = createUninstallPlan({
+  const plan = createUninstallPlan({
     selected,
     remaining: { requirements: [], desiredConflicts: [] },
-    installedState,
-    force: false,
+    installedState: new Map([
+      ["wrong", actual("wrong", "other/repo")],
+      ["unknown", actual("unknown", null)],
+    ]),
     linkedSelected: ["p"],
   });
-  const forced = createUninstallPlan({
-    selected,
-    remaining: { requirements: [], desiredConflicts: [] },
-    installedState,
-    force: true,
-    linkedSelected: ["p"],
-  });
-
-  assert.deepEqual(blocked.conflicts.map(name), ["wrong", "unknown"]);
-  assert.deepEqual(blocked.remove, []);
-  assert.deepEqual(forced.remove.map(name), ["wrong", "unknown"]);
-  assert.deepEqual(forced.conflicts, []);
+  assert.deepEqual(plan.remove.map(name), ["wrong", "unknown"]);
+  assert.deepEqual(plan.conflicts, []);
 });
 
-test("force never resolves two desired sources for one skill name", () => {
+test("desired-source conflicts never resolve two sources for one skill name", () => {
   const selected = catalogRequirements(CONFLICTING_CATALOG);
   const plan = createUninstallPlan({
     selected,
     remaining: { requirements: [], desiredConflicts: [] },
     installedState: new Map(),
-    force: true,
     linkedSelected: ["a", "b"],
   });
   assert.equal(plan.desiredConflicts.length, 1);
@@ -279,7 +246,6 @@ test("desired-source conflicts do not block independent safe uninstall items", (
       ["review", actual("review", "a/repo")],
       ["safe", actual("safe", "c/repo")],
     ]),
-    force: true,
     linkedSelected: ["a", "b"],
   });
 

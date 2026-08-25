@@ -83,15 +83,14 @@ export function classifyStatus(mergeResult, installedState) {
   };
 }
 
-export function createInstallPlan(statusResult, { force = false, selectedKeys } = {}) {
+export function createInstallPlan(statusResult, { selectedKeys } = {}) {
   const selected = (item) => selectedKeys === undefined || selectedKeys.has(item.key);
   const blocked = [...statusResult.mismatches, ...statusResult.untracked];
 
   return {
     install: statusResult.missing.filter(selected),
-    replace: force ? blocked.filter(selected) : [],
     skip: [...statusResult.installed],
-    conflicts: force ? [] : blocked,
+    conflicts: blocked,
     extras: [...statusResult.extras],
     desiredConflicts: statusResult.desiredConflicts,
   };
@@ -110,7 +109,6 @@ export function createUninstallPlan({
   selected,
   remaining,
   installedState,
-  force = false,
   linkedSelected,
 }) {
   const remove = [];
@@ -131,12 +129,8 @@ export function createUninstallPlan({
     const actual = installedState.get(requirement.skill);
     if (!actual) {
       absent.push(requirement);
-    } else if (!isUntracked(actual) && actual.source === requirement.source) {
-      remove.push(requirement);
-    } else if (force) {
-      remove.push(requirement);
     } else {
-      conflicts.push(requirement);
+      remove.push(requirement);
     }
   }
 
