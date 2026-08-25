@@ -43,7 +43,7 @@ def is_probe(args: list[str]) -> bool:
         return False
     cmd = args[0]
     rest = args[1:]
-    if cmd in ("list", "info"):
+    if cmd in ("list", "info", "search"):
         return True
     if cmd == "tap" and not rest:
         return True

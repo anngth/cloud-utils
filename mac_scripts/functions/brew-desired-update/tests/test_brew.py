@@ -68,6 +68,7 @@ class IsProbeTests(unittest.TestCase):
     def test_classifies_probe_commands(self):
         self.assertTrue(is_probe(["list", "--formula"]))
         self.assertTrue(is_probe(["info", "--cask", "x"]))
+        self.assertTrue(is_probe(["search", "--cask", "x"]))
         self.assertTrue(is_probe(["tap"]))
         self.assertTrue(is_probe(["trust", "--help"]))
         self.assertTrue(is_probe(["--help"]))
