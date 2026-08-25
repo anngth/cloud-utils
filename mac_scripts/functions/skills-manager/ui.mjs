@@ -49,6 +49,23 @@ function isCatalogSourceSelected(state, sourceItem, sourceIndex) {
   return childIndices.length > 0 && childIndices.every((index) => state.selected.has(index));
 }
 
+export function groupRequirementsByCatalogSource(requirements, catalog) {
+  const groups = [];
+  for (const [sourceIndex, entry] of (catalog.sources ?? []).entries()) {
+    const skills = requirements
+      .filter((item) => item.source === entry.source)
+      .map((item) => item.skill);
+    if (skills.length === 0) continue;
+    groups.push({
+      sourceIndex: sourceIndex + 1,
+      source: entry.source,
+      label: redactSource(entry.source),
+      skills,
+    });
+  }
+  return groups;
+}
+
 export function buildCatalogSelectorItems(catalog, { installedState }) {
   const items = [];
   const initial = [];
@@ -165,9 +182,9 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
 
     section("Lifecycle");
     command("skm add <source|index...> [(-a | --all)]");
-    continuation("[(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]", "Install catalog skills for selected sources");
+    continuation("[(-y | --yes)] [(-d | --dry-run)]", "Install catalog skills for selected sources");
     command("skm remove <source|index...> [(-a | --all)]");
-    continuation("[(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]", "Uninstall catalog skills for selected sources");
+    continuation("[(-y | --yes)] [(-d | --dry-run)]", "Uninstall catalog skills for selected sources");
     command("skm status", "Compare catalog and installed skills");
 
     section("Catalog");
@@ -180,7 +197,6 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     section("Notes");
     note("Source indexes are 1-based, matching the interactive selector and gt backup.");
     note("source add, source edit, and source remove change the catalog only; use add/remove to change disk.");
-    note("--force permits mismatch/untracked skill replacement or removal.");
     listEnd();
   }
 
@@ -208,8 +224,8 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   );
 
   function requirementSection(label, values, color = C.green) {
+    if (values.length === 0) return;
     active(label);
-    if (values.length === 0) item("None", C.gray);
     skillList(values, (value) => skillItem({
       name: value.skill,
       suffix: requirementSuffix(value),
@@ -219,60 +235,99 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out(pipe);
   }
 
-  function status({ projectRoot, profileNames, status: result }) {
+  function renderStatusTree(catalog, result) {
+    const installedKeys = new Set(result.installed.map((item) => requirementKey(item.source, item.skill)));
+    const missingKeys = new Set(result.missing.map((item) => requirementKey(item.source, item.skill)));
+    const mismatchKeys = new Set(result.mismatches.map((item) => requirementKey(item.source, item.skill)));
+    const untrackedKeys = new Set(result.untracked.map((item) => requirementKey(item.source, item.skill)));
+
+    for (const [sourceIndex, entry] of (catalog?.sources ?? []).entries()) {
+      if ((entry.skills ?? []).length === 0) continue;
+      const number = String(sourceIndex + 1);
+      out(`${pipe}  ${number}  ${fg(C.gray, redactSource(entry.source))}`);
+      for (const skill of entry.skills ?? []) {
+        const key = requirementKey(entry.source, skill);
+        let marker = "□";
+        let markerColor = C.gray;
+        if (installedKeys.has(key)) {
+          marker = "■";
+          markerColor = C.green;
+        } else if (mismatchKeys.has(key) || untrackedKeys.has(key)) {
+          marker = "▲";
+          markerColor = C.red;
+        } else if (missingKeys.has(key)) {
+          marker = "□";
+          markerColor = C.gray;
+        }
+        skillItem({
+          name: skill,
+          marker,
+          markerColor,
+          indent: "      ",
+        });
+      }
+      out(pipe);
+    }
+  }
+
+  function status({ projectRoot, profileNames, catalog, status: result }) {
     title();
     step(`Status: ${projectRoot}`);
-    step(`Profiles: ${profileNames.join(", ")}`);
-    requirementSection("Installed", result.installed);
-    requirementSection("Missing", result.missing, C.yellow);
+    if (profileNames.length > 0) step(`Profiles: ${profileNames.join(", ")}`);
+    renderStatusTree(catalog, result);
     requirementSection("Source mismatch", result.mismatches, C.red);
     requirementSection("Untracked", result.untracked, C.red);
-    active("Extra");
-    if (result.extras.length === 0) item("None", C.gray);
-    skillList(result.extras, (extra) => skillItem({
-      name: extra.name,
-      suffix: extra.source ? `— ${redactSource(extra.source)}` : "",
-      markerColor: C.yellow,
-      suffixColor: C.yellow,
-    }));
-    out(pipe);
-    active("Desired-source conflict");
-    if (result.desiredConflicts.length === 0) item("None", C.gray);
-    skillList(result.desiredConflicts, (conflict) => skillItem({
-      name: conflict.skill,
-      suffix: `— ${conflict.sources.map(redactSource).join(" vs ")}`
-        + ` — required by ${conflict.profiles.join(", ")}`,
-      markerColor: C.red,
-      suffixColor: C.red,
-    }));
+    if (result.extras.length > 0) {
+      active("Extra");
+      skillList(result.extras, (extra) => skillItem({
+        name: extra.name,
+        suffix: extra.source ? `— ${redactSource(extra.source)}` : "",
+        markerColor: C.yellow,
+        suffixColor: C.yellow,
+      }));
+      out(pipe);
+    }
+    if (result.desiredConflicts.length > 0) {
+      active("Desired-source conflict");
+      skillList(result.desiredConflicts, (conflict) => skillItem({
+        name: conflict.skill,
+        suffix: `— ${conflict.sources.map(redactSource).join(" vs ")}`
+          + ` — required by ${conflict.profiles.join(", ")}`,
+        markerColor: C.red,
+        suffixColor: C.red,
+      }));
+      out(pipe);
+    }
     listEnd();
   }
 
   function installPlan({ projectRoot, profileNames, plan, dryRun = false }) {
     title();
     step(`${dryRun ? "DRY RUN — " : ""}Install plan: ${projectRoot}`);
-    step(`Profiles: ${profileNames.join(", ")}`);
+    if (profileNames.length > 0) step(`Profiles: ${profileNames.join(", ")}`);
     requirementSection("Install", plan.install);
-    requirementSection("Replace", plan.replace, C.yellow);
     requirementSection("Already installed", plan.skip, C.gray);
     requirementSection("Conflict", plan.conflicts, C.red);
-    active("Extra");
-    if (plan.extras.length === 0) item("None", C.gray);
-    skillList(plan.extras, (extra) => skillItem({
-      name: extra.name,
-      suffix: extra.source ? `— ${redactSource(extra.source)}` : "",
-      markerColor: C.gray,
-      suffixColor: C.gray,
-    }));
-    out(pipe);
-    active("Desired-source conflict");
-    if (plan.desiredConflicts.length === 0) item("None", C.gray);
-    skillList(plan.desiredConflicts, (conflict) => skillItem({
-      name: conflict.skill,
-      suffix: `— ${conflict.sources.map(redactSource).join(" vs ")}`,
-      markerColor: C.red,
-      suffixColor: C.red,
-    }));
+    if (plan.extras.length > 0) {
+      active("Extra");
+      skillList(plan.extras, (extra) => skillItem({
+        name: extra.name,
+        suffix: extra.source ? `— ${redactSource(extra.source)}` : "",
+        markerColor: C.gray,
+        suffixColor: C.gray,
+      }));
+      out(pipe);
+    }
+    if (plan.desiredConflicts.length > 0) {
+      active("Desired-source conflict");
+      skillList(plan.desiredConflicts, (conflict) => skillItem({
+        name: conflict.skill,
+        suffix: `— ${conflict.sources.map(redactSource).join(" vs ")}`,
+        markerColor: C.red,
+        suffixColor: C.red,
+      }));
+      out(pipe);
+    }
     listEnd();
   }
 
@@ -281,20 +336,17 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     profileNames,
     plan,
     dryRun = false,
-    force = false,
     keepLink = false,
   }) {
     title();
     step(`${dryRun ? "DRY RUN — " : ""}Uninstall plan: ${projectRoot}`);
-    step(`Profiles: ${profileNames.join(", ")}`);
-    if (force) step("Force enabled — mismatched or untracked skills may be removed");
+    if (profileNames.length > 0) step(`Profiles: ${profileNames.join(", ")}`);
     requirementSection("Remove", plan.remove, C.yellow);
     requirementSection("Keep", plan.retain, C.gray);
     requirementSection("Already absent", plan.absent, C.gray);
     requirementSection("Conflict", plan.conflicts, C.red);
-    if (!keepLink) {
+    if (!keepLink && plan.unlinkProfiles.length > 0) {
       active("Unlink");
-      if (plan.unlinkProfiles.length === 0) item("None", C.gray);
       for (const name of plan.unlinkProfiles) item(name, C.yellow);
       out(pipe);
     }
@@ -309,9 +361,6 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   };
 
   function retryCommand(record) {
-    if (record.action === "replace") {
-      return `npx skills remove ${record.skills.map(shellArg).join(" ")} --yes`;
-    }
     if (record.action === "uninstall") {
       return `npx skills remove ${record.skills.map(shellArg).join(" ")}`;
     }
@@ -329,23 +378,13 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
 
   function executionSummary(result, { operation = "install" } = {}) {
     title();
-    const label = operation === "uninstall" ? "Uninstall" : "Install";
+    const label = operation === "uninstall"
+      ? "Uninstall"
+      : operation === "changes"
+        ? "Changes"
+        : "Install";
     step(result.ok ? `${label} complete` : `${label} incomplete`);
     step(`${result.succeeded.length} succeeded; ${result.failed.length} failed`);
-    const incompleteReplacements = (result.replacements ?? []).filter((record) => (
-      record.removeStatus === 0 && record.installStatus !== 0
-    ));
-    if (incompleteReplacements.length > 0) {
-      active("Replacement warning");
-      skillList(incompleteReplacements, (record) => skillItem({
-        name: record.skill,
-        suffix: `— old version removed; replacement from ${redactSource(record.source)}`
-          + ` failed (status ${record.installStatus})`,
-        markerColor: C.red,
-        suffixColor: C.red,
-      }));
-      out(pipe);
-    }
     if (result.succeeded.length > 0) {
       active("Succeeded");
       skillList(operationSkillRows(result.succeeded), ({ name, record }) => skillItem({
@@ -369,6 +408,40 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
       active("Retry commands");
       for (const command of retryCommands) item(command, C.red);
     }
+    listEnd();
+  }
+
+  function applyPreview({
+    install = [],
+    remove = [],
+    catalog,
+    heading,
+    confirmState,
+  }) {
+    stdout.write("\u001b[2J\u001b[H");
+    title();
+    step(String(heading));
+    for (const [label, requirements] of [["Install", install], ["Remove", remove]]) {
+      if (requirements.length === 0) continue;
+      active(label);
+      out(pipe);
+      for (const group of groupRequirementsByCatalogSource(requirements, catalog)) {
+        out(`${pipe}  ${group.sourceIndex}  ${fg(C.gray, group.label)}`);
+        for (const skill of group.skills) {
+          skillItem({ name: skill, indent: "      " });
+        }
+        out(pipe);
+      }
+    }
+    active(`Select an item ${fg(C.white, "(enter to continue, q to quit)")}`);
+    out(pipe);
+    confirmState.items.forEach((entry, index) => {
+      const selected = index === confirmState.cursor;
+      const box = selected ? "■" : "□";
+      const boxColor = selected ? C.brightGreen : C.gray;
+      const labelColor = selected ? C.white : C.gray;
+      out(`${pipe}  ${boxColor}${box}${C.reset} ${fg(labelColor, entry.label)}`);
+    });
     listEnd();
   }
 
@@ -430,6 +503,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     status,
     installPlan,
     uninstallPlan,
+    applyPreview,
     executionSummary,
     confirm,
     selector,

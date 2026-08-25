@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildCatalogSelectorItems,
   createUi,
+  groupRequirementsByCatalogSource,
   renderCatalogSelector,
   selectorNameColor,
   SELECTOR_DESCRIPTION_COLOR,
@@ -32,6 +33,7 @@ test("management UI exposes the complete renderer surface", () => {
     "status",
     "installPlan",
     "uninstallPlan",
+    "applyPreview",
     "executionSummary",
     "confirm",
     "selector",
@@ -135,11 +137,20 @@ const requirement = (source, skill, profiles = ["frontend"]) => ({
 
 test("status renders every classification and contributing profiles", () => {
   const { stdout, ui } = makeUi();
+  const catalog = {
+    version: 1,
+    sources: [
+      { source: "a/repo", skills: ["ready", "missing-a", "wrong-source", "unknown"] },
+      { source: "b/repo", skills: ["missing-b"] },
+      { source: "empty/repo", skills: [] },
+    ],
+  };
   const missingA = requirement("a/repo", "missing-a", ["quality"]);
   const missingB = requirement("b/repo", "missing-b", ["frontend"]);
   ui.status({
     projectRoot: "/repo/app",
     profileNames: ["frontend", "quality"],
+    catalog,
     status: {
       installed: [requirement("a/repo", "ready")],
       missing: [missingA, missingB],
@@ -154,11 +165,22 @@ test("status renders every classification and contributing profiles", () => {
     },
   });
   const rendered = stdout.read();
+  const plain = stripAnsi(rendered);
+  assert.match(plain, /\/repo\/app/);
+  assert.match(plain, /frontend, quality/);
+  assert.match(plain, /1\s+a\/repo/);
+  assert.match(plain, /ready/);
+  assert.match(plain, /missing-a/);
+  assert.match(plain, /wrong-source/);
+  assert.match(plain, /unknown/);
+  assert.match(plain, /2\s+b\/repo/);
+  assert.match(plain, /missing-b/);
+  assert.doesNotMatch(plain, /3/);
+  assert.doesNotMatch(plain, /empty\/repo/);
+  assert.match(rendered, /\u001b\[32m■\u001b\[39m/);
+  assert.match(rendered, /\u001b\[90m□\u001b\[39m/);
+  assert.match(rendered, /\u001b\[31m▲\u001b\[39m/);
   for (const text of [
-    "/repo/app",
-    "frontend, quality",
-    "Installed",
-    "Missing",
     "Source mismatch",
     "Untracked",
     "Extra",
@@ -169,15 +191,33 @@ test("status renders every classification and contributing profiles", () => {
     "other",
     "ambiguous",
   ]) assert.match(rendered, new RegExp(text.replace("/", "\\/"), "i"));
-  assert.ok(rendered.includes(`\u001b[33m■\u001b[39m ${paint("92", "missing-a")}`));
-  assert.ok(rendered.includes(`${paint("92", "missing-a")} ${paint("33", "— a/repo — required by quality")}`));
-  assert.match(
-    stripAnsi(rendered),
-    /│  ■ missing-a — a\/repo — required by quality\n│\n│  ■ missing-b — b\/repo — required by frontend/,
-  );
+  assert.doesNotMatch(plain, /ready — a\/repo/);
+  assert.doesNotMatch(plain, /other\n│\s+■ other/);
   for (const name of ["ready", "missing-a", "wrong-source", "unknown", "other", "ambiguous"]) {
     assert.ok(rendered.includes(paint("92", name)), `${name} is a highlighted skill`);
   }
+});
+
+test("status omits empty sections and empty Profiles", () => {
+  const { stdout, ui } = makeUi();
+  ui.status({
+    projectRoot: "/repo/app",
+    profileNames: [],
+    catalog: { version: 1, sources: [{ source: "a/repo", skills: ["ready"] }] },
+    status: {
+      installed: [requirement("a/repo", "ready")],
+      missing: [],
+      mismatches: [],
+      untracked: [],
+      extras: [],
+      desiredConflicts: [],
+    },
+  });
+  const plain = stripAnsi(stdout.read());
+  assert.match(plain, /Status: \/repo\/app/);
+  assert.match(plain, /ready/);
+  assert.doesNotMatch(plain, /Profiles:/);
+  assert.doesNotMatch(plain, /Missing|Source mismatch|Untracked|Extra|Desired-source conflict|\bNone\b/);
 });
 
 test("install plan labels dry runs and all operation classes", () => {
@@ -191,7 +231,6 @@ test("install plan labels dry runs and all operation classes", () => {
         requirement("a/repo", "missing"),
         requirement("b/repo", "also-missing", ["quality"]),
       ],
-      replace: [requirement("a/repo", "replace-me")],
       skip: [requirement("a/repo", "ready")],
       conflicts: [requirement("a/repo", "blocked")],
       extras: [{ name: "other", source: "x/repo" }],
@@ -202,19 +241,37 @@ test("install plan labels dry runs and all operation classes", () => {
   for (const text of [
     "DRY RUN",
     "Install",
-    "Replace",
     "Already installed",
     "Conflict",
     "Extra",
     "missing",
-    "replace-me",
     "ready",
     "blocked",
     "other",
   ]) assert.match(rendered, new RegExp(text, "i"));
+  assert.doesNotMatch(rendered, /Replace|replace-me/i);
   assert.ok(rendered.includes(paint("92", "missing")));
   assert.ok(rendered.includes(paint("92", "also-missing")));
   assert.match(stripAnsi(rendered), /■ missing[^\n]*\n│\n│  ■ also-missing/);
+});
+
+test("install plan omits empty sections", () => {
+  const { stdout, ui } = makeUi();
+  ui.installPlan({
+    projectRoot: "/repo/app",
+    profileNames: [],
+    plan: {
+      install: [requirement("a/repo", "missing")],
+      skip: [],
+      conflicts: [],
+      extras: [],
+      desiredConflicts: [],
+    },
+  });
+  const plain = stripAnsi(stdout.read());
+  assert.match(plain, /Install/);
+  assert.match(plain, /missing/);
+  assert.doesNotMatch(plain, /Already installed|Conflict|Extra|Desired-source conflict|\bNone\b|Profiles:/);
 });
 
 test("uninstall plan renders removal, retention, absence, conflict, and unlink sections", () => {
@@ -223,7 +280,6 @@ test("uninstall plan renders removal, retention, absence, conflict, and unlink s
     projectRoot: "/repo/app",
     profileNames: ["frontend"],
     dryRun: true,
-    force: true,
     keepLink: false,
     plan: {
       remove: [
@@ -248,11 +304,31 @@ test("uninstall plan renders removal, retention, absence, conflict, and unlink s
     "Unlink",
     "frontend",
   ]) assert.match(rendered, new RegExp(text, "i"));
-  assert.match(rendered, /force/i);
+  assert.doesNotMatch(rendered, /force/i);
   assert.ok(rendered.includes(paint("92", "remove-me")));
   assert.ok(rendered.includes(paint("92", "shared")));
   assert.ok(!rendered.includes(paint("92", "frontend")));
   assert.match(stripAnsi(rendered), /■ remove-me[^\n]*\n│\n│  ■ also-remove/);
+});
+
+test("uninstall plan omits empty sections", () => {
+  const { stdout, ui } = makeUi();
+  ui.uninstallPlan({
+    projectRoot: "/repo/app",
+    profileNames: [],
+    plan: {
+      remove: [requirement("a/repo", "remove-me")],
+      retain: [],
+      absent: [],
+      conflicts: [],
+      unlinkProfiles: [],
+      desiredConflicts: [],
+    },
+  });
+  const plain = stripAnsi(stdout.read());
+  assert.match(plain, /Remove/);
+  assert.match(plain, /remove-me/);
+  assert.doesNotMatch(plain, /Keep|Already absent|Conflict|Unlink|\bNone\b|Profiles:/);
 });
 
 test("uninstall keep-link plan omits the unlink section", () => {
@@ -277,7 +353,7 @@ test("execution summary renders aggregate results and exact retry batches", () =
     succeeded: [{ action: "install", source: "b/repo", skills: ["three"], status: 0 }],
     failed: [
       { action: "install", source: "a/repo", skills: ["one", "two"], status: 2 },
-      { action: "replace", source: "c/repo", skills: ["blocked"], status: 5 },
+      { action: "install", source: "c/repo", skills: ["blocked"], status: 5 },
     ],
   });
   const rendered = stdout.read();
@@ -288,45 +364,9 @@ test("execution summary renders aggregate results and exact retry batches", () =
   }
   assert.match(stripAnsi(rendered), /■ one — install failed \(status 2\)\n│\n│  ■ two — install failed \(status 2\)/);
   assert.match(rendered, /npx skills add a\/repo --skill one --skill two/);
-  assert.match(rendered, /npx skills remove blocked --yes/);
+  assert.match(rendered, /npx skills add c\/repo --skill blocked/);
   assert.equal(occurrences(rendered, "npx skills add a/repo --skill one --skill two"), 1);
-  assert.equal(occurrences(rendered, "npx skills remove blocked --yes"), 1);
-});
-
-test("execution summary warns when removal succeeded but replacement failed", () => {
-  const { stdout, ui } = makeUi();
-  ui.executionSummary({
-    ok: false,
-    succeeded: [],
-    failed: [{ action: "install", source: "a/repo", skills: ["review"], status: 7 }],
-    replacements: [{
-      source: "a/repo", skill: "review", removeStatus: 0, installStatus: 7,
-    }],
-  });
-  const rendered = stdout.read();
-  assert.ok(rendered.includes(paint("92", "review")));
-  assert.match(stripAnsi(rendered), /review — old version removed; replacement from a\/repo failed \(status 7\)/i);
-  assert.match(rendered, /npx skills add a\/repo --skill review/);
-  assert.equal(occurrences(rendered, "npx skills add a/repo --skill review"), 1);
-});
-
-test("execution summary preserves a failed replacement install batch as one retry", () => {
-  const { stdout, ui } = makeUi();
-  ui.executionSummary({
-    ok: false,
-    succeeded: [],
-    failed: [{
-      action: "install", source: "a/repo", skills: ["review", "testing"], status: 7,
-    }],
-    replacements: [
-      { source: "a/repo", skill: "review", removeStatus: 0, installStatus: 7 },
-      { source: "a/repo", skill: "testing", removeStatus: 0, installStatus: 7 },
-    ],
-  });
-  const rendered = stripAnsi(stdout.read());
-  assert.equal(occurrences(rendered, "npx skills add a/repo --skill review --skill testing"), 1);
-  assert.doesNotMatch(rendered, /npx skills add a\/repo --skill review(?:\r?\n|$)/);
-  assert.doesNotMatch(rendered, /npx skills add a\/repo --skill testing(?:\r?\n|$)/);
+  assert.equal(occurrences(rendered, "npx skills add c/repo --skill blocked"), 1);
 });
 
 test("execution retry guidance redacts unsafe persisted source text", () => {
@@ -394,11 +434,11 @@ test("usage documents every command signature and short flag", () => {
   for (const [first, continuation] of [
     [
       "│  skm add <source|index...> [(-a | --all)]",
-      "│      [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]  Install catalog skills for selected sources",
+      "│      [(-y | --yes)] [(-d | --dry-run)]  Install catalog skills for selected sources",
     ],
     [
       "│  skm remove <source|index...> [(-a | --all)]",
-      "│      [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]  Uninstall catalog skills for selected sources",
+      "│      [(-y | --yes)] [(-d | --dry-run)]  Uninstall catalog skills for selected sources",
     ],
     [
       "│  skm source add <source>",
@@ -421,8 +461,77 @@ test("usage documents every command signature and short flag", () => {
     "│  skm source remove <source|index>  Remove a catalog source",
     "│  Source indexes are 1-based, matching the interactive selector and gt backup.",
     "│  source add, source edit, and source remove change the catalog only; use add/remove to change disk.",
-    "│  --force permits mismatch/untracked skill replacement or removal.",
   ]) assert.ok(lines.includes(line), `missing help line: ${line}`);
+});
+
+test("groupRequirementsByCatalogSource keeps catalog indexes and skips empty sources", () => {
+  const catalog = {
+    version: 1,
+    sources: [
+      { source: "a/one", skills: ["a"] },
+      { source: "b/two", skills: ["b"] },
+      { source: "c/three", skills: ["c"] },
+    ],
+  };
+  const groups = groupRequirementsByCatalogSource([
+    requirement("c/three", "c"),
+    requirement("a/one", "a"),
+  ], catalog);
+  assert.deepEqual(
+    groups.map((group) => [group.sourceIndex, group.source, group.skills]),
+    [[1, "a/one", ["a"]], [3, "c/three", ["c"]]],
+  );
+});
+
+test("applyPreview shows only Install and Remove grouped by catalog source", () => {
+  const { stdout, ui } = makeUi();
+  ui.applyPreview({
+    heading: "Apply these changes?",
+    catalog: {
+      version: 1,
+      sources: [
+        { source: "a/one", skills: ["skill-a", "skill-b"] },
+        { source: "b/two", skills: ["skill-c"] },
+      ],
+    },
+    install: [requirement("b/two", "skill-c", [])],
+    remove: [requirement("a/one", "skill-b", [])],
+    confirmState: {
+      items: [
+        { value: true, label: "Yes" },
+        { value: false, label: "No" },
+      ],
+      cursor: 0,
+      selected: new Set(),
+    },
+  });
+  const plain = stripAnsi(stdout.read());
+  assert.match(plain, /Apply these changes\?/);
+  assert.match(plain, /Install/);
+  assert.match(plain, /2\s+b\/two/);
+  assert.match(plain, /skill-c/);
+  assert.match(plain, /Remove/);
+  assert.match(plain, /1\s+a\/one/);
+  assert.match(plain, /skill-b/);
+  assert.doesNotMatch(plain, /skill-c — |Profiles:|\/repo|None|Replace|Extra/);
+  assert.match(plain, /Yes/);
+  assert.match(plain, /No/);
+});
+
+test("execution summary uses Changes complete for combined operations", () => {
+  const { stdout, ui } = makeUi();
+  ui.executionSummary({
+    ok: true,
+    succeeded: [
+      { action: "install", source: "a/one", skills: ["skill-a"], status: 0 },
+      { action: "uninstall", source: null, skills: ["skill-b"], status: 0 },
+    ],
+    failed: [],
+  }, { operation: "changes" });
+  const plain = stripAnsi(stdout.read());
+  assert.match(plain, /Changes complete/);
+  assert.doesNotMatch(plain, /Install complete|Uninstall complete/);
+  assert.match(plain, /2 succeeded/);
 });
 
 test("selectorNameColor applies cursor, selected, and unselected ladder", () => {
