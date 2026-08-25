@@ -1,4 +1,4 @@
-import { canonicalizeSource } from "./source-id.mjs";
+import { canonicalizeSource, redactSource } from "./source-id.mjs";
 
 export const EMPTY_CATALOG = { version: 1, sources: [] };
 
@@ -62,6 +62,25 @@ export function catalogSkillOwner(document, skillName) {
     }
   }
   return null;
+}
+
+export function crossSourceSkillConflicts(document, source, skills, { cwd } = {}) {
+  const canonical = canonicalizeSource(source, { cwd });
+  const conflicts = [];
+  for (const skill of skills) {
+    const owner = catalogSkillOwner(document, skill);
+    if (owner && owner !== canonical) {
+      conflicts.push({ skill, ownerSource: owner });
+    }
+  }
+  return conflicts;
+}
+
+export function skillOwnershipConflictMessage(conflicts) {
+  const details = conflicts.map(({ skill, ownerSource }) => (
+    `${skill} (${redactSource(ownerSource)})`
+  ));
+  return `Skill already in another source: ${details.join("; ")}`;
 }
 
 export function resolveSourceToken(document, token, { cwd } = {}) {

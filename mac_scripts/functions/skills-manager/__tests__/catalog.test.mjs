@@ -7,6 +7,8 @@ import {
   upsertSource,
   removeSourceAt,
   migrateProfilesToCatalog,
+  crossSourceSkillConflicts,
+  skillOwnershipConflictMessage,
 } from "../catalog.mjs";
 
 test("validateCatalogDocument accepts empty catalog", () => {
@@ -126,4 +128,42 @@ test("validateCatalogDocument preserves source order", () => {
     ],
   });
   assert.deepEqual(doc.sources.map((entry) => entry.source), ["z/repo", "a/repo"]);
+});
+
+test("crossSourceSkillConflicts lists every skill owned by another source", () => {
+  const document = validateCatalogDocument({
+    version: 1,
+    sources: [
+      { source: "a/one", skills: ["alpha", "keep"] },
+      { source: "c/three", skills: ["beta"] },
+    ],
+  });
+  assert.deepEqual(
+    crossSourceSkillConflicts(document, "b/two", ["alpha", "fresh", "beta"]),
+    [
+      { skill: "alpha", ownerSource: "a/one" },
+      { skill: "beta", ownerSource: "c/three" },
+    ],
+  );
+});
+
+test("crossSourceSkillConflicts ignores skills already owned by the same source", () => {
+  const document = validateCatalogDocument({
+    version: 1,
+    sources: [{ source: "a/one", skills: ["alpha"] }],
+  });
+  assert.deepEqual(
+    crossSourceSkillConflicts(document, "a/one", ["alpha", "gamma"]),
+    [],
+  );
+});
+
+test("skillOwnershipConflictMessage lists every pair with redacted sources", () => {
+  assert.equal(
+    skillOwnershipConflictMessage([
+      { skill: "foo", ownerSource: "a/one" },
+      { skill: "bar", ownerSource: "b/two" },
+    ]),
+    "Skill already in another source: foo (a/one); bar (b/two)",
+  );
 });
