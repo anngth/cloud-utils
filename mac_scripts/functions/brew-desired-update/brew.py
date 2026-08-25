@@ -92,11 +92,11 @@ def _short_name(name: str) -> str:
     return name[slash + 1:] if slash != -1 else name
 
 
-def load_brew_state(runner: BrewRunner) -> dict:
-    silent = _NoOpUi()
+def load_brew_state(runner: BrewRunner, ui=None) -> dict:
+    log_ui = ui if ui is not None else _NoOpUi()
 
     def run_probe(args: list[str]) -> subprocess.CompletedProcess:
-        return runner.run(args, silent)
+        return runner.run(args, log_ui)
 
     with ThreadPoolExecutor(max_workers=3) as pool:
         formulas_future = pool.submit(run_probe, ["list", "--formula"])

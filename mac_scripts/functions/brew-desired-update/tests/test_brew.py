@@ -208,6 +208,22 @@ class LoadBrewStateTests(unittest.TestCase):
         load_brew_state(TrackingRunner())
         self.assertEqual(max_pending, 3)
 
+    def test_forwards_ui_to_runner_probes(self):
+        seen = []
+
+        class RecordingRunner:
+            def run(self, args, ui):
+                seen.append(ui)
+                return subprocess.CompletedProcess(
+                    args=args, returncode=0, stdout="", stderr=""
+                )
+
+        buf = io.StringIO()
+        ui = Ui(stdout=buf)
+        load_brew_state(RecordingRunner(), ui)
+        self.assertEqual(len(seen), 3)
+        self.assertTrue(all(item is ui for item in seen))
+
 
 class EnsureTapTests(unittest.TestCase):
     def test_runs_trust_when_available_then_tap(self):
