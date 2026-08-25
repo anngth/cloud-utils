@@ -111,6 +111,8 @@ async function applyOneAdd(pkgName, { forceType, document, deps, detect }) {
   const runner = runBrewFn ?? (brewBin ? createBrewRunner({ brewBin, ui }) : null);
   const brewDeps = runner ? { ...deps, runBrew: runner } : deps;
 
+  ui?.step(`Adding ${pkgName}`);
+
   let pkgType = forceType;
   let listName = pkgName;
   let tapForFormula = "";
@@ -176,12 +178,12 @@ async function applyOneAdd(pkgName, { forceType, document, deps, detect }) {
 
   if (tapForFormula) {
     if (addUnique(document.taps, tapForFormula)) {
-      ui?.info(`Added '${tapForFormula}' to taps (now ${document.taps.length})`);
+      ui?.active(`Added '${tapForFormula}' to taps (now ${document.taps.length})`);
     }
   }
 
   document[listKey].push(listName);
-  ui?.info(`Added '${listName}' to ${label}s (now ${document[listKey].length})`);
+  ui?.active(`Added '${listName}' to ${label}s (now ${document[listKey].length})`);
   return true;
 }
 
@@ -231,17 +233,18 @@ export function applyRemove(names, { document, ui }) {
   let failed = 0;
 
   for (const name of names) {
+    ui?.step(`Removing ${name}`);
     if (doc.casks.includes(name)) {
       doc.casks = doc.casks.filter((item) => item !== name);
-      ui?.info(`Removed '${name}' from casks (now ${doc.casks.length})`);
+      ui?.active(`Removed '${name}' from casks (now ${doc.casks.length})`);
       succeeded += 1;
     } else if (doc.formulas.includes(name)) {
       doc.formulas = doc.formulas.filter((item) => item !== name);
-      ui?.info(`Removed '${name}' from formulas (now ${doc.formulas.length})`);
+      ui?.active(`Removed '${name}' from formulas (now ${doc.formulas.length})`);
       succeeded += 1;
     } else if (doc.taps.includes(name)) {
       doc.taps = doc.taps.filter((item) => item !== name);
-      ui?.info(`Removed '${name}' from taps (now ${doc.taps.length})`);
+      ui?.active(`Removed '${name}' from taps (now ${doc.taps.length})`);
       succeeded += 1;
     } else {
       ui?.warn(`'${name}' not found in casks, formulae, or taps list`);

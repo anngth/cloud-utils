@@ -184,27 +184,152 @@ test("applyAdd --formula validates once via brew info", async () => {
   );
 });
 
-test("applyAdd reports list size after add", async () => {
-  const messages = [];
+test("applyAdd reports list size after add via active", async () => {
+  const calls = [];
   const doc = { version: 1, formulas: ["gh"], casks: [], taps: [] };
   await applyAdd(["bat"], {
     forceType: null,
     document: doc,
     deps: {
       detectBrewType: async () => ({ type: "formula" }),
-      ui: { info: (m) => messages.push(m), warn() {}, error() {} },
+      ui: {
+        step: (m) => calls.push(`step:${m}`),
+        active: (m) => calls.push(`active:${m}`),
+        info: (m) => calls.push(`info:${m}`),
+        warn: (m) => calls.push(`warn:${m}`),
+        error() {},
+      },
     },
   });
-  assert.ok(messages.some((m) => m === "Added 'bat' to formulas (now 2)"));
+  assert.deepEqual(calls, [
+    "step:Adding bat",
+    "active:Added 'bat' to formulas (now 2)",
+  ]);
 });
 
-test("applyRemove reports list size after remove", () => {
-  const messages = [];
+test("applyRemove reports list size after remove via active", () => {
+  const calls = [];
   applyRemove(["cursor"], {
     document: { version: 1, formulas: [], casks: ["cursor", "slack"], taps: [] },
-    ui: { info: (m) => messages.push(m), warn() {} },
+    ui: {
+      step: (m) => calls.push(`step:${m}`),
+      active: (m) => calls.push(`active:${m}`),
+      info: (m) => calls.push(`info:${m}`),
+      warn: (m) => calls.push(`warn:${m}`),
+    },
   });
-  assert.ok(messages.some((m) => m === "Removed 'cursor' from casks (now 1)"));
+  assert.deepEqual(calls, [
+    "step:Removing cursor",
+    "active:Removed 'cursor' from casks (now 1)",
+  ]);
+});
+
+test("applyAdd duplicate steps then warns without active", async () => {
+  const calls = [];
+  const { failed } = await applyAdd(["bat"], {
+    forceType: null,
+    document: { version: 1, formulas: ["bat"], casks: [], taps: [] },
+    deps: {
+      detectBrewType: async () => ({ type: "formula" }),
+      ui: {
+        step: (m) => calls.push(`step:${m}`),
+        active: (m) => calls.push(`active:${m}`),
+        warn: (m) => calls.push(`warn:${m}`),
+        info() {},
+      },
+    },
+  });
+  assert.equal(failed, 1);
+  assert.equal(calls[0], "step:Adding bat");
+  assert.ok(calls.some((c) => c.startsWith("warn:")));
+  assert.ok(!calls.some((c) => c.startsWith("active:")));
+});
+
+test("applyAdd tap formula actives tap then formula under one step", async () => {
+  const calls = [];
+  await applyAdd(["atlassian/acli/acli"], {
+    forceType: null,
+    document: { version: 1, formulas: [], casks: [], taps: [] },
+    deps: {
+      detectBrewType: async () => ({ error: "missing" }),
+      ui: {
+        step: (m) => calls.push(`step:${m}`),
+        active: (m) => calls.push(`active:${m}`),
+        warn() {},
+        info: (m) => calls.push(`info:${m}`),
+      },
+    },
+  });
+  assert.equal(calls[0], "step:Adding atlassian/acli/acli");
+  assert.ok(calls.includes("active:Added 'atlassian/acli' to taps (now 1)"));
+  assert.ok(calls.includes("active:Added 'acli' to formulas (now 1)"));
+  assert.ok(!calls.some((c) => c.startsWith("info:")));
+});
+
+test("applyRemove missing name steps then warns without active", () => {
+  const calls = [];
+  const { failed } = applyRemove(["missing"], {
+    document: { version: 1, formulas: [], casks: [], taps: [] },
+    ui: {
+      step: (m) => calls.push(`step:${m}`),
+      active: (m) => calls.push(`active:${m}`),
+      warn: (m) => calls.push(`warn:${m}`),
+    },
+  });
+  assert.equal(failed, 1);
+  assert.deepEqual(calls, [
+    "step:Removing missing",
+    "warn:'missing' not found in casks, formulae, or taps list",
+  ]);
+});
+
+test("applyAdd one step-active pair per name", async () => {
+  const calls = [];
+  await applyAdd(["bat", "gh"], {
+    forceType: null,
+    document: { version: 1, formulas: [], casks: [], taps: [] },
+    deps: {
+      detectBrewType: async () => ({ type: "formula" }),
+      ui: {
+        step: (m) => calls.push(`step:${m}`),
+        active: (m) => calls.push(`active:${m}`),
+        warn() {},
+        info() {},
+      },
+    },
+  });
+  assert.deepEqual(calls, [
+    "step:Adding bat",
+    "active:Added 'bat' to formulas (now 1)",
+    "step:Adding gh",
+    "active:Added 'gh' to formulas (now 2)",
+  ]);
+});
+
+test("applyAdd dual type steps then warns without active", async () => {
+  const calls = [];
+  const { failed } = await applyAdd(["wget"], {
+    forceType: null,
+    document: { version: 1, formulas: [], casks: [], taps: [] },
+    deps: {
+      detectBrewType: async (name, deps) => {
+        deps.ui.warn(`'${name}' exists as both cask and formula`);
+        deps.ui.info(`Use 'bud add --cask ${name}' or 'bud add --formula ${name}'`);
+        return { error: "dual" };
+      },
+      ui: {
+        step: (m) => calls.push(`step:${m}`),
+        active: (m) => calls.push(`active:${m}`),
+        warn: (m) => calls.push(`warn:${m}`),
+        info: (m) => calls.push(`info:${m}`),
+      },
+    },
+  });
+  assert.equal(failed, 1);
+  assert.equal(calls[0], "step:Adding wget");
+  assert.ok(calls.some((c) => c.startsWith("warn:")));
+  assert.ok(calls.some((c) => c.startsWith("info:")));
+  assert.ok(!calls.some((c) => c.startsWith("active:")));
 });
 
 test("runAddCommand supplies default logging runner when runBrew omitted", async () => {
