@@ -1,0 +1,38 @@
+CATALOG = {
+    "homebrew.missing": "Homebrew not found.",
+    "config.dir": "Could not create config directory.",
+    "desired.example.missing": "Example not found: {file}",
+    "desired.invalid": "Invalid desired.json: {file}",
+    "unknown.command": "Unknown command: {token}",
+    "unknown.hint": "Use '-h' or '--help' for usage information",
+    "exclude.invalid": "--exclude is only valid with bare bud (no subcommand)",
+    "list.extra_args": "list does not accept additional arguments",
+    "add.missing_name": "Package name is required for add action",
+    "remove.missing_name": "Package name is required for remove action",
+    "brew.update.failed": "brew update failed",
+    "brew.upgrade.formula.failed": "brew upgrade --formula failed",
+    "brew.tap.repair.failed": "brew tap --repair failed",
+    "brew.upgrade.cask.failed": "brew upgrade --cask failed",
+    "brew.cleanup.failed": "brew cleanup failed",
+    "tap.failed": "Failed to tap {name}",
+    "dual.type": "'{name}' exists as both cask and formula",
+    "dual.hint": "Use 'bud add --cask {name}' or 'bud add --formula {name}'",
+    "not.found.brew": "'{name}' not found in Homebrew",
+    "not.found.brew.hint": "Use 'brew search {name}' to find similar packages",
+    "not.found.type": "'{name}' not found as a Homebrew {type}",
+    "tap.name.invalid": "Tap name must be user/repo (e.g. mongodb/brew)",
+    "already.in.list": "'{name}' already exists in {type}s list",
+    "not.in.list": "'{name}' not found in casks, formulae, or taps list",
+    "desired.bootstrap": "Created desired.json from example → {file}",
+    "added.tap": "Added '{name}' to taps (now {n})",
+    "added.item": "Added '{name}' to {type}s (now {n})",
+    "removed.item": "Removed '{name}' from {type}s (now {n})",
+    "changes.saved": "Changes saved to {file}",
+    "exclude.info": "Excluding {n} cask(s): {names}",
+    "casks.all_excluded": "All eligible casks were excluded; no cask upgrade.",
+    "casks.none_installed": "No casks in list are installed; skipping cask upgrade.",
+}
+
+
+def fmt(key: str, **kwargs: str) -> str:
+    return CATALOG[key].format(**kwargs)
