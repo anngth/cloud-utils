@@ -10,22 +10,19 @@ import { redactSource } from "./source-id.mjs";
 class LifecycleCommandError extends Error {}
 
 function lifecycleUsage(action) {
-  return `Usage: skm ${action} <source|index...> [--all] [(-y | --yes)] [(-f | --force)] [(-d | --dry-run)]`;
+  return `Usage: skm ${action} <source|index...> [--all] [(-y | --yes)] [(-d | --dry-run)]`;
 }
 
 function parseLifecycleOptions(args, { allowAll = false, allowPositionals = true } = {}) {
   const parsed = {
     tokens: [],
     yes: false,
-    force: false,
     dryRun: false,
     all: false,
   };
   const flags = new Map([
     ["-y", "yes"],
     ["--yes", "yes"],
-    ["-f", "force"],
-    ["--force", "force"],
     ["-d", "dryRun"],
     ["--dry-run", "dryRun"],
   ]);
@@ -104,13 +101,18 @@ function desiredConflictMessage(conflicts) {
 }
 
 function selectableInstallItems(plan) {
-  return [...plan.install, ...plan.replace].map((item) => ({
+  return plan.install.map((item) => ({
     kind: "skill",
     key: item.key,
     value: item.key,
     label: item.skill,
     hint: redactSource(item.source),
   }));
+}
+
+function installConflictMessage(conflicts) {
+  const names = [...new Set(conflicts.map((item) => item.skill))];
+  return `Blocked by installed skill conflicts: ${names.join(", ")}`;
 }
 
 function retainedByRemaining(plan, remaining) {
@@ -120,20 +122,6 @@ function retainedByRemaining(plan, remaining) {
     retain: plan.retain.map((item) => byKey.get(item.key) ?? item),
   };
 }
-
-function forcedUninstallNames(plan, installedState) {
-  return plan.remove
-    .filter((requirement) => {
-      const actual = installedState.get(requirement.skill);
-      return actual && (
-        actual.source == null
-        || actual.provenance === "untracked"
-        || actual.source !== requirement.source
-      );
-    })
-    .map((item) => item.skill);
-}
-
 export async function runStatusCommand(args, context) {
   try {
     parseLifecycleOptions(args, { allowPositionals: false });
@@ -141,7 +129,12 @@ export async function runStatusCommand(args, context) {
     const merged = catalogRequirements(context.config.catalog);
     const installed = await context.loadInstalledState({ projectRoot });
     const status = classifyStatus(merged, installed);
-    context.ui.status({ projectRoot, profileNames: [], status });
+    context.ui.status({
+      projectRoot,
+      profileNames: [],
+      catalog: context.config.catalog,
+      status,
+    });
     return statusOk(status) ? 0 : 1;
   } catch (error) {
     return reportError(context, error);
@@ -165,7 +158,7 @@ export async function runAddCommand(args, context, { onOutcome = () => {} } = {}
 
     const installed = await context.loadInstalledState({ projectRoot });
     const status = classifyStatus(selected, installed);
-    let plan = createInstallPlan(status, { force: parsed.force });
+    let plan = createInstallPlan(status);
 
     if (!parsed.yes) {
       const items = selectableInstallItems(plan);
@@ -176,10 +169,13 @@ export async function runAddCommand(args, context, { onOutcome = () => {} } = {}
           return 0;
         }
         plan = createInstallPlan(status, {
-          force: parsed.force,
           selectedKeys: new Set(selection.selected),
         });
       }
+    }
+
+    if (plan.conflicts.length > 0) {
+      throw new LifecycleCommandError(installConflictMessage(plan.conflicts));
     }
 
     context.ui.installPlan({
@@ -231,21 +227,15 @@ export async function runRemoveCommand(args, context) {
       selected,
       remaining,
       installedState,
-      force: parsed.force,
       linkedSelected: [],
     });
     plan = retainedByRemaining(plan, remaining);
 
-    const forcedNames = parsed.force ? forcedUninstallNames(plan, installedState) : [];
-    if (forcedNames.length > 0) {
-      context.ui.warn(`--force will remove mismatched or untracked skills: ${forcedNames.join(", ")}`);
-    }
     context.ui.uninstallPlan({
       projectRoot,
       profileNames: targetSourceLabels(targets),
       plan,
       dryRun: parsed.dryRun,
-      force: parsed.force,
     });
     if (parsed.dryRun) return plan.conflicts.length === 0 ? 0 : 1;
 

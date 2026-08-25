@@ -189,6 +189,7 @@ test("route grammar errors take precedence over missing npx", async () => {
     [["source", "edit"], /Usage: skm source edit/i],
     [["source", "add", "a/repo", "--all", "--no-skills"], /mutually exclusive/i],
     [["add", "--unsupported"], /Unknown option: --unsupported/i],
+    [["add", "-f"], /Unknown option: -f/i],
   ]) {
     const harness = cliHarness({ hasNpx: false });
     assert.equal(await runCli(argv, harness.dependencies), 1);

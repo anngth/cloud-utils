@@ -5,8 +5,6 @@ import {
   runRemoveCommand,
   runStatusCommand,
 } from "../lifecycle-commands.mjs";
-import { executeInstallPlan } from "../operations.mjs";
-
 const SAMPLE_CATALOG = {
   version: 1,
   sources: [
@@ -224,7 +222,7 @@ test("dry-run renders a plan without execution", async () => {
   assert.equal(harness.uiCalls[0][1].dryRun, true);
 });
 
-test("add short flags match yes dry-run and force", async () => {
+test("add short flags match yes and dry-run", async () => {
   const dryRun = catalogHarness({ installed: new Map() });
   assert.equal(await runAddCommand(["--all", "-d"], dryRun.context), 0);
   assert.equal(dryRun.executionCalls, 0);
@@ -235,27 +233,31 @@ test("add short flags match yes dry-run and force", async () => {
   assert.equal(yes.skillSelections, 0);
   assert.equal(yes.confirmations, 0);
   assert.equal(yes.executionCalls, 1);
-
-  const force = catalogHarness({
-    installed: new Map([["skill-a", actualSkill("skill-a", null)]]),
-  });
-  assert.equal(await runAddCommand(["1", "-y", "-f"], force.context), 0);
-  assert.deepEqual(force.capturedPlan.replace.map((item) => item.skill), ["skill-a"]);
 });
 
-test("mismatch and untracked skills remain blocked unless force is explicit", async () => {
+test("add rejects --force as an unknown option", async () => {
+  const harness = catalogHarness();
+  assert.equal(await runAddCommand(["1", "-y", "-f"], harness.context), 1);
+  assert.match(harness.stderr(), /unknown option: -f/i);
+  assert.equal(harness.executionCalls, 0);
+  assert.equal(harness.stateCalls, 0);
+});
+
+test("add mismatch and untracked abort without a plan card or mutation", async () => {
   const mismatch = catalogHarness({
     installed: new Map([["skill-a", actualSkill("skill-a", "wrong/repo")]]),
-    execution: { ok: false, succeeded: [], failed: [] },
   });
   assert.equal(await runAddCommand(["1", "--yes"], mismatch.context), 1);
-  assert.deepEqual(mismatch.capturedPlan.conflicts.map((item) => item.skill), ["skill-a"]);
+  assert.match(mismatch.stderr(), /Blocked by installed skill conflicts: skill-a/);
+  assert.equal(mismatch.uiCalls.some(([name]) => name === "installPlan"), false);
+  assert.equal(mismatch.executionCalls, 0);
 
   const untracked = catalogHarness({
     installed: new Map([["skill-a", actualSkill("skill-a", null)]]),
   });
-  assert.equal(await runAddCommand(["1", "--yes", "--force"], untracked.context), 0);
-  assert.deepEqual(untracked.capturedPlan.replace.map((item) => item.skill), ["skill-a"]);
+  assert.equal(await runAddCommand(["1", "--yes"], untracked.context), 1);
+  assert.match(untracked.stderr(), /Blocked by installed skill conflicts: skill-a/);
+  assert.equal(untracked.executionCalls, 0);
 });
 
 test("temporary selection changes only the operation plan", async () => {
@@ -294,24 +296,19 @@ test("add and remove execute mutations at the canonical project root", async () 
   assert.deepEqual(uninstallOptions, { yes: true, projectRoot: "/repo" });
 });
 
-test("temporary deselection keeps unresolved conflicts", async () => {
-  const upstreamCalls = [];
-  const safeKey = JSON.stringify(["a/one", "skill-a"]);
+test("add aborts when the source still has mismatch conflicts even if the picker drops them", async () => {
   const harness = catalogHarness({
     catalog: {
       version: 1,
       sources: [{ source: "a/one", skills: ["skill-a", "blocked"] }],
     },
-    selectedSkills: [safeKey],
+    selectedSkills: [JSON.stringify(["a/one", "skill-a"])],
     installed: new Map([["blocked", actualSkill("blocked", "wrong/repo")]]),
-    execution: (plan) => executeInstallPlan(plan, {
-      runMutation: async (args) => { upstreamCalls.push(args); return 0; },
-    }),
   });
-
   assert.equal(await runAddCommand(["1"], harness.context), 1);
-  assert.deepEqual(upstreamCalls, [["skills", "add", "a/one", "--skill", "skill-a"]]);
-  assert.deepEqual(harness.capturedPlan.conflicts.map((item) => item.skill), ["blocked"]);
+  assert.match(harness.stderr(), /Blocked by installed skill conflicts: blocked/);
+  assert.equal(harness.uiCalls.some(([name]) => name === "installPlan"), false);
+  assert.equal(harness.executionCalls, 0);
 });
 
 test("remove dry-run renders without confirmation or execution", async () => {
@@ -322,19 +319,15 @@ test("remove dry-run renders without confirmation or execution", async () => {
   assert.equal(harness.uiCalls[0][1].dryRun, true);
 });
 
-test("remove mismatches and untracked skills require force", async () => {
+test("remove uninstalls mismatched and untracked catalog skills", async () => {
   const installed = new Map([
     ["skill-a", actualSkill("skill-a", "wrong/repo")],
     ["skill-b", actualSkill("skill-b", null)],
   ]);
-  const blocked = removeHarness({ installed, executionOk: false });
-  assert.equal(await runRemoveCommand(["1", "--yes"], blocked.context), 1);
-  assert.deepEqual(blocked.capturedPlan.remove, []);
-  assert.deepEqual(blocked.capturedPlan.conflicts.map((item) => item.skill).sort(), ["skill-a", "skill-b"]);
-
-  const forced = removeHarness({ installed });
-  assert.equal(await runRemoveCommand(["1", "--yes", "--force"], forced.context), 0);
-  assert.deepEqual(forced.removedNames.sort(), ["skill-a", "skill-b"]);
+  const harness = removeHarness({ installed });
+  assert.equal(await runRemoveCommand(["1", "--yes"], harness.context), 0);
+  assert.deepEqual(harness.removedNames.sort(), ["skill-a", "skill-b"]);
+  assert.deepEqual(harness.capturedPlan.conflicts, []);
 });
 
 test("unsupported lifecycle short flags fail before discovery", async () => {
