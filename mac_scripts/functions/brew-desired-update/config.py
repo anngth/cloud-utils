@@ -92,8 +92,8 @@ def load_desired(env: dict, brew_taps_fn=None) -> dict:
     try:
         document = _read_json(paths.desired_file)
     except FileNotFoundError:
-        document = None
-    if document is not None:
+        pass
+    else:
         if not _is_valid_desired(document):
             raise ValueError(fmt("desired.invalid", file=paths.desired_file))
         return document
