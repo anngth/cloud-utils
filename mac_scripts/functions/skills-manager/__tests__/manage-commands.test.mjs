@@ -198,3 +198,66 @@ test("source edit --no-skills clears skills without discovery", async (t) => {
   assert.deepEqual(harness.writtenCatalog, catalog({ source: "acme/skills", skills: [] }));
   assert.equal(harness.uiCalls.at(-1)[1].action, "edited");
 });
+
+test("source add --all rejects when any discovered skill is owned elsewhere", async (t) => {
+  const harness = makeManagementHarness(t, {
+    catalog: catalog(
+      { source: "a/one", skills: ["alpha"] },
+      { source: "c/three", skills: ["beta"] },
+    ),
+    discover: [
+      { name: "alpha", description: "A" },
+      { name: "fresh", description: "F" },
+      { name: "beta", description: "B" },
+    ],
+  });
+  assert.equal(await runSourceCommand(["add", "b/two", "--all"], harness.context), 1);
+  assert.match(
+    harness.stderr(),
+    /Skill already in another source: alpha \(a\/one\); beta \(c\/three\)/,
+  );
+  assert.equal(harness.writtenCatalog, undefined);
+  assert.deepEqual(harness.uiCalls, []);
+});
+
+test("source edit rejects skills owned by another source and keeps this source's skills", async (t) => {
+  const clash = makeManagementHarness(t, {
+    catalog: catalog(
+      { source: "a/one", skills: ["alpha"] },
+      { source: "b/two", skills: ["beta"] },
+    ),
+    discover: [
+      { name: "alpha", description: "A" },
+      { name: "beta", description: "B" },
+    ],
+    selected: ["alpha", "beta"],
+  });
+  assert.equal(await runSourceCommand(["edit", "2"], clash.context), 1);
+  assert.match(clash.stderr(), /Skill already in another source: alpha \(a\/one\)/);
+  assert.equal(clash.writtenCatalog, undefined);
+
+  const keep = makeManagementHarness(t, {
+    catalog: catalog({ source: "a/one", skills: ["alpha"] }),
+    discover: [
+      { name: "alpha", description: "A" },
+      { name: "gamma", description: "G" },
+    ],
+    selected: ["alpha", "gamma"],
+  });
+  assert.equal(await runSourceCommand(["edit", "1"], keep.context), 0);
+  assert.deepEqual(keep.writtenCatalog, catalog({
+    source: "a/one",
+    skills: ["alpha", "gamma"],
+  }));
+});
+
+test("source add --no-skills does not uniqueness-fail", async (t) => {
+  const harness = makeManagementHarness(t, {
+    catalog: catalog({ source: "a/one", skills: ["alpha"] }),
+  });
+  assert.equal(await runSourceCommand(["add", "b/two", "--no-skills"], harness.context), 0);
+  assert.deepEqual(harness.writtenCatalog, catalog(
+    { source: "a/one", skills: ["alpha"] },
+    { source: "b/two", skills: [] },
+  ));
+});

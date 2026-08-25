@@ -1,4 +1,10 @@
-import { removeSourceAt, resolveSourceToken, upsertSource } from "./catalog.mjs";
+import {
+  crossSourceSkillConflicts,
+  removeSourceAt,
+  resolveSourceToken,
+  skillOwnershipConflictMessage,
+  upsertSource,
+} from "./catalog.mjs";
 import { canonicalizeSource, redactSource } from "./source-id.mjs";
 
 class CommandUsageError extends Error {}
@@ -172,6 +178,15 @@ async function runSourceAdd(args, context) {
   const selection = await sourceSelection(parsed, source, context);
   if (selection.type !== "submit") return 0;
   const skills = [...new Set(selection.selected)];
+  const conflicts = crossSourceSkillConflicts(
+    context.config.catalog,
+    source,
+    skills,
+    { cwd: context.cwd },
+  );
+  if (conflicts.length > 0) {
+    throw new CommandUsageError(skillOwnershipConflictMessage(conflicts));
+  }
   const next = upsertSource(context.config.catalog, source, skills, { cwd: context.cwd });
   context.writeCatalog(context.paths, next);
   context.ui.sourceChanged({
@@ -198,6 +213,15 @@ async function runSourceEdit(args, context) {
   });
   if (selection.type !== "submit") return 0;
   const skills = [...new Set(selection.selected)];
+  const conflicts = crossSourceSkillConflicts(
+    context.config.catalog,
+    source,
+    skills,
+    { cwd: context.cwd },
+  );
+  if (conflicts.length > 0) {
+    throw new CommandUsageError(skillOwnershipConflictMessage(conflicts));
+  }
   const next = upsertSource(context.config.catalog, source, skills, { cwd: context.cwd });
   context.writeCatalog(context.paths, next);
   context.ui.sourceChanged({
