@@ -1,0 +1,177 @@
+[
+  {
+    "id": "bare-update",
+    "argv": [],
+    "exitCode": 0,
+    "stdoutContains": ["Cleaned up Homebrew", "BREW DESIRED UPDATE"],
+    "stdoutNotContains": ["Usage: bud"]
+  },
+  {
+    "id": "exclude-bare",
+    "argv": ["--exclude", "cursor"],
+    "exitCode": 0,
+    "stdoutContains": ["Excluding 1 cask(s): cursor"],
+    "stdoutNotContains": ["Usage: bud"]
+  },
+  {
+    "id": "exclude-bare-short",
+    "argv": ["-e", "cursor"],
+    "exitCode": 0,
+    "stdoutContains": ["Excluding 1 cask(s): cursor"]
+  },
+  {
+    "id": "exclude-bare-multiple",
+    "argv": ["-e", "cursor", "slack"],
+    "exitCode": 0,
+    "stdoutContains": ["Excluding 2 cask(s):"]
+  },
+  {
+    "id": "exclude-before-list-invalid",
+    "argv": ["-e", "slack", "list"],
+    "exitCode": 1,
+    "stderrContains": ["--exclude is only valid"],
+    "stdoutNotContains": ["Usage: bud", "Desired vs installed"]
+  },
+  {
+    "id": "exclude-long-before-list-invalid",
+    "argv": ["--exclude", "slack", "list"],
+    "exitCode": 1,
+    "stderrContains": ["--exclude is only valid"],
+    "stdoutNotContains": ["Usage: bud"]
+  },
+  {
+    "id": "list-then-exclude-extra-args",
+    "argv": ["list", "-e", "slack"],
+    "exitCode": 1,
+    "stderrContains": ["list does not accept additional arguments"],
+    "stdoutNotContains": ["Usage: bud", "Desired vs installed"]
+  },
+  {
+    "id": "list-then-exclude-long-extra-args",
+    "argv": ["list", "--exclude", "slack"],
+    "exitCode": 1,
+    "stderrContains": ["list does not accept additional arguments"],
+    "stdoutNotContains": ["Usage: bud"]
+  },
+  {
+    "id": "help",
+    "argv": ["help"],
+    "exitCode": 0,
+    "stdoutContains": ["◆ Usage: bud [command]", "bud (help | -h | --help)"]
+  },
+  {
+    "id": "help-short-flag",
+    "argv": ["-h"],
+    "exitCode": 0,
+    "stdoutContains": ["◆ Usage: bud [command]"]
+  },
+  {
+    "id": "help-long-flag",
+    "argv": ["--help"],
+    "exitCode": 0,
+    "stdoutContains": ["◆ Usage: bud [command]"]
+  },
+  {
+    "id": "help-green-banner",
+    "argv": ["help"],
+    "exitCode": 0,
+    "stdoutContains": ["   BREW DESIRED UPDATE "],
+    "rawStdoutContains": ["\u001b[42m", "\u001b[30m"]
+  },
+  {
+    "id": "help-ignores-trailing",
+    "argv": ["help", "extra"],
+    "exitCode": 0,
+    "stdoutContains": ["◆ Usage: bud [command]"]
+  },
+  {
+    "id": "unknown-command-hint",
+    "argv": ["frobnicate"],
+    "exitCode": 1,
+    "stderrContains": [
+      "Unknown command: frobnicate",
+      "Use '-h' or '--help' for usage information"
+    ],
+    "stdoutNotContains": ["Usage: bud"]
+  },
+  {
+    "id": "list-extra-args",
+    "argv": ["list", "extra"],
+    "exitCode": 1,
+    "stderrContains": ["list does not accept additional arguments"],
+    "stdoutNotContains": ["Desired vs installed"]
+  },
+  {
+    "id": "ls-extra-args",
+    "argv": ["ls", "extra"],
+    "exitCode": 1,
+    "stderrContains": ["list does not accept additional arguments"]
+  },
+  {
+    "id": "add-missing-name",
+    "argv": ["add"],
+    "exitCode": 1,
+    "stderrContains": ["Package name is required for add action"],
+    "stdoutNotContains": ["Usage: bud"]
+  },
+  {
+    "id": "remove-missing-name",
+    "argv": ["remove"],
+    "exitCode": 1,
+    "stderrContains": ["Package name is required for remove action"]
+  },
+  {
+    "id": "list",
+    "argv": ["list"],
+    "exitCode": 0,
+    "stdoutContains": ["Desired vs installed", "bat"]
+  },
+  {
+    "id": "ls",
+    "argv": ["ls"],
+    "exitCode": 0,
+    "stdoutContains": ["Desired vs installed"]
+  },
+  {
+    "id": "exclude-before-help-invalid",
+    "argv": ["-e", "slack", "help"],
+    "exitCode": 1,
+    "stderrContains": ["--exclude is only valid"],
+    "stdoutNotContains": ["Usage: bud"]
+  },
+  {
+    "id": "exclude-before-add-invalid",
+    "argv": ["--exclude", "slack", "add", "bat"],
+    "exitCode": 1,
+    "stderrContains": ["--exclude is only valid"]
+  },
+  {
+    "id": "exclude-before-ls-invalid",
+    "argv": ["-e", "slack", "ls"],
+    "exitCode": 1,
+    "stderrContains": ["--exclude is only valid"],
+    "stdoutNotContains": ["Desired vs installed"]
+  },
+  {
+    "id": "homebrew-missing-before-banner",
+    "argv": ["help"],
+    "exitCode": 1,
+    "brewMissing": true,
+    "stderrContains": ["Homebrew not found."],
+    "stdoutNotContains": ["BREW DESIRED UPDATE", "Usage: bud"]
+  },
+  {
+    "id": "invalid-desired-before-banner",
+    "argv": ["help"],
+    "exitCode": 1,
+    "seed": "invalid",
+    "stderrContains": ["Invalid desired.json:"],
+    "stdoutNotContains": ["BREW DESIRED UPDATE"]
+  },
+  {
+    "id": "add-cask-flag-missing-name",
+    "argv": ["add", "--cask"],
+    "exitCode": 1,
+    "stderrContains": ["Package name is required for add action"]
+  }
+]
