@@ -11,7 +11,6 @@ const req = (source, skill) => ({
 
 const plan = (overrides = {}) => ({
   install: [],
-  replace: [],
   conflicts: [],
   skip: [],
   extras: [],
@@ -75,52 +74,23 @@ test("desired-source conflicts block every mutation", async () => {
   assert.deepEqual(result, { ok: false, succeeded: [], failed: [] });
 });
 
-test("removes replacements sequentially and installs only successful removals", async () => {
+test("install executes only plan.install batches", async () => {
   const calls = [];
-  const events = [];
   const result = await executeInstallPlan(plan({
-    install: [req("c/repo", "missing")],
-    replace: [req("a/repo", "blocked"), req("b/repo", "ready")],
+    install: [req("a/repo", "missing")],
+    conflicts: [req("a/repo", "blocked")],
   }), {
-    runMutation: async (args) => {
-      calls.push(args);
-      return args[1] === "remove" && args.includes("blocked") ? 5 : 0;
-    },
-    onEvent: (event) => events.push(event),
+    runMutation: async (args) => { calls.push(args); return 0; },
   });
-  assert.deepEqual(calls, [
-    ["skills", "remove", "blocked", "--yes"],
-    ["skills", "remove", "ready", "--yes"],
-    ["skills", "add", "c/repo", "--skill", "missing"],
-    ["skills", "add", "b/repo", "--skill", "ready"],
-  ]);
+  assert.deepEqual(calls, [["skills", "add", "a/repo", "--skill", "missing"]]);
   assert.equal(result.ok, false);
-  assert.deepEqual(result.failed[0], {
-    action: "replace", source: "a/repo", skills: ["blocked"], status: 5,
-  });
-  assert.equal(events[0].action, "remove-for-replace");
-  assert.equal(events.length, 4);
-});
-
-test("records a removed-old-skill phase when replacement installation fails", async () => {
-  const result = await executeInstallPlan(plan({
-    replace: [req("a/repo", "review")],
-  }), {
-    runMutation: async (args) => args[1] === "remove" ? 0 : 7,
-  });
-  assert.deepEqual(result.replacements, [{
-    source: "a/repo",
-    skill: "review",
-    removeStatus: 0,
-    installStatus: 7,
-  }]);
+  assert.equal(result.replacements, undefined);
 });
 
 test("passes the canonical project root to every install and uninstall mutation", async () => {
   const calls = [];
   await executeInstallPlan(plan({
     install: [req("a/repo", "new")],
-    replace: [req("b/repo", "old")],
   }), {
     projectRoot: "/repo",
     runMutation: async (args, options) => { calls.push([args, options]); return 0; },
@@ -132,9 +102,9 @@ test("passes the canonical project root to every install and uninstall mutation"
     projectRoot: "/repo",
     runMutation: async (args, options) => { calls.push([args, options]); return 0; },
   });
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 2);
   assert.deepEqual(calls.map(([, options]) => options), [
-    { cwd: "/repo" }, { cwd: "/repo" }, { cwd: "/repo" }, { cwd: "/repo" },
+    { cwd: "/repo" }, { cwd: "/repo" },
   ]);
 });
 
