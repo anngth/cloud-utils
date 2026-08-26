@@ -52,6 +52,7 @@ function uiHarness() {
     ends: [],
     items: [],
     titles: [],
+    events: [],
     cancelledCalls: [],
   };
   return {
@@ -64,30 +65,40 @@ function uiHarness() {
       usageLine(message) {
         messages.errors.push(message);
       },
-      status(message) {
+      status(message, { tone = "success" } = {}) {
         messages.statuses.push(message);
+        messages.events.push({ kind: "status", message, tone });
       },
       step(message) {
         messages.statuses.push(message);
+        messages.events.push({ kind: "step", message });
       },
       success(message) {
         messages.statuses.push(message);
+        messages.events.push({ kind: "status", message, tone: "success" });
       },
       title(label) {
         messages.titles.push(label);
+        messages.events.push({ kind: "title", message: label });
       },
-      active() {},
-      item(message) {
-        messages.items.push(message);
+      active(message) {
+        messages.events.push({ kind: "section", message });
       },
-      detail(message) {
+      item(message, { tone = "success", marker } = {}) {
         messages.items.push(message);
+        messages.events.push({ kind: "item", message, tone, marker });
+      },
+      detail(message, { tone = "muted" } = {}) {
+        messages.items.push(message);
+        messages.events.push({ kind: "detail", message, tone });
       },
       warn(message) {
         messages.warnings.push(message);
+        messages.events.push({ kind: "item", message, tone: "warning" });
       },
       listEnd(message = "") {
         messages.ends.push(message);
+        messages.events.push({ kind: "listEnd", message });
       },
       line(message = "") {
         messages.lines.push(message);
@@ -114,6 +125,7 @@ function baseContext(overrides = {}) {
       hasCommand: (name) => name === "git" || name === "glab",
       assertGlabReady: async () => ({ ok: true }),
       ensureBackupGroup: async () => ({ ok: true, created: false }),
+      groupExists: async () => ({ ok: true, exists: true }),
       projectExists: async () => ({ ok: true, exists: false }),
       createPrivateProject: async (_group, name) => {
         created.push(name);
@@ -136,6 +148,27 @@ function baseContext(overrides = {}) {
       ...overrides,
     },
   };
+}
+
+function assertBackupFrameBeforeRepo(events, { dryRun = false } = {}) {
+  const titleIndex = events.findIndex((event) =>
+    event.kind === "title" && event.message === "REPO BACKUP"
+  );
+  const stepIndex = events.findIndex((event) =>
+    event.kind === "step"
+      && event.message === (dryRun ? "Dry run: backup repositories" : "Backup repositories")
+  );
+  const listPathIndex = events.findIndex((event) =>
+    event.kind === "detail" && /backups\.json$/.test(event.message)
+  );
+  const repoIndex = events.findIndex((event) =>
+    event.kind === "section" && event.message.includes(` → ${BACKUP_GROUP}/`)
+  );
+
+  assert.ok(titleIndex >= 0);
+  assert.ok(stepIndex > titleIndex);
+  assert.ok(listPathIndex > stepIndex);
+  assert.ok(repoIndex > listPathIndex);
 }
 
 test("backupOneRepo rejects bad URL", async () => {
@@ -333,12 +366,39 @@ test("backupOneRepo prints concise progress including clone path", async () => {
   const result = await backupOneRepo(SOURCE, context);
 
   assert.equal(result.ok, true);
+  assert.ok(h.messages.events.some((event) =>
+    event.kind === "section"
+      && event.message === `${SOURCE} → ${BACKUP_GROUP}/${BASE_NAME}`
+  ));
   const statuses = h.messages.statuses.join("\n");
-  assert.match(statuses, new RegExp(`${SOURCE} → ${BACKUP_GROUP}/${BASE_NAME}`));
   assert.match(statuses, /Created /);
   assert.match(statuses, /Cloning source to gt-backup-test\/mirror\.git/);
   assert.match(statuses, /Pushing all branches \+ tags → /);
   assert.doesNotMatch(statuses, /Checking backup group|Mirror clone complete|Cleaning up|Backup finished/);
+});
+
+test("backupOneRepo renders branch protection failures as warning progress", async () => {
+  const { h, context } = baseContext({
+    protectBranch: async () => ({ ok: false, error: "protected branch API denied" }),
+    runGit: async (args) => {
+      if (args[0] === "show-ref" && args.includes("refs/heads/main")) {
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "show-ref" && args.includes("refs/heads/develop")) {
+        return { status: 1, stdout: "", stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+
+  const result = await backupOneRepo(SOURCE, context);
+
+  assert.equal(result.ok, true);
+  assert.ok(h.messages.events.some((event) =>
+    event.kind === "status"
+      && event.message === "Could not protect main: protected branch API denied"
+      && event.tone === "warning"
+  ));
 });
 
 test("backupOneRepo updates live existing project", async () => {
@@ -519,6 +579,16 @@ test("runBackupBatch skip updates lastCheckedAt only and exits 0", async () => {
   const code = await runBackupBatch([SOURCE], context);
   assert.equal(code, 0);
   assert.match(h.messages.items.join("\n"), /skip/);
+  assert.ok(h.messages.events.some((event) =>
+    event.kind === "status"
+      && event.message === "Unchanged; skipping mirror"
+      && event.tone === "muted"
+  ));
+  assert.ok(h.messages.events.some((event) =>
+    event.kind === "item"
+      && event.message === `skip  ${SOURCE}`
+      && event.tone === "muted"
+  ));
   const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
   assert.equal(onDisk.repos[0].lastBackupAt, "2020-01-01T00:00:00.000Z");
   assert.equal(onDisk.repos[0].lastCheckedAt, "2026-08-08T12:00:00.000Z");
@@ -596,15 +666,23 @@ test("runBackupBatch continues after a failure and exits 1", async () => {
 
   assert.equal(code, 1);
   assert.deepEqual(created, [BASE_NAME_B]);
-  const statuses = h.messages.statuses.join("\n");
-  assert.match(statuses, /Backup summary/);
   const items = h.messages.items.join("\n");
   assert.match(
     items,
     new RegExp(`ok\\s+${SOURCE_B}\\n→\\s+${projectWebUrl(BACKUP_GROUP, BASE_NAME_B)}`),
   );
   assert.match(items, new RegExp(`fail\\s+${SOURCE}\\n—\\s+project lookup failed`));
-  assert.equal(h.messages.ends.length >= 1, true);
+  assert.ok(h.messages.events.some((event) =>
+    event.kind === "section" && event.message === "Backup summary"
+  ));
+  assert.ok(h.messages.events.some((event) =>
+    event.kind === "item" && event.tone === "failure" && /fail/.test(event.message)
+  ));
+  assert.doesNotMatch(
+    h.messages.events.map(({ message }) => message).join("\n"),
+    /[✅⚠❌]/u,
+  );
+  assert.equal(h.messages.ends.length, 1);
 });
 
 test("runBackupBatch renders failed summary rows in red with the real renderer", async () => {
@@ -634,7 +712,9 @@ test("runBackupBatch returns 0 when all succeed", async () => {
   const code = await runBackupBatch([SOURCE], context);
 
   assert.equal(code, 0);
-  assert.match(h.messages.statuses.join("\n"), /Backup summary/);
+  assert.ok(h.messages.events.some((event) =>
+    event.kind === "section" && event.message === "Backup summary"
+  ));
   assert.match(
     h.messages.items.join("\n"),
     new RegExp(`ok\\s+${SOURCE}\\n→\\s+${projectWebUrl(BACKUP_GROUP, BASE_NAME)}`),
@@ -877,10 +957,11 @@ test("runBackupCommand add then --all backs up listed repos", async () => {
   assert.match(h.messages.items.join("\n"), /gt\/backups\.json/);
   assert.doesNotMatch(h.messages.items.join("\n"), /\/Users\/me\//);
 
+  const beforeAllEvents = h.messages.events.length;
   const allCode = await runBackupCommand(["--all"], context);
   assert.equal(allCode, 0);
   assert.ok(h.messages.titles.includes("REPO BACKUP"));
-  assert.match(h.messages.statuses.join("\n"), /gt\/backups\.json/);
+  assertBackupFrameBeforeRepo(h.messages.events.slice(beforeAllEvents));
   assert.match(
     h.messages.items.join("\n"),
     new RegExp(`ok\\s+${SOURCE}\\n→\\s+${projectWebUrl(BACKUP_GROUP, BASE_NAME)}`),
@@ -910,6 +991,11 @@ test("runBackupCommand remove by index", async () => {
 
   const code = await runBackupCommand(["remove", "1"], context);
   assert.equal(code, 0);
+  assert.deepEqual(h.messages.titles, ["REPO BACKUP"]);
+  assert.ok(h.messages.events.some((event) =>
+    event.kind === "step" && event.message === "Remove repository"
+  ));
+  assert.equal(h.messages.ends.length, 1);
   assert.match(h.messages.statuses.join("\n") + h.messages.lines.join("\n"), new RegExp(SOURCE));
   assert.match(h.messages.items.join("\n"), /gt\/backups\.json/);
   assert.doesNotMatch(h.messages.items.join("\n"), /\/Users\/me\//);
@@ -941,6 +1027,7 @@ test("runBackupCommand interactive mock submit backs up selected", async () => {
 
   const code = await runBackupCommand([], context);
   assert.equal(code, 0);
+  assertBackupFrameBeforeRepo(h.messages.events);
   assert.match(String(capturedListPath), /gt\/backups\.json/);
   assert.match(h.messages.items.join("\n"), new RegExp(SOURCE_B));
   assert.doesNotMatch(h.messages.items.join("\n"), new RegExp(`ok\\s+${SOURCE}\\s+→`));
@@ -958,6 +1045,7 @@ test("runBackupCommand empty select errors No repos selected", async () => {
   const code = await runBackupCommand([], context);
   assert.equal(code, 1);
   assert.match(h.messages.errors.join("\n"), /No repos selected/i);
+  assert.equal(h.messages.titles.length, 0);
 });
 
 test("runBackupCommand cancel exits 1 without backing up", async () => {
@@ -981,6 +1069,7 @@ test("runBackupCommand cancel exits 1 without backing up", async () => {
   const code = await runBackupCommand([], context);
   assert.equal(code, 1);
   assert.deepEqual(created, []);
+  assert.equal(h.messages.titles.length, 0);
   assert.doesNotMatch(h.messages.statuses.join("\n"), /Backup summary/);
   assert.equal(h.messages.items.length, 0);
 });
@@ -1018,6 +1107,11 @@ test("runBackupCommand add multiple valid URLs exits 0", async () => {
   );
 
   assert.equal(code, 0);
+  assert.deepEqual(h.messages.titles, ["REPO BACKUP"]);
+  assert.ok(h.messages.events.some((event) =>
+    event.kind === "step" && event.message === "Add repositories"
+  ));
+  assert.equal(h.messages.ends.length, 1);
   const statuses = h.messages.statuses.join("\n");
   assert.match(statuses, new RegExp(`Added ${SOURCE} at index 1`));
   assert.match(statuses, new RegExp(`Added ${SOURCE_B} at index 2`));
@@ -1294,6 +1388,7 @@ test("runBackupCommand --all --dry-run plans mirror with ok summary", async () =
   });
   const code = await runBackupCommand(["--all", "--dry-run"], context);
   assert.equal(code, 0);
+  assertBackupFrameBeforeRepo(h.messages.events, { dryRun: true });
   const items = h.messages.items.join("\n");
   assert.match(items, /ok/);
   assert.match(items, /would mirror/);
@@ -1317,6 +1412,14 @@ test("runBackupCommand stale with no stale repos prints message and exits 0", as
   const code = await runBackupCommand(["stale"], context);
   assert.equal(code, 0);
   assert.match(h.messages.statuses.join("\n"), /No stale repos/);
+  assert.deepEqual(h.messages.titles, ["REPO BACKUP"]);
+  assert.ok(h.messages.events.some((event) =>
+    event.kind === "step" && event.message === "Backup repositories"
+  ));
+  assert.ok(h.messages.events.some((event) =>
+    event.kind === "detail" && /backups\.json$/.test(event.message)
+  ));
+  assert.equal(h.messages.ends.length, 1);
 });
 
 test("runBackupCommand stale --all backs up only stale URLs in list order", async () => {
@@ -1336,6 +1439,7 @@ test("runBackupCommand stale --all backs up only stale URLs in list order", asyn
   });
   const code = await runBackupCommand(["stale", "--all"], context);
   assert.equal(code, 0);
+  assertBackupFrameBeforeRepo(h.messages.events);
   assert.deepEqual(backedUp, [SOURCE]);
   assert.match(h.messages.items.join("\n"), new RegExp(`ok\\s+${SOURCE}`));
   assert.doesNotMatch(h.messages.items.join("\n"), new RegExp(`ok\\s+${SOURCE_B}`));
@@ -1348,7 +1452,7 @@ test("runBackupCommand stale interactive shows only stale repos", async () => {
     { url: SOURCE_B, lastCheckedAt: RECENT_CHECKED },
   ]);
   let capturedItems;
-  const { context } = baseContext({
+  const { h, context } = baseContext({
     env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
     now: () => FIXED_NOW,
     stdin: { isTTY: true },
@@ -1360,6 +1464,7 @@ test("runBackupCommand stale interactive shows only stale repos", async () => {
     recordLastBackupAt: () => ({ ok: true, document: { version: 4, repos: [] } }),
   });
   await runBackupCommand(["stale"], context);
+  assertBackupFrameBeforeRepo(h.messages.events);
   assert.equal(capturedItems.length, 1);
   assert.equal(capturedItems[0].value, SOURCE);
 });
@@ -1460,6 +1565,7 @@ test("runBackupCommand stale --all --dry-run plans without writes", async () => 
   });
   const code = await runBackupCommand(["stale", "--all", "--dry-run"], context);
   assert.equal(code, 0);
+  assertBackupFrameBeforeRepo(h.messages.events, { dryRun: true });
   assert.match(h.messages.statuses.join("\n"), /Dry run/);
   const onDisk = JSON.parse(readFileSync(paths.backupsFile, "utf8"));
   assert.equal(onDisk.repos[0].lastBackupAt, null);

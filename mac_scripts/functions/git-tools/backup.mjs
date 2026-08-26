@@ -185,7 +185,7 @@ export async function backupOneRepo(sourceUrl, context = {}) {
   const group = BACKUP_GROUP;
   const projectPath = `${group}/${targetName}`;
 
-  ui.step(`${sourceUrl} → ${projectPath}`);
+  ui.active(`${sourceUrl} → ${projectPath}`);
 
   if (dryRun) {
     const groupCheck = await groupExists(group);
@@ -209,11 +209,11 @@ export async function backupOneRepo(sourceUrl, context = {}) {
 
     if (!existsResult.exists) {
       if (existsResult.inactive) {
-        ui.step(`Would recreate inactive backup ${projectPath}`);
+        ui.status(`Would recreate inactive backup ${projectPath}`);
       } else {
-        ui.step(`Would create ${projectPath}`);
+        ui.status(`Would create ${projectPath}`);
       }
-      ui.step("Would mirror");
+      ui.status("Would mirror");
       return {
         ok: true,
         skipped: false,
@@ -223,7 +223,7 @@ export async function backupOneRepo(sourceUrl, context = {}) {
       };
     }
 
-    ui.step(`Would update existing backup ${projectPath}`);
+    ui.status(`Would update existing backup ${projectPath}`);
     const sourceLs = await runGit(["ls-remote", sourceUrl], { cwd, env });
     if (sourceLs.status !== 0) {
       return {
@@ -247,7 +247,7 @@ export async function backupOneRepo(sourceUrl, context = {}) {
     const sourceFp = parseLsRemoteFingerprint(sourceLs.stdout);
     const destFp = parseLsRemoteFingerprint(destLs.stdout);
     if (fingerprintsEqual(sourceFp, destFp)) {
-      ui.step("Would skip (unchanged)");
+      ui.status("Would skip (unchanged)", { tone: "muted" });
       return {
         ok: true,
         skipped: true,
@@ -256,7 +256,7 @@ export async function backupOneRepo(sourceUrl, context = {}) {
         projectPath,
       };
     }
-    ui.step("Would mirror");
+    ui.status("Would mirror");
     return {
       ok: true,
       skipped: false,
@@ -271,7 +271,7 @@ export async function backupOneRepo(sourceUrl, context = {}) {
     return { ok: false, error: groupReady.error || "could not ensure GitLab backup group" };
   }
   if (groupReady.created) {
-    ui.success(`Created group ${group}`);
+    ui.status(`Created group ${group}`);
   }
 
   const existsResult = await projectExists(group, targetName);
@@ -280,16 +280,16 @@ export async function backupOneRepo(sourceUrl, context = {}) {
   }
 
   if (existsResult.exists) {
-    ui.step(`Updating existing backup ${projectPath}`);
+    ui.status(`Updating existing backup ${projectPath}`);
   } else {
     if (existsResult.inactive) {
-      ui.step(`Previous backup pending deletion (inactive); creating ${projectPath}`);
+      ui.status(`Previous backup pending deletion (inactive); creating ${projectPath}`);
     }
     const created = await createPrivateProject(group, targetName);
     if (!created.ok) {
       return { ok: false, error: created.error || "failed to create GitLab project" };
     }
-    ui.success(`Created ${projectPath}`);
+    ui.status(`Created ${projectPath}`);
   }
 
   const destUrl = projectSshUrl(group, targetName);
@@ -318,7 +318,7 @@ export async function backupOneRepo(sourceUrl, context = {}) {
     const sourceFp = parseLsRemoteFingerprint(sourceLs.stdout);
     const destFp = parseLsRemoteFingerprint(destLs.stdout);
     if (fingerprintsEqual(sourceFp, destFp)) {
-      ui.step("Unchanged; skipping mirror");
+      ui.status("Unchanged; skipping mirror", { tone: "muted" });
       return {
         ok: true,
         skipped: true,
@@ -332,7 +332,7 @@ export async function backupOneRepo(sourceUrl, context = {}) {
   const mirrorDir = join(tempRoot, "mirror.git");
 
   try {
-    ui.step(`Cloning source to ${join(basename(tempRoot), "mirror.git")}`);
+    ui.status(`Cloning source to ${join(basename(tempRoot), "mirror.git")}`);
     const cloneResult = await runGit(
       ["clone", "--mirror", sourceUrl, mirrorDir],
       { cwd, env },
@@ -343,9 +343,9 @@ export async function backupOneRepo(sourceUrl, context = {}) {
         error: cloneResult.stderr?.trim() || cloneResult.stdout?.trim() || "git clone --mirror failed",
       };
     }
-    ui.success("Clone complete");
+    ui.status("Clone complete");
 
-    ui.step(`Pushing all branches + tags → ${projectPath}`);
+    ui.status(`Pushing all branches + tags → ${projectPath}`);
     const pushResult = await runGit(
       [
         "push",
@@ -362,17 +362,18 @@ export async function backupOneRepo(sourceUrl, context = {}) {
         error: pushResult.stderr?.trim() || pushResult.stdout?.trim() || "git push failed",
       };
     }
-    ui.success("Pushed all branches + tags");
+    ui.status("Pushed all branches + tags");
 
     const preferred = await pickPreferredDefaultBranch(mirrorDir, { runGit });
     if (preferred) {
       const setDefault = await setDefaultBranch(group, targetName, preferred);
       if (!setDefault.ok) {
-        ui.warn(
+        ui.status(
           `Could not set default branch to ${preferred}: ${setDefault.error || "unknown error"}`,
+          { tone: "warning" },
         );
       } else {
-        ui.success(`Default branch ${preferred}`);
+        ui.status(`Default branch ${preferred}`);
       }
     }
 
@@ -385,11 +386,12 @@ export async function backupOneRepo(sourceUrl, context = {}) {
 
       const protectedResult = await protectBranch(group, targetName, branch);
       if (!protectedResult.ok) {
-        ui.warn(
+        ui.status(
           `Could not protect ${branch}: ${protectedResult.error || "unknown error"}`,
+          { tone: "warning" },
         );
       } else {
-        ui.success(
+        ui.status(
           protectedResult.alreadyProtected
             ? `${branch} already protected`
             : `Protected ${branch}`,
@@ -431,7 +433,7 @@ export async function runBackupBatch(urls, context = {}) {
   const recordOpts = fs ? { fs } : {};
 
   if (dryRun) {
-    ui.step("Dry run (no changes)");
+    ui.status("Dry run (no changes)");
   }
 
   for (const url of urls ?? []) {
@@ -483,7 +485,7 @@ export async function runBackupBatch(urls, context = {}) {
     results.push({ kind: "ok", url, webUrl: result.webUrl });
   }
 
-  ui.step("Backup summary");
+  ui.active("Backup summary");
   for (const r of results) {
     if (r.kind === "ok") {
       ui.item(`ok  ${r.url}`);
@@ -493,7 +495,7 @@ export async function runBackupBatch(urls, context = {}) {
         ui.detail(`→ ${r.webUrl}`);
       }
     } else if (r.kind === "skip") {
-      ui.item(`skip  ${r.url}`);
+      ui.item(`skip  ${r.url}`, { tone: "muted" });
       ui.detail(dryRun ? "→ would skip (unchanged)" : "→ unchanged");
     } else {
       ui.item(`fail  ${r.url}`, { tone: "failure" });
@@ -503,6 +505,12 @@ export async function runBackupBatch(urls, context = {}) {
   ui.listEnd();
 
   return results.some((r) => r.kind === "fail") ? 1 : 0;
+}
+
+function startBackupFrame(ui, listPath, { dryRun = false } = {}) {
+  ui.title("REPO BACKUP");
+  ui.step(dryRun ? "Dry run: backup repositories" : "Backup repositories");
+  ui.detail(listPath);
 }
 
 /**
@@ -568,6 +576,10 @@ export async function runBackupCommand(args = [], context = {}) {
       ui.error(result.error);
       return 1;
     }
+    if (result.added.length > 0) {
+      ui.title("REPO BACKUP");
+      ui.step("Add repositories");
+    }
     if (result.error) {
       ui.error(result.error);
     }
@@ -603,6 +615,8 @@ export async function runBackupCommand(args = [], context = {}) {
       ui.error(result.error);
       return 1;
     }
+    ui.title("REPO BACKUP");
+    ui.step("Remove repository");
     ui.success(`Removed ${result.removed}`);
     ui.item(formatDisplayPath(paths.backupsFile, { home: env.HOME }));
     ui.listEnd();
@@ -671,16 +685,17 @@ export async function runBackupCommand(args = [], context = {}) {
       isStaleRepo(entry, { now: nowDate, days: staleDays }),
     );
 
+    const listPath = formatDisplayPath(paths.backupsFile, { home: env.HOME });
+
     if (staleRepos.length === 0) {
-      ui.success("No stale repos");
+      startBackupFrame(ui, listPath, { dryRun });
+      ui.status("No stale repos");
+      ui.listEnd();
       return 0;
     }
 
-    const listPath = formatDisplayPath(paths.backupsFile, { home: env.HOME });
-
     if (staleAll) {
-      ui.title("REPO BACKUP");
-      ui.step(listPath);
+      startBackupFrame(ui, listPath, { dryRun });
       return runBackupBatch(
         staleRepos.map((entry) => entry.url),
         batchContext,
@@ -736,6 +751,7 @@ export async function runBackupCommand(args = [], context = {}) {
       }
     }
 
+    startBackupFrame(ui, listPath, { dryRun });
     return runBackupBatch(selection.selected, batchContext);
   }
 
@@ -782,8 +798,7 @@ export async function runBackupCommand(args = [], context = {}) {
   const listPath = formatDisplayPath(paths.backupsFile, { home: env.HOME });
 
   if (all) {
-    ui.title("REPO BACKUP");
-    ui.step(listPath);
+    startBackupFrame(ui, listPath, { dryRun });
     return runBackupBatch(
       loaded.repos.map((entry) => entry.url),
       batchContext,
@@ -839,5 +854,6 @@ export async function runBackupCommand(args = [], context = {}) {
     }
   }
 
+  startBackupFrame(ui, listPath, { dryRun });
   return runBackupBatch(selection.selected, batchContext);
 }
