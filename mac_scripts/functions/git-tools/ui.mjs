@@ -22,6 +22,12 @@ const TONE_COLOR = {
   muted: C.gray,
 };
 
+const normalizeTone = (tone) => (
+  Object.hasOwn(TONE_COLOR, tone) ? tone : "muted"
+);
+
+const splitLines = (text) => String(text).split(/\r?\n/);
+
 export function createUi({ stdout = process.stdout, stderr = process.stderr } = {}) {
   const out = (line = "") => stdout.write(`${line}\n`);
   const err = (line) => stderr.write(`${line}\n`);
@@ -47,14 +53,27 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out(`${fg(C.cyan, "◆")}  ${text}`);
   }
 
+  function section(text) {
+    out(pipe);
+    active(text);
+  }
+
   function item(text, { tone = "success", marker } = {}) {
-    const resolvedMarker = marker ?? (tone === "muted" ? "□" : "■");
-    out(`${pipe}  ${fg(TONE_COLOR[tone], resolvedMarker)} ${text}`);
+    const resolvedTone = normalizeTone(tone);
+    const resolvedMarker = marker ?? (resolvedTone === "muted" ? "□" : "■");
+    const [firstLine, ...continuationLines] = splitLines(text);
+    out(`${pipe}  ${fg(TONE_COLOR[resolvedTone], resolvedMarker)} ${firstLine}`);
+    for (const line of continuationLines) {
+      out(`${pipe}      ${fg(C.gray, line)}`);
+    }
   }
 
   /** Indented continuation under an item (no ■). */
   function detail(text, { tone = "muted" } = {}) {
-    out(`${pipe}      ${fg(TONE_COLOR[tone], text)}`);
+    const resolvedTone = normalizeTone(tone);
+    for (const line of splitLines(text)) {
+      out(`${pipe}      ${fg(TONE_COLOR[resolvedTone], line)}`);
+    }
   }
 
   function warn(text) {
@@ -66,10 +85,6 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   }
 
   function usage() {
-    const section = (name) => {
-      out(pipe);
-      active(name);
-    };
     const command = (syntax, description) => {
       out(`${pipe}  ${fg(C.green, syntax)}${description ? `  ${fg(C.gray, description)}` : ""}`);
     };
@@ -127,7 +142,9 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   }
 
   function errorDetail(message) {
-    err(fg(C.gray, `   ${message}`));
+    for (const line of splitLines(message)) {
+      err(fg(C.gray, `   ${line}`));
+    }
   }
 
   function end(message = "") {
@@ -181,6 +198,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     step,
     success,
     active,
+    section,
     item,
     detail,
     warn,

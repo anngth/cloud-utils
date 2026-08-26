@@ -185,7 +185,7 @@ export async function backupOneRepo(sourceUrl, context = {}) {
   const group = BACKUP_GROUP;
   const projectPath = `${group}/${targetName}`;
 
-  ui.active(`${sourceUrl} → ${projectPath}`);
+  ui.section(`${sourceUrl} → ${projectPath}`);
 
   if (dryRun) {
     const groupCheck = await groupExists(group);
@@ -485,7 +485,7 @@ export async function runBackupBatch(urls, context = {}) {
     results.push({ kind: "ok", url, webUrl: result.webUrl });
   }
 
-  ui.active("Backup summary");
+  ui.section("Backup summary");
   for (const r of results) {
     if (r.kind === "ok") {
       ui.item(`ok  ${r.url}`);
@@ -689,7 +689,7 @@ export async function runBackupCommand(args = [], context = {}) {
 
     if (staleRepos.length === 0) {
       startBackupFrame(ui, listPath, { dryRun });
-      ui.status("No stale repos");
+      ui.status("No stale repos", { tone: "muted" });
       ui.listEnd();
       return 0;
     }

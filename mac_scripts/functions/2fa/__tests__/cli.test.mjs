@@ -45,10 +45,11 @@ test("unknown command prints error and full help", async () => {
 
 test("bare 2fa copies totp and prints success", async () => {
   let receivedPrompt = "";
+  const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
   const h = cliHarness({
     readSecret: async (prompt) => {
       receivedPrompt = prompt;
-      return "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+      return secret;
     },
     copyToClipboard: async (text) => {
       h.copied = text;
@@ -60,6 +61,8 @@ test("bare 2fa copies totp and prints success", async () => {
   assert.equal((h.stdout().match(/ 2FA /g) ?? []).length, 1);
   assert.equal(h.copied, "287082");
   assert.match(h.stdout().replace(/\u001b\[[0-9;]*m/g, ""), /Code copied: 287082/);
+  assert.doesNotMatch(h.stdout(), new RegExp(secret));
+  assert.doesNotMatch(h.stderr(), new RegExp(secret));
   assert.equal(h.stderr(), "");
 });
 

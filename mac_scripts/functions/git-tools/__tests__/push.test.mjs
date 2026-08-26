@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runPushCommand } from "../push.mjs";
+import { createUi } from "../ui.mjs";
+
+const stripAnsi = (text) => text.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "");
 
 function uiHarness() {
   const messages = {
@@ -109,6 +112,40 @@ test("prunes stale remote ref, force pushes, and fetches after success", async (
     ["push", "--force-with-lease", "upstream", "HEAD:feature"],
     ["fetch"],
   ]);
+});
+
+test("multiline git output renders every line as a framed detail", async () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (value) => { stdout += value; } },
+    stderr: { write() {} },
+  });
+  const runGit = async (args) => {
+    switch (args.join(" ")) {
+      case "rev-parse --git-dir":
+        return { status: 0, stdout: ".git\n", stderr: "" };
+      case "rev-parse --abbrev-ref HEAD":
+        return { status: 0, stdout: "feature\n", stderr: "" };
+      case "rev-parse --abbrev-ref --symbolic-full-name @{u}":
+        return { status: 1, stdout: "", stderr: "" };
+      case "show-ref --verify --quiet refs/remotes/origin/feature":
+        return { status: 1, stdout: "", stderr: "" };
+      case "push --force-with-lease origin HEAD:feature":
+        return {
+          status: 0,
+          stdout: "remote: preparing\nremote: updating refs\n",
+          stderr: "To github.com:org/app.git\n   abc..def  feature -> feature\n",
+        };
+      default:
+        return { status: 0, stdout: "", stderr: "" };
+    }
+  };
+
+  assert.equal(await runPushCommand([], { cwd: "/repo", runGit, ui }), 0);
+  assert.match(
+    stripAnsi(stdout),
+    /│      remote: preparing\n│      remote: updating refs\n│      To github\.com:org\/app\.git\n│         abc\.\.def  feature -> feature/,
+  );
 });
 
 test("reports push failure with a remotes and permissions tip", async () => {

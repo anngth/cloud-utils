@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runFetchCommand } from "../fetch.mjs";
+import { createUi } from "../ui.mjs";
+
+const stripAnsi = (text) => text.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "");
 
 function uiHarness() {
   const messages = {
@@ -145,6 +148,30 @@ test("on a feature branch: no auto-sync message, still runs cleanup hooks", asyn
   assert.doesNotMatch(
     h.messages.events.map(({ message }) => message).join("\n"),
     /[⬇✅⚠🔄🌱💡ℹ🧹🎯🌿❌]/u,
+  );
+});
+
+test("multiple gone branches remain inside the rendered frame", async () => {
+  const { runGit } = makeGit({
+    "branch -vv": {
+      status: 0,
+      stdout:
+        "* feature-x 5678abc [origin/feature-x] latest\n"
+        + "  old-feature 1234abc [origin/old-feature: gone] stale\n"
+        + "  older-feature 9876def [origin/older-feature: gone] older\n",
+      stderr: "",
+    },
+  });
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (value) => { stdout += value; } },
+    stderr: { write() {} },
+  });
+
+  assert.equal(await runFetchCommand([], { cwd: "/repo", runGit, ui }), 0);
+  assert.match(
+    stripAnsi(stdout),
+    /│  ■ Cleaning gone branches: old-feature\n│      older-feature/,
   );
 });
 

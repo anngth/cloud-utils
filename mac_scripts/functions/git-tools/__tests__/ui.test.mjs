@@ -181,6 +181,34 @@ test("detail indents continuation under an item without a box", () => {
   assert.doesNotMatch(stdout, /■ →/);
 });
 
+test("multiline semantic output keeps every line inside the frame", () => {
+  const h = captureUi();
+
+  h.ui.status("Cleaning gone branches: old-feature\nolder-feature");
+  h.ui.detail("remote: first update\r\nremote: second update");
+  h.ui.errorDetail("fatal: first failure\nfatal: second failure");
+
+  assert.match(
+    stripAnsi(h.stdout),
+    /│  ■ Cleaning gone branches: old-feature\n│      older-feature\n│      remote: first update\n│      remote: second update/,
+  );
+  assert.match(
+    stripAnsi(h.stderr),
+    /^   fatal: first failure\n   fatal: second failure\n$/,
+  );
+});
+
+test("unknown tones fall back to muted output", () => {
+  const h = captureUi();
+
+  h.ui.item("Future item", { tone: "future" });
+  h.ui.detail("Future detail", { tone: "future" });
+
+  assert.doesNotMatch(`${h.stdout}${h.stderr}`, /undefined/);
+  assert.match(h.stdout, /\u001b\[90m□\u001b\[39m Future item/);
+  assert.match(h.stdout, /\u001b\[90mFuture detail\u001b\[39m/);
+});
+
 test("renderBackupSelector shows 1-based numbers with □/■ and hint", () => {
   let stdout = "";
   const ui = createUi({

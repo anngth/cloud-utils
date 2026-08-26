@@ -84,6 +84,9 @@ function uiHarness() {
       active(message) {
         messages.events.push({ kind: "section", message });
       },
+      section(message) {
+        messages.events.push({ kind: "section", message });
+      },
       item(message, { tone = "success", marker } = {}) {
         messages.items.push(message);
         messages.events.push({ kind: "item", message, tone, marker });
@@ -702,6 +705,30 @@ test("runBackupBatch renders failed summary rows in red with the real renderer",
   assert.equal(code, 1);
   assert.match(stdout, /\u001b\[31m■\u001b\[39m fail  git@github\.com:org\/app\.git/);
   assert.match(stdout, /\u001b\[31m— access denied\u001b\[39m/);
+});
+
+test("runBackupBatch separates repository and summary sections with framed blank lines", async () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (value) => { stdout += value; } },
+    stderr: { write() {} },
+  });
+
+  const code = await runBackupBatch([SOURCE, SOURCE_B], {
+    ui,
+    hasCommand: () => true,
+    assertGlabReady: async () => ({ ok: true }),
+    ensureBackupGroup: async () => ({ ok: false, error: "access denied" }),
+    resolveGtPaths: () => ({ backupsFile: "/tmp/backups.json" }),
+  });
+
+  assert.equal(code, 1);
+  const plain = stdout.replace(/\u001b\[[0-9;]*m/g, "");
+  assert.ok(plain.includes(
+    `│\n◆  ${SOURCE} → ${BACKUP_GROUP}/${BASE_NAME}`
+    + `\n│\n◆  ${SOURCE_B} → ${BACKUP_GROUP}/${BASE_NAME_B}`
+    + "\n│\n◆  Backup summary",
+  ));
 });
 
 test("runBackupBatch returns 0 when all succeed", async () => {
@@ -1412,6 +1439,9 @@ test("runBackupCommand stale with no stale repos prints message and exits 0", as
   const code = await runBackupCommand(["stale"], context);
   assert.equal(code, 0);
   assert.match(h.messages.statuses.join("\n"), /No stale repos/);
+  assert.ok(h.messages.events.some((event) =>
+    event.kind === "status" && event.message === "No stale repos" && event.tone === "muted"
+  ));
   assert.deepEqual(h.messages.titles, ["REPO BACKUP"]);
   assert.ok(h.messages.events.some((event) =>
     event.kind === "step" && event.message === "Backup repositories"
@@ -1420,6 +1450,24 @@ test("runBackupCommand stale with no stale repos prints message and exits 0", as
     event.kind === "detail" && /backups\.json$/.test(event.message)
   ));
   assert.equal(h.messages.ends.length, 1);
+});
+
+test("runBackupCommand renders no stale repos as a muted absent item", async () => {
+  const paths = tempPaths();
+  seedRepos(paths, [{ url: SOURCE, lastCheckedAt: RECENT_CHECKED }]);
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (value) => { stdout += value; } },
+    stderr: { write() {} },
+  });
+  const { context } = baseContext({
+    env: { CLOUD_UTILS_CONFIG_DIR: paths.configDir, HOME: "/Users/me" },
+    now: () => FIXED_NOW,
+    ui,
+  });
+
+  assert.equal(await runBackupCommand(["stale"], context), 0);
+  assert.match(stdout, /\u001b\[90m□\u001b\[39m No stale repos/);
 });
 
 test("runBackupCommand stale --all backs up only stale URLs in list order", async () => {
