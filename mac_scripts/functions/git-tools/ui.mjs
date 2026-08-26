@@ -7,13 +7,20 @@ const C = {
   black: "\u001b[30m",
   gray: "\u001b[90m",
   white: "\u001b[97m",
-  bgCyan: "\u001b[46m",
+  bgGreen: "\u001b[42m",
   fgReset: "\u001b[39m",
   bgReset: "\u001b[49m",
   reset: "\u001b[0m",
 };
 
 const fg = (color, text) => `${color}${text}${C.fgReset}`;
+
+const TONE_COLOR = {
+  success: C.green,
+  warning: C.yellow,
+  failure: C.red,
+  muted: C.gray,
+};
 
 export function createUi({ stdout = process.stdout, stderr = process.stderr } = {}) {
   const out = (line = "") => stdout.write(`${line}\n`);
@@ -22,7 +29,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
 
   function title(label = "GT") {
     out();
-    out(`   ${C.bgCyan}${C.black} ${label} ${C.fgReset}${C.bgReset}`);
+    out(`   ${C.bgGreen}${C.black} ${label} ${C.fgReset}${C.bgReset}`);
     out(pipe);
   }
 
@@ -40,17 +47,18 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     out(`${fg(C.cyan, "◆")}  ${text}`);
   }
 
-  function item(text, color = C.green) {
-    out(`${pipe}  ${fg(color, "■")} ${text}`);
+  function item(text, { tone = "success", marker } = {}) {
+    const resolvedMarker = marker ?? (tone === "muted" ? "□" : "■");
+    out(`${pipe}  ${fg(TONE_COLOR[tone], resolvedMarker)} ${text}`);
   }
 
   /** Indented continuation under an item (no ■). */
-  function detail(text, color = C.gray) {
-    out(`${pipe}      ${fg(color, text)}`);
+  function detail(text, { tone = "muted" } = {}) {
+    out(`${pipe}      ${fg(TONE_COLOR[tone], text)}`);
   }
 
   function warn(text) {
-    out(`${pipe}  ${fg(C.yellow, "■")} ${text}`);
+    item(text, { tone: "warning" });
   }
 
   function listEnd(text = "") {
@@ -107,9 +115,23 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     err(fg(C.gray, message));
   }
 
-  /** Progress / status line — same visual language as skm `step`. */
-  function status(message) {
-    step(message);
+  function begin(headline, { label = "GT", section = "Progress" } = {}) {
+    title(label);
+    step(headline);
+    active(section);
+    out(pipe);
+  }
+
+  function status(message, options = {}) {
+    item(message, options);
+  }
+
+  function errorDetail(message) {
+    err(fg(C.gray, `   ${message}`));
+  }
+
+  function end(message = "") {
+    listEnd(message);
   }
 
   function line(message = "") {
@@ -149,8 +171,11 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   return {
     usage,
     error,
+    errorDetail,
     usageLine,
+    begin,
     status,
+    end,
     line,
     title,
     step,

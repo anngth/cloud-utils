@@ -2,6 +2,40 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createUi } from "../ui.mjs";
 
+const stripAnsi = (text) => text.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "");
+
+function captureUi() {
+  let stdout = "";
+  let stderr = "";
+  const ui = createUi({
+    stdout: { write: (value) => { stdout += value; } },
+    stderr: { write: (value) => { stderr += value; } },
+  });
+  return {
+    ui,
+    get stdout() { return stdout; },
+    get stderr() { return stderr; },
+  };
+}
+
+test("all gt badge headers use green background", () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (value) => { stdout += value; } },
+    stderr: { write() {} },
+  });
+
+  ui.usage();
+  ui.renderBackupSelector("Select repos", {
+    items: [{ label: "git@github.com:org/app.git", value: "a" }],
+    cursor: 0,
+    selected: new Set(),
+  });
+
+  assert.match(stdout, /\u001b\[42m/);
+  assert.doesNotMatch(stdout, /\u001b\[46m/);
+});
+
 test("usage matches skm-style sections and signatures", () => {
   let stdout = "";
   const ui = createUi({
@@ -58,18 +92,11 @@ test("usage matches skm-style sections and signatures", () => {
   assert.doesNotMatch(stdout, /Run 'gt --help'/);
 });
 
-test("status uses skm-style step marker instead of --- prefix", () => {
-  let stdout = "";
-  const ui = createUi({
-    stdout: { write: (value) => { stdout += value; } },
-    stderr: { write() {} },
-  });
-
-  ui.status("Checking backup group");
-
-  assert.match(stdout, /◇/);
-  assert.match(stdout, /Checking backup group/);
-  assert.doesNotMatch(stdout, /^--- /m);
+test("status renders a framed success item", () => {
+  const h = captureUi();
+  h.ui.status("Checking backup group");
+  assert.match(stripAnsi(h.stdout), /│  ■ Checking backup group/);
+  assert.doesNotMatch(h.stdout, /^--- /m);
 });
 
 test("error uses skm-style red cross prefix", () => {
@@ -83,6 +110,34 @@ test("error uses skm-style red cross prefix", () => {
 
   assert.match(stderr, /❌/);
   assert.match(stderr, /Backup cancelled/);
+});
+
+test("error detail omits an additional cross", () => {
+  const h = captureUi();
+  h.ui.error("Force push failed");
+  h.ui.errorDetail("permission denied");
+  assert.equal((h.stderr.match(/❌/g) ?? []).length, 1);
+  assert.match(stripAnsi(h.stderr), /permission denied/);
+});
+
+test("semantic frame renders headline, tones, details, and footer", () => {
+  const h = captureUi();
+  h.ui.begin("Fetch and sync repository");
+  h.ui.status("Fetched origin/main");
+  h.ui.status("No upstream configured", { tone: "warning" });
+  h.ui.status("Skipped upstream sync", { tone: "muted" });
+  h.ui.detail("Run: gt fetch --sync-upstream");
+  h.ui.end();
+
+  const plain = stripAnsi(h.stdout);
+  assert.match(plain, /GT/);
+  assert.match(plain, /◇  Fetch and sync repository/);
+  assert.match(plain, /◆  Progress/);
+  assert.match(plain, /■ Fetched origin\/main/);
+  assert.match(plain, /■ No upstream configured/);
+  assert.match(plain, /□ Skipped upstream sync/);
+  assert.match(plain, /│      Run: gt fetch --sync-upstream/);
+  assert.match(plain, /└/);
 });
 
 test("title and listEnd frame output like skm", () => {
