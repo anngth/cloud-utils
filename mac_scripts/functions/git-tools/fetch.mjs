@@ -9,32 +9,33 @@ async function refreshPrimaryRemoteRefs(git, ui) {
     const lsRemote = await git(["ls-remote", "--heads", "origin", branch]);
     if (!lsRemote.stdout.trim()) continue;
 
-    ui.status(`⬇️ Fetching origin/${branch} without checkout...`);
+    ui.status(`Fetching origin/${branch} without checkout`);
     const fetchResult = await git(["fetch", "origin", branch]);
     ui.status(
       fetchResult.status === 0
-        ? `✅ Successfully fetched origin/${branch}`
-        : `⚠️ Failed to fetch origin/${branch}`,
+        ? `Successfully fetched origin/${branch}`
+        : `Failed to fetch origin/${branch}`,
+      fetchResult.status === 0 ? undefined : { tone: "warning" },
     );
   }
 }
 
 async function fetchAndPrune(git, ui) {
-  ui.status("⬇️ Fetching from all remotes...");
+  ui.status("Fetching from all remotes");
   const allResult = await git(["fetch", "--all", "--prune"]);
   if (allResult.status === 0) {
-    ui.status("✅ Fetch & prune successful");
+    ui.status("Fetch & prune successful");
     return true;
   }
 
-  ui.status("⚠️ Failed to fetch from all remotes. Trying origin only...");
+  ui.status("Failed to fetch from all remotes; trying origin only", { tone: "warning" });
   const originResult = await git(["fetch", "origin", "--prune"]);
   if (originResult.status === 0) {
-    ui.status("✅ Fetch origin successful");
+    ui.status("Fetch origin successful");
     return true;
   }
 
-  ui.error("❌ Failed to fetch");
+  ui.error("Failed to fetch");
   return false;
 }
 
@@ -45,12 +46,13 @@ async function syncLocalBranchWithOriginFF(git, ui, branch, currentBranch) {
 
   const localRefResult = await git(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
   if (localRefResult.status !== 0) {
-    ui.status(`🌱 Creating local '${branch}' from origin/${branch}...`);
+    ui.status(`Creating local '${branch}' from origin/${branch}`);
     const createResult = await git(["branch", branch, `origin/${branch}`]);
     ui.status(
       createResult.status === 0
-        ? `✅ Created local '${branch}'`
-        : `⚠️ Failed to create local '${branch}'`,
+        ? `Created local '${branch}'`
+        : `Failed to create local '${branch}'`,
+      createResult.status === 0 ? undefined : { tone: "warning" },
     );
     return;
   }
@@ -63,34 +65,35 @@ async function syncLocalBranchWithOriginFF(git, ui, branch, currentBranch) {
 
   const isAncestorResult = await git(["merge-base", "--is-ancestor", branch, `origin/${branch}`]);
   if (isAncestorResult.status === 0) {
-    ui.status(`🔄 Fast-forwarding local '${branch}' to origin/${branch}...`);
+    ui.status(`Fast-forwarding local '${branch}' to origin/${branch}`);
     const updateResult = await git(["update-ref", `refs/heads/${branch}`, remoteSha, localSha]);
     ui.status(
       updateResult.status === 0
-        ? `✅ Updated local '${branch}' to origin/${branch}`
-        : `⚠️ Failed to update local '${branch}'`,
+        ? `Updated local '${branch}' to origin/${branch}`
+        : `Failed to update local '${branch}'`,
+      updateResult.status === 0 ? undefined : { tone: "warning" },
     );
   } else {
-    ui.status(`⚠️ Local '${branch}' has local-only commits; skipping auto-sync`);
-    ui.status(`💡 Run: git switch ${branch} && git pull --ff-only origin ${branch}`);
+    ui.status(`Local '${branch}' has local-only commits; skipping auto-sync`, { tone: "warning" });
+    ui.detail(`Run: git switch ${branch} && git pull --ff-only origin ${branch}`);
   }
 }
 
 async function syncWithOrigin(git, ui, branch) {
   const remoteRefResult = await git(["show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`]);
   if (remoteRefResult.status !== 0) {
-    ui.status(`ℹ️ origin/${branch} not found - skipping sync`);
+    ui.status(`origin/${branch} not found; skipping sync`, { tone: "muted" });
     return true;
   }
 
-  ui.status(`🔄 Syncing ${branch} branch...`);
+  ui.status(`Syncing ${branch} branch`);
   const pullResult = await git(["pull", "--ff-only", "origin", branch]);
   if (pullResult.status === 0) {
-    ui.status(`✅ Pulled from origin/${branch}`);
+    ui.status(`Pulled from origin/${branch}`);
     return true;
   }
 
-  ui.error("❌ Pull failed (non fast-forward or uncommitted changes)");
+  ui.error("Pull failed (non fast-forward or uncommitted changes)");
   return false;
 }
 
@@ -108,26 +111,27 @@ async function syncWithUpstream(git, ui) {
   const dirtyResult = await git(["diff", "--quiet"]);
   const dirtyCachedResult = await git(["diff", "--cached", "--quiet"]);
   if (dirtyResult.status !== 0 || dirtyCachedResult.status !== 0) {
-    ui.status("⚠️ You have uncommitted changes. Skipping upstream merge.");
-    ui.status("💡 Commit or stash your changes, then run 'gt fetch' again to merge upstream");
+    ui.status("You have uncommitted changes; skipping upstream merge", { tone: "warning" });
+    ui.detail("Commit or stash your changes, then run 'gt fetch' again to merge upstream");
     return;
   }
 
-  ui.status("🔄 Merging upstream/main into main...");
+  ui.status("Merging upstream/main into main");
   const mergeResult = await git(["merge", "upstream/main", "--no-edit"]);
   if (mergeResult.status !== 0) {
-    ui.error("❌ Merge failed - there might be conflicts");
-    ui.error("💡 Resolve conflicts manually, then run 'git add .' and 'git commit'");
+    ui.error("Merge failed; there might be conflicts");
+    ui.errorDetail("Resolve conflicts manually, then run 'git add .' and 'git commit'");
     return;
   }
 
-  ui.status("✅ Merged upstream changes successfully");
-  ui.status("🔄 Pushing updated main to origin...");
+  ui.status("Merged upstream changes successfully");
+  ui.status("Pushing updated main to origin");
   const pushResult = await git(["push", "origin", "main"]);
   ui.status(
     pushResult.status === 0
-      ? "✅ Pushed updated main to origin"
-      : "⚠️ Failed to push to origin, but local merge was successful",
+      ? "Pushed updated main to origin"
+      : "Failed to push to origin, but local merge was successful",
+    pushResult.status === 0 ? undefined : { tone: "warning" },
   );
 }
 
@@ -141,13 +145,14 @@ async function cleanupGoneBranches(git, ui) {
 
   if (goneBranches.length === 0) return;
 
-  ui.status(`🧹 Cleaning gone branches: ${goneBranches.join("\n")}`);
+  ui.status(`Cleaning gone branches: ${goneBranches.join("\n")}`);
   for (const branch of goneBranches) {
     const deleteResult = await git(["branch", "-d", branch]);
     ui.status(
       deleteResult.status === 0
-        ? `✅ Deleted: ${branch}`
-        : `⚠️ Skipped (not merged): ${branch}`,
+        ? `Deleted: ${branch}`
+        : `Skipped (not merged): ${branch}`,
+      deleteResult.status === 0 ? undefined : { tone: "warning" },
     );
   }
 }
@@ -178,7 +183,7 @@ async function cleanupMergedBranches(git, ui, baseBranch, currentBranch) {
 
   if (branches.length === 0) return;
 
-  ui.status(`🧹 Cleaning merged branches (base: ${baseBranch})...`);
+  ui.status(`Cleaning merged branches (base: ${baseBranch})`);
   let cleanedAny = false;
   for (const branch of branches) {
     if (branch === currentBranch) continue;
@@ -188,13 +193,13 @@ async function cleanupMergedBranches(git, ui, baseBranch, currentBranch) {
 
     const deleteResult = await git(["branch", "-d", branch]);
     if (deleteResult.status === 0) {
-      ui.status(`✅ Deleted merged branch: ${branch}`);
+      ui.status(`Deleted merged branch: ${branch}`);
       cleanedAny = true;
     }
   }
 
   if (!cleanedAny) {
-    ui.status("ℹ️ No merged local branches to clean");
+    ui.status("No merged local branches to clean", { tone: "muted" });
   }
 }
 
@@ -210,7 +215,7 @@ function parseArgs(args, ui) {
       ui.line("  --sync-upstream  Merge upstream/main into local main and push origin/main (main only)");
       return { help: true };
     }
-    ui.error(`❌ Unknown option for fetch: ${arg}`);
+    ui.error(`Unknown option for fetch: ${arg}`);
     ui.usageLine(FETCH_USAGE);
     return { error: true };
   }
@@ -232,11 +237,11 @@ export async function runFetchCommand(args, context = {}) {
 
   const repoResult = await git(["rev-parse", "--git-dir"]);
   if (repoResult.status !== 0) {
-    ui.error("❌ Error: Not in a git repository");
+    ui.error("Error: Not in a git repository");
     return 1;
   }
 
-  ui.status("⬇️ Fetching and syncing repository");
+  ui.begin("Fetch and sync repository");
 
   await refreshPrimaryRemoteRefs(git, ui);
 
@@ -259,16 +264,17 @@ export async function runFetchCommand(args, context = {}) {
       if (parsed.syncUpstream) {
         await syncWithUpstream(git, ui);
       } else {
-        ui.status("ℹ️ Skipping upstream sync (use 'gt fetch --sync-upstream' to enable)");
+        ui.status("Skipping upstream sync (use 'gt fetch --sync-upstream' to enable)", { tone: "muted" });
       }
     }
   } else {
-    ui.status(`ℹ️ On branch '${currentBranch}' - no auto-sync performed`);
+    ui.status(`On branch '${currentBranch}'; no auto-sync performed`, { tone: "muted" });
   }
 
   await cleanupGoneBranches(git, ui);
   const cleanupBaseBranch = await getCleanupBaseBranch(git, currentBranch);
   await cleanupMergedBranches(git, ui, cleanupBaseBranch, currentBranch);
 
+  ui.end();
   return 0;
 }

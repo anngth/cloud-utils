@@ -3,12 +3,28 @@ import test from "node:test";
 import { runFetchCommand } from "../fetch.mjs";
 
 function uiHarness() {
-  const messages = { errors: [], statuses: [], lines: [] };
+  const messages = {
+    errors: [],
+    errorDetails: [],
+    statuses: [],
+    frames: [],
+    events: [],
+    lines: [],
+  };
   return {
     messages,
     ui: {
+      begin(message) { messages.frames.push({ kind: "begin", message }); },
+      end() { messages.frames.push({ kind: "end" }); },
       error(message) { messages.errors.push(message); },
-      status(message) { messages.statuses.push(message); },
+      errorDetail(message) { messages.errorDetails.push(message); },
+      status(message, { tone = "success" } = {}) {
+        messages.statuses.push(message);
+        messages.events.push({ kind: "status", message, tone });
+      },
+      detail(message, { tone = "muted" } = {}) {
+        messages.events.push({ kind: "detail", message, tone });
+      },
       usage() {},
       usageLine(message) { messages.errors.push(message); },
       line(message = "") { messages.lines.push(message); },
@@ -125,6 +141,11 @@ test("on a feature branch: no auto-sync message, still runs cleanup hooks", asyn
   assert.ok(calls.some((c) => c.join(" ") === "branch -d merged-thing"));
   assert.match(h.messages.statuses.join("\n"), /Deleted: old-feature/);
   assert.match(h.messages.statuses.join("\n"), /Deleted merged branch: merged-thing/);
+  assert.deepEqual(h.messages.frames.map(({ kind }) => kind), ["begin", "end"]);
+  assert.doesNotMatch(
+    h.messages.events.map(({ message }) => message).join("\n"),
+    /[⬇✅⚠🔄🌱💡ℹ🧹🎯🌿❌]/u,
+  );
 });
 
 test("--sync-upstream on main merges upstream/main and pushes origin", async () => {
@@ -194,7 +215,8 @@ test("fetch failure on both --all and origin returns 1 and stops before cleanup"
   const code = await runFetchCommand([], { cwd: "/repo", runGit, ui: h.ui });
 
   assert.equal(code, 1);
-  assert.match(h.messages.errors.join("\n"), /Failed to fetch/i);
+  assert.ok(h.messages.errors.includes("Failed to fetch"));
+  assert.doesNotMatch(h.messages.errors.join("\n"), /❌/u);
   assert.ok(!calls.some((c) => c.join(" ") === "branch -vv"));
 });
 

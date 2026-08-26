@@ -3,12 +3,27 @@ import test from "node:test";
 import { runPushCommand } from "../push.mjs";
 
 function uiHarness() {
-  const messages = { errors: [], statuses: [] };
+  const messages = {
+    errors: [],
+    errorDetails: [],
+    statuses: [],
+    frames: [],
+    events: [],
+  };
   return {
     messages,
     ui: {
+      begin(message) { messages.frames.push({ kind: "begin", message }); },
+      end() { messages.frames.push({ kind: "end" }); },
       error(message) { messages.errors.push(message); },
-      status(message) { messages.statuses.push(message); },
+      errorDetail(message) { messages.errorDetails.push(message); },
+      status(message, { tone = "success" } = {}) {
+        messages.statuses.push(message);
+        messages.events.push({ kind: "status", message, tone });
+      },
+      detail(message, { tone = "muted" } = {}) {
+        messages.events.push({ kind: "detail", message, tone });
+      },
       usage() {},
       usageLine(message) { messages.errors.push(message); },
     },
@@ -76,7 +91,14 @@ test("prunes stale remote ref, force pushes, and fetches after success", async (
   const code = await runPushCommand([], { cwd: "/repo", runGit, ui: h.ui });
 
   assert.equal(code, 0);
-  assert.match(h.messages.statuses.join("\n"), /To origin\n \* \[new branch\] HEAD -> feature/);
+  assert.ok(h.messages.events.some((event) =>
+    event.kind === "detail" && /To origin\n \* \[new branch\] HEAD -> feature/.test(event.message)
+  ));
+  assert.deepEqual(h.messages.frames.map(({ kind }) => kind), ["begin", "end"]);
+  assert.doesNotMatch(
+    h.messages.events.map(({ message }) => message).join("\n"),
+    /[⬇✅⚠🔄🌱💡ℹ🧹🎯🌿❌]/u,
+  );
   assert.deepEqual(calls, [
     ["rev-parse", "--git-dir"],
     ["rev-parse", "--abbrev-ref", "HEAD"],
@@ -104,5 +126,11 @@ test("reports push failure with a remotes and permissions tip", async () => {
   const code = await runPushCommand([], { cwd: "/repo", runGit, ui: h.ui });
 
   assert.equal(code, 1);
-  assert.match(h.messages.errors.join("\n"), /remotes|permission/i);
+  assert.ok(h.messages.errors.includes("Force push failed"));
+  assert.ok(h.messages.errorDetails.some((message) => /permission denied/i.test(message)));
+  assert.ok(h.messages.errorDetails.some((message) => /git remote -v/i.test(message)));
+  assert.doesNotMatch(h.messages.errors.join("\n"), /❌|💡/u);
+  assert.ok(h.messages.events.some((event) =>
+    event.tone === "warning" && /No upstream tracking branch/i.test(event.message)
+  ));
 });
