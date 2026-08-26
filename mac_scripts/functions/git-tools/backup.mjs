@@ -38,7 +38,6 @@ import { parseSshGitUrl } from "./ssh-url.mjs";
 import { isStaleRepo } from "./stale.mjs";
 import { createUi } from "./ui.mjs";
 
-const RED = "\u001b[31m";
 const ADD_HINT = "Use `gt backup add <ssh-url>` to add a repo first.";
 const FORCE_ONLY_HINT =
   "The --force flag is only valid for interactive backup, gt backup --all, and gt backup stale";
@@ -497,8 +496,8 @@ export async function runBackupBatch(urls, context = {}) {
       ui.item(`skip  ${r.url}`);
       ui.detail(dryRun ? "→ would skip (unchanged)" : "→ unchanged");
     } else {
-      ui.item(`fail  ${r.url}`, RED);
-      ui.detail(`— ${r.error}`, RED);
+      ui.item(`fail  ${r.url}`, { tone: "failure" });
+      ui.detail(`— ${r.error}`, { tone: "failure" });
     }
   }
   ui.listEnd();

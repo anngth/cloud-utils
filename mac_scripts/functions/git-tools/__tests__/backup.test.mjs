@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { backupOneRepo, runBackupBatch, runBackupCommand } from "../backup.mjs";
 import { resolveGtPaths } from "../config.mjs";
 import { BACKUP_GROUP, projectSshUrl, projectWebUrl } from "../gitlab.mjs";
+import { createUi } from "../ui.mjs";
 
 const SOURCE = "git@github.com:org/app.git";
 const SOURCE_B = "git@github.com:org/other.git";
@@ -604,6 +605,25 @@ test("runBackupBatch continues after a failure and exits 1", async () => {
   );
   assert.match(items, new RegExp(`fail\\s+${SOURCE}\\n—\\s+project lookup failed`));
   assert.equal(h.messages.ends.length >= 1, true);
+});
+
+test("runBackupBatch renders failed summary rows in red with the real renderer", async () => {
+  let stdout = "";
+  const ui = createUi({
+    stdout: { write: (value) => { stdout += value; } },
+    stderr: { write() {} },
+  });
+  const code = await runBackupBatch([SOURCE], {
+    ui,
+    hasCommand: () => true,
+    assertGlabReady: async () => ({ ok: true }),
+    ensureBackupGroup: async () => ({ ok: false, error: "access denied" }),
+    resolveGtPaths: () => ({ backupsFile: "/tmp/backups.json" }),
+  });
+
+  assert.equal(code, 1);
+  assert.match(stdout, /\u001b\[31m■\u001b\[39m fail  git@github\.com:org\/app\.git/);
+  assert.match(stdout, /\u001b\[31m— access denied\u001b\[39m/);
 });
 
 test("runBackupBatch returns 0 when all succeed", async () => {

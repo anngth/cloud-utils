@@ -127,6 +127,8 @@ test("semantic frame renders headline, tones, details, and footer", () => {
   h.ui.status("No upstream configured", { tone: "warning" });
   h.ui.status("Skipped upstream sync", { tone: "muted" });
   h.ui.detail("Run: gt fetch --sync-upstream");
+  h.ui.status("Push rejected", { tone: "failure" });
+  h.ui.detail("permission denied", { tone: "failure" });
   h.ui.end();
 
   const plain = stripAnsi(h.stdout);
@@ -137,7 +139,14 @@ test("semantic frame renders headline, tones, details, and footer", () => {
   assert.match(plain, /■ No upstream configured/);
   assert.match(plain, /□ Skipped upstream sync/);
   assert.match(plain, /│      Run: gt fetch --sync-upstream/);
+  assert.match(plain, /■ Push rejected/);
+  assert.match(plain, /│      permission denied/);
   assert.match(plain, /└/);
+  assert.match(h.stdout, /\u001b\[33m■\u001b\[39m No upstream configured/);
+  assert.match(h.stdout, /\u001b\[90m□\u001b\[39m Skipped upstream sync/);
+  assert.match(h.stdout, /\u001b\[90mRun: gt fetch --sync-upstream\u001b\[39m/);
+  assert.match(h.stdout, /\u001b\[31m■\u001b\[39m Push rejected/);
+  assert.match(h.stdout, /\u001b\[31mpermission denied\u001b\[39m/);
 });
 
 test("title and listEnd frame output like skm", () => {
