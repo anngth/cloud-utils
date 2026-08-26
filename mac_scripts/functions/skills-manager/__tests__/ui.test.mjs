@@ -570,7 +570,8 @@ test("selector keeps ANSI output and renders selected items", () => {
     cursor: 1,
     selected: new Set([0]),
   }, { mode: "install" });
-  assert.match(stdout.read(), /\u001b\[46m/);
+  assert.match(stdout.read(), /\u001b\[42m/);
+  assert.doesNotMatch(stdout.read(), /\u001b\[46m/);
   assert.match(stdout.read(), /■.*Frontend/);
   assert.match(stdout.read(), /□.*Review/);
 });
@@ -685,6 +686,8 @@ test("renderCatalogSelector uses layout C spacing and shared colors", () => {
   assert.doesNotMatch(plain, /code-review\n│\n│\s+■ frontend-design/);
   assert.match(plain, /frontend-design design flows\n│\n│\s+2\s+□\s+anthropics\/skills/);
   assert.match(stdout, /\u001b\[92m/);
+  assert.match(stdout, /\u001b\[42m/);
+  assert.doesNotMatch(stdout, /\u001b\[46m/);
   assert.match(stdout, new RegExp(`${SELECTOR_DESCRIPTION_COLOR.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}design flows`));
 });
 

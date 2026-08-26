@@ -11,7 +11,7 @@ const C = {
   brightGreen: "\u001b[92m",
   white: "\u001b[97m",
   dim: "\u001b[2m",
-  bgCyan: "\u001b[46m",
+  bgGreen: "\u001b[42m",
   fgReset: "\u001b[39m",
   bgReset: "\u001b[49m",
   reset: "\u001b[0m",
@@ -99,7 +99,7 @@ export function renderCatalogSelector(stdout, heading, state, { cancelled = fals
   const pipe = fg(C.cyan, "│");
   stdout.write("\u001b[2J\u001b[H");
   out();
-  out(`   ${C.bgCyan}${C.black} SKILLS MANAGER ${C.fgReset}${C.bgReset}`);
+  out(`   ${C.bgGreen}${C.black} SKILLS MANAGER ${C.fgReset}${C.bgReset}`);
   out(pipe);
   out(`${fg(C.green, "◇")}  ${String(heading)}`);
   out(pipe);
@@ -134,7 +134,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   const pipe = fg(C.cyan, "│");
   const title = () => {
     out();
-    out(`   ${C.bgCyan}${C.black} SKILLS MANAGER ${C.fgReset}${C.bgReset}`);
+    out(`   ${C.bgGreen}${C.black} SKILLS MANAGER ${C.fgReset}${C.bgReset}`);
     out(pipe);
   };
   const step = (text) => {
