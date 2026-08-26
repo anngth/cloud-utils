@@ -36,11 +36,23 @@ test("error writes red cross to stderr", () => {
   assert.match(h.stderr, /interactive terminal required/);
 });
 
-test("successCopied frames Code copied", () => {
+test("2fa badge uses green background", () => {
   const h = captureUi();
+  h.ui.usage();
+  assert.match(h.stdout, /\u001b\[42m/);
+  assert.doesNotMatch(h.stdout, /\u001b\[46m/);
+});
+
+test("interactive flow exposes a framed hidden-input prompt", () => {
+  const h = captureUi();
+  h.ui.beginTotp();
+  const prompt = h.ui.secretPrompt();
   h.ui.successCopied("123456");
-  const text = h.stdout.replace(/\u001b\[[0-9;]*m/g, "");
-  assert.match(text, /2FA/);
-  assert.match(text, /Code copied: 123456/);
-  assert.match(text, /◇|└/);
+
+  const plain = h.stdout.replace(/\u001b\[[0-9;]*m/g, "");
+  assert.equal((plain.match(/2FA/g) ?? []).length, 1);
+  assert.match(prompt.replace(/\u001b\[[0-9;]*m/g, ""), /^◆  Base32 secret: $/);
+  assert.match(plain, /◇  Generate TOTP/);
+  assert.match(plain, /◇  Code copied: 123456/);
+  assert.match(plain, /└/);
 });

@@ -71,16 +71,21 @@ export async function runCli(argv, dependencies = {}) {
     return 1;
   }
 
+  let frameOpen = false;
   try {
+    ui.beginTotp();
+    frameOpen = true;
     const readSecret = dependencies.readSecret ?? defaultReadSecret;
     const copy = dependencies.copyToClipboard ?? copyToClipboard;
     const now = dependencies.now;
-    const secret = await readSecret("Base32 secret: ", dependencies);
+    const secret = await readSecret(ui.secretPrompt(), dependencies);
     const otp = generateTotp(secret, now !== undefined ? { now } : {});
     await copy(otp, dependencies);
     ui.successCopied(otp);
+    frameOpen = false;
     return 0;
   } catch (err) {
+    if (frameOpen) ui.listEnd();
     ui.error(err?.message ?? String(err));
     return 1;
   }

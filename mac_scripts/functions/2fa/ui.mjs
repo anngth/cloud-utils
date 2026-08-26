@@ -7,7 +7,7 @@ const C = {
   black: "\u001b[30m",
   gray: "\u001b[90m",
   white: "\u001b[97m",
-  bgCyan: "\u001b[46m",
+  bgGreen: "\u001b[42m",
   fgReset: "\u001b[39m",
   bgReset: "\u001b[49m",
   reset: "\u001b[0m",
@@ -22,7 +22,7 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
 
   function title(label = "2FA") {
     out();
-    out(`   ${C.bgCyan}${C.black} ${label} ${C.fgReset}${C.bgReset}`);
+    out(`   ${C.bgGreen}${C.black} ${label} ${C.fgReset}${C.bgReset}`);
     out(pipe);
   }
 
@@ -80,8 +80,17 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
     err(fg(C.red, `❌ ${message}`));
   }
 
-  function successCopied(otp) {
+  function beginTotp() {
     title("2FA");
+    step("Generate TOTP");
+  }
+
+  function secretPrompt() {
+    return `${fg(C.cyan, "◆")}  Base32 secret: `;
+  }
+
+  function successCopied(otp) {
+    out(pipe);
     step(`Code copied: ${otp}`);
     listEnd();
   }
@@ -89,6 +98,8 @@ export function createUi({ stdout = process.stdout, stderr = process.stderr } = 
   return {
     usage,
     error,
+    beginTotp,
+    secretPrompt,
     successCopied,
     title,
     step,
