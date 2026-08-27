@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -46,6 +47,33 @@ def read_repos(paths: GtPaths) -> list[dict[str, object]]:
     return json.loads(paths.backups_file.read_text(encoding="utf-8"))["repos"]
 
 
+def node_rewrite_bytes(document: dict[str, object], operation: str) -> bytes:
+    script = """
+const fs = require('node:fs');
+const document = JSON.parse(fs.readFileSync(0, 'utf8'));
+if (process.argv[1] === 'checked') {
+  document.repos[0] = {
+    ...document.repos[0],
+    lastCheckedAt: '2026-08-08T12:00:00.000Z',
+  };
+} else {
+  document.repos = document.repos.map((repo, index) => ({
+    ...repo,
+    selectedLast: index === 0,
+  }));
+}
+process.stdout.write(`${JSON.stringify(document, null, 2)}\n`);
+"""
+    result = subprocess.run(
+        ["node", "-e", script, operation],
+        input=json.dumps(document),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return result.stdout.encode()
+
+
 def test_add_migrates_v1_and_uses_v4_defaults(tmp_path: Path) -> None:
     paths = paths_for(tmp_path)
     seed(paths, {"version": 1, "repos": [URL_C]})
@@ -87,7 +115,9 @@ def test_add_rejects_invalid_url_without_creating_file(tmp_path: Path) -> None:
     assert paths.backups_file.exists() is False
 
 
-def test_multi_add_writes_once_and_preserves_input_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_multi_add_writes_once_and_preserves_input_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     paths = paths_for(tmp_path)
     import git_tools.backup_list as backup_list
 
@@ -300,6 +330,35 @@ def test_checked_timestamp_updates_only_checked_value(tmp_path: Path) -> None:
     assert result.document.repos[0].last_checked_at == "2026-08-08T12:00:00.000Z"
 
 
+def test_metadata_update_preserves_nested_extensions_and_js_bytes(tmp_path: Path) -> None:
+    paths = paths_for(tmp_path)
+    document = {
+        "version": 4,
+        "repos": [
+            {
+                "url": URL_A,
+                "provider": {"kind": "github", "flags": ["mirror", {"depth": 2}]},
+                "tuning": {"ratio": 1.0, "tiny": 1e-7, "huge": 1e21},
+                "lastBackupAt": None,
+                "labels": ["critical", {"team": "platform"}],
+                "lastCheckedAt": None,
+                "selectedLast": False,
+            }
+        ],
+    }
+    seed(paths, document)
+
+    result = record_last_checked_at(
+        paths, URL_A, now=datetime(2026, 8, 8, 12, tzinfo=timezone.utc)
+    )
+
+    assert result.ok is True
+    assert paths.backups_file.read_bytes() == node_rewrite_bytes(document, "checked")
+    assert result.document.repos[0].model_dump(by_alias=True)["provider"] == (
+        document["repos"][0]["provider"]
+    )
+
+
 def test_timestamp_updates_give_missing_and_not_found_errors(tmp_path: Path) -> None:
     paths = paths_for(tmp_path)
 
@@ -327,3 +386,32 @@ def test_set_selected_last_maps_canonical_selected_urls(tmp_path: Path) -> None:
     assert result.document is not None
     assert [entry.selected_last for entry in result.document.repos] == [True, False]
     assert [entry["selectedLast"] for entry in read_repos(paths)] == [True, False]
+
+
+def test_selection_update_preserves_extensions_and_js_bytes(tmp_path: Path) -> None:
+    paths = paths_for(tmp_path)
+    document = {
+        "version": 4,
+        "repos": [
+            {
+                "url": URL_A,
+                "settings": {"hooks": [{"name": "audit", "enabled": True}]},
+                "lastBackupAt": None,
+                "lastCheckedAt": None,
+                "selectedLast": False,
+            },
+            {
+                "url": URL_B,
+                "lastBackupAt": None,
+                "ownerData": {"teams": ["infra"]},
+                "lastCheckedAt": None,
+                "selectedLast": True,
+            },
+        ],
+    }
+    seed(paths, document)
+
+    result = set_selected_last(paths, [URL_A])
+
+    assert result.ok is True
+    assert paths.backups_file.read_bytes() == node_rewrite_bytes(document, "selected")

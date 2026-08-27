@@ -2,10 +2,8 @@ from datetime import datetime, timezone
 import re
 import time
 
-_MILLISECONDS_PER_SECOND = 1000
-_MILLISECONDS_PER_MINUTE = 60 * _MILLISECONDS_PER_SECOND
-_MILLISECONDS_PER_HOUR = 60 * _MILLISECONDS_PER_MINUTE
-_MILLISECONDS_PER_DAY = 24 * _MILLISECONDS_PER_HOUR
+_MILLISECONDS_PER_SECOND, _MILLISECONDS_PER_MINUTE = 1000, 60_000
+_MILLISECONDS_PER_HOUR, _MILLISECONDS_PER_DAY = 3_600_000, 86_400_000
 _UTC = timezone.utc
 _MAX_DATE_MILLISECONDS = 8_640_000_000_000_000
 _JS_ISO_RE = re.compile(
@@ -27,18 +25,15 @@ def _civil_milliseconds(parts: tuple[int, ...], millis: int = 0) -> int:
     year, month, day, hour, minute, second = parts
     return (
         _days_from_civil(year, month, day) * _MILLISECONDS_PER_DAY
-        + hour * _MILLISECONDS_PER_HOUR
-        + minute * _MILLISECONDS_PER_MINUTE
-        + second * _MILLISECONDS_PER_SECOND
-        + millis
+        + hour * _MILLISECONDS_PER_HOUR + minute * _MILLISECONDS_PER_MINUTE
+        + second * _MILLISECONDS_PER_SECOND + millis
     )
 
 def _local_epoch_milliseconds(parts: tuple[int, ...], millis: int) -> int | None:
     try:
         return int(time.mktime((*parts, 0, 0, -1))) * 1000 + millis
     except (OverflowError, OSError, ValueError):
-        naive = _civil_milliseconds(parts, millis)
-        candidate = naive
+        candidate = naive = _civil_milliseconds(parts, millis)
         try:
             for _ in range(4):
                 local, utc = time.localtime(candidate / 1000), time.gmtime(candidate / 1000)
@@ -61,24 +56,18 @@ def parse_js_timestamp(value: object) -> int | None:
         return None
 
     year = int(match["year"])
-    month = int(match["month"] or 1)
-    day = int(match["day"] or 1)
-    hour = int(match["hour"] or 0)
-    minute = int(match["minute"] or 0)
-    second = int(match["second"] or 0)
+    month, day = (int(match[name] or 1) for name in ("month", "day"))
+    hour, minute, second = (int(match[name] or 0) for name in ("hour", "minute", "second"))
     fraction = match["fraction"] or ""
     millis = int((fraction[:3] + "000")[:3])
-    if not 1 <= month <= 12 or not 1 <= day <= 31:
-        return None
-    if hour > 24 or minute > 59 or second > 59:
+    if not 1 <= month <= 12 or not 1 <= day <= 31 or hour > 24 or minute > 59 or second > 59:
         return None
     if hour == 24 and (minute or second or any(digit != "0" for digit in fraction)):
         return None
 
     parts = (year, month, day, hour, minute, second)
-    has_time = match["hour"] is not None
     zone = match["zone"]
-    if has_time and zone is None:
+    if match["hour"] is not None and zone is None:
         parsed = _local_epoch_milliseconds(parts, millis)
         return parsed if parsed is not None and abs(parsed) <= _MAX_DATE_MILLISECONDS else None
 
@@ -90,8 +79,7 @@ def parse_js_timestamp(value: object) -> int | None:
             return None
         direction = 1 if zone[0] == "+" else -1
         parsed -= direction * (
-            offset_hour * _MILLISECONDS_PER_HOUR
-            + offset_minute * _MILLISECONDS_PER_MINUTE
+            offset_hour * _MILLISECONDS_PER_HOUR + offset_minute * _MILLISECONDS_PER_MINUTE
         )
     return parsed if abs(parsed) <= _MAX_DATE_MILLISECONDS else None
 
@@ -118,17 +106,12 @@ def format_timestamp_label(
         now = datetime.now(tz=_UTC)
     elapsed = max(0, _epoch_milliseconds(now) - then_ms)
     seconds = elapsed // _MILLISECONDS_PER_SECOND
-    if seconds < 60:
-        relative = "just now"
-    elif seconds < 3600:
-        count = seconds // 60
-        relative = f"{count} minute ago" if count == 1 else f"{count} minutes ago"
-    elif seconds < 86400:
-        count = seconds // 3600
-        relative = f"{count} hour ago" if count == 1 else f"{count} hours ago"
-    else:
-        count = seconds // 86400
-        relative = f"{count} day ago" if count == 1 else f"{count} days ago"
+    relative = "just now"
+    for divisor, unit in ((86400, "day"), (3600, "hour"), (60, "minute")):
+        if seconds >= divisor:
+            count = seconds // divisor
+            relative = f"{count} {unit}{'' if count == 1 else 's'} ago"
+            break
 
     try:
         local = time.localtime(then_ms / 1000)

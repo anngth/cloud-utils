@@ -9,24 +9,20 @@ import re
 import tempfile
 from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, InstanceOf, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, InstanceOf, PrivateAttr, TypeAdapter, ValidationError
 from pydantic import field_validator, model_validator
 
 from .last_backup import parse_js_timestamp
 
-_ISO_UTC_TIMESTAMP_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$"
-)
+_ISO_UTC_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$")
 _TIMESTAMP_FIELDS_BY_VERSION = {
-    2: ("lastBackupAt",),
-    3: ("lastBackupAt", "lastCheckedAt"),
+    2: ("lastBackupAt",), 3: ("lastBackupAt", "lastCheckedAt"),
     4: ("lastBackupAt", "lastCheckedAt"),
 }
 
 def is_iso_utc_timestamp(value: object) -> bool:
     return (
-        isinstance(value, str)
-        and _ISO_UTC_TIMESTAMP_RE.fullmatch(value) is not None
+        isinstance(value, str) and bool(_ISO_UTC_TIMESTAMP_RE.fullmatch(value))
         and parse_js_timestamp(value) is not None
     )
 
@@ -37,8 +33,14 @@ class _VersionedDocument(_StrictModel):
     @model_validator(mode="before")
     @classmethod
     def _version_must_be_a_json_integer(cls, value: object) -> object:
-        if isinstance(value, Mapping) and type(value.get("version")) is not int:
-            raise ValueError("version must be an integer")
+        if isinstance(value, Mapping):
+            version = value.get("version")
+            if type(version) is int:
+                return value
+            if type(version) is not float or not math.isfinite(version) or not version.is_integer():
+                raise ValueError("version must be an integer")
+            value = dict(value)
+            value["version"] = int(version)
         return value
 
 class BackupRepoV2(_StrictModel):
@@ -68,7 +70,9 @@ class BackupRepoV3(BackupRepoV2):
         return cls._validate_last_backup_at(value)
 
 class BackupRepoV4(BackupRepoV3):
+    model_config = ConfigDict(extra="allow", strict=True, populate_by_name=True)
     selected_last: bool = Field(alias="selectedLast")
+    _key_order: tuple[str, ...] = PrivateAttr(default=())
 
 class BackupsDocumentV1(_VersionedDocument):
     version: Literal[1]
@@ -157,18 +161,14 @@ def format_display_path(
     home_path = os.fspath(home) if home is not None else os.environ.get("HOME")
     temp_path = os.fspath(temp_dir) if temp_dir is not None else tempfile.gettempdir()
 
-    if home_path and (
-        file_path == home_path
-        or file_path.startswith(f"{home_path.rstrip(os.sep)}{os.sep}")
-    ):
-        rest = file_path[len(home_path) :].lstrip(os.sep)
-        return f"~/{rest}" if rest else "~"
-
-    if temp_path and (
-        file_path == temp_path
-        or file_path.startswith(f"{temp_path.rstrip(os.sep)}{os.sep}")
-    ):
-        relative = os.path.relpath(file_path, temp_path)
+    for root, label in ((home_path, "~"), (temp_path, None)):
+        if not root or not (
+            file_path == root or file_path.startswith(f"{root.rstrip(os.sep)}{os.sep}")
+        ):
+            continue
+        relative = os.path.relpath(file_path, root)
+        if label is not None:
+            return label if relative == "." else f"{label}/{relative}"
         if relative != "." and not relative.startswith(".."):
             return relative
 
@@ -244,6 +244,8 @@ def _find_repo_timestamp_error(document: object) -> str | None:
     if not isinstance(repos, list):
         return None
     version = document.get("version")
+    if type(version) is float and math.isfinite(version) and version.is_integer():
+        version = int(version)
     if type(version) is not int:
         return None
     fields = _TIMESTAMP_FIELDS_BY_VERSION.get(version)
@@ -259,16 +261,33 @@ def _find_repo_timestamp_error(document: object) -> str | None:
                 continue
             url = repo.get("url")
             reference = url if isinstance(url, str) and url else f"repo at index {index}"
-            return (
-                f"Invalid {field} for {reference}: "
-                f"{_format_invalid_timestamp_value(value)}"
-            )
+            return f"Invalid {field} for {reference}: {_format_invalid_timestamp_value(value)}"
     return None
 
+def _remember_repo_order(document: BackupsDocument, raw: object) -> BackupsDocument:
+    if isinstance(document, BackupsDocumentV4) and isinstance(raw, Mapping):
+        repos = raw.get("repos")
+        if isinstance(repos, list):
+            for repo, source in zip(document.repos, repos, strict=True):
+                if isinstance(source, Mapping):
+                    repo._key_order = tuple(source)
+    return document
+
 def _parse_document(document: object) -> BackupsDocument:
-    return _DOCUMENT_ADAPTER.validate_python(document, by_alias=True, by_name=False)
+    parsed = _DOCUMENT_ADAPTER.validate_python(document, by_alias=True, by_name=False)
+    return _remember_repo_order(parsed, document)
+
+def _dump_repo(repo: BackupRepoV4) -> dict[str, object]:
+    dumped = repo.model_dump(by_alias=True)
+    keys = dict.fromkeys((*repo._key_order, *dumped))
+    return {key: dumped[key] for key in keys if key in dumped}
+
+def _dump_v4(document: BackupsDocumentV4) -> dict[str, object]:
+    return {"version": document.version, "repos": [_dump_repo(repo) for repo in document.repos]}
 
 def _as_raw_document(document: object) -> object:
+    if isinstance(document, BackupsDocumentV4):
+        return _dump_v4(document)
     if isinstance(document, BaseModel):
         return document.model_dump(by_alias=True)
     return document
@@ -284,6 +303,21 @@ def _normalize_json_strings(value: object) -> object:
     if isinstance(value, dict):
         return {_normalize_surrogate_pairs(key): _normalize_json_strings(item) for key, item in value.items()}
     return value
+
+def _js_json_pretty(value: object, level: int = 0) -> str:
+    if isinstance(value, Mapping):
+        rendered = (
+            f"{_js_quote_string(str(key))}: {_js_json_pretty(item, level + 1)}"
+            for key, item in value.items()
+        )
+        opening, closing = "{", "}"
+    if isinstance(value, list | tuple):
+        rendered = (_js_json_pretty(item, level + 1) for item in value)
+        opening, closing = "[", "]"
+    if not isinstance(value, Mapping | list | tuple):
+        return _js_json_stringify(value)
+    body = ",\n".join(f"{'  ' * (level + 1)}{item}" for item in rendered)
+    return f"{opening}\n{body}\n{'  ' * level}{closing}" if body else opening + closing
 
 def read_backups_document(path: str | os.PathLike[str]) -> ReadBackupsResult:
     backups_file = Path(path)
@@ -347,6 +381,7 @@ def write_backups_document(
         parsed = BackupsDocumentV4.model_validate(
             raw_document, by_alias=True, by_name=False
         )
+        _remember_repo_order(parsed, raw_document)
     except ValidationError:
         return WriteBackupsResult(ok=False, error="Invalid backups document")
 
@@ -354,10 +389,9 @@ def write_backups_document(
     temp_file = Path(f"{backups_file}.tmp")
 
     try:
-        encoded = (json.dumps(
-            _normalize_json_strings(parsed.model_dump(by_alias=True)),
-            ensure_ascii=False, allow_nan=False, indent=2,
-        ) + "\n").encode("utf-8", errors="backslashreplace")
+        encoded = f"{_js_json_pretty(_dump_v4(parsed))}\n".encode(
+            "utf-8", errors="backslashreplace"
+        )
         backups_file.parent.mkdir(parents=True, exist_ok=True)
         temp_file.write_bytes(encoded)
         os.replace(temp_file, backups_file)

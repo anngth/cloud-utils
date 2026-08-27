@@ -290,11 +290,40 @@ def test_read_backups_document_rejects_invalid_json(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("version_literal", "repos", "document_type"),
+    [
+        ("1.0", '["git@github.com:org/app.git"]', BackupsDocumentV1),
+        ("4.0", "[]", BackupsDocumentV4),
+        ("4e0", "[]", BackupsDocumentV4),
+    ],
+)
+def test_read_accepts_integral_json_versions_like_javascript_number_equality(
+    tmp_path: Path,
+    version_literal: str,
+    repos: str,
+    document_type: type,
+) -> None:
+    backups_file = tmp_path / "backups.json"
+    backups_file.write_text(
+        f'{{"version":{version_literal},"repos":{repos}}}', encoding="utf-8"
+    )
+
+    result = read_backups_document(backups_file)
+
+    assert result.ok is True
+    assert isinstance(result.document, document_type)
+    assert result.document.version in {1, 4}
+
+
+@pytest.mark.parametrize(
     "raw",
     [
         {"version": 1, "repos": "nope"},
         {"version": True, "repos": []},
-        {"version": 4.0, "repos": []},
+        {"version": 4.5, "repos": []},
+        {"version": 0, "repos": []},
+        {"version": 5, "repos": []},
+        {"version": 9_007_199_254_740_992, "repos": []},
         {
             "version": 4,
             "repos": [
@@ -390,7 +419,9 @@ def test_write_raw_document_requires_canonical_camel_case_aliases(
     assert not backups_file.exists()
 
 
-def test_raw_documents_keep_accepting_unrelated_extra_keys(tmp_path: Path) -> None:
+def test_raw_v4_documents_preserve_unrelated_repo_extension_fields(
+    tmp_path: Path,
+) -> None:
     backups_file = tmp_path / "backups.json"
     raw = {
         "version": 4,
@@ -412,6 +443,7 @@ def test_raw_documents_keep_accepting_unrelated_extra_keys(tmp_path: Path) -> No
 
     assert result.ok is True
     assert result.document.repos[0].last_backup_at is None
+    assert result.document.repos[0].model_dump(by_alias=True) == raw["repos"][0]
 
 
 @pytest.mark.parametrize(
@@ -619,6 +651,21 @@ def test_read_backups_document_rejects_nonstandard_json_numbers(
         '{"version":2,"repos":[{"url":"repo","lastBackupAt":'
         f"{constant}" + "}]}",
         encoding="utf-8",
+    )
+
+    result = read_backups_document(backups_file)
+
+    assert result.ok is False
+    assert result.error == f"Invalid JSON in backups file: {backups_file}"
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_read_rejects_nonstandard_json_numeric_versions(
+    tmp_path: Path, constant: str
+) -> None:
+    backups_file = tmp_path / "backups.json"
+    backups_file.write_text(
+        f'{{"version":{constant},"repos":[]}}', encoding="utf-8"
     )
 
     result = read_backups_document(backups_file)
