@@ -30,18 +30,25 @@ def test_normalize_base32_strips_whitespace_and_uppercases() -> None:
 @pytest.mark.parametrize(
     ("secret", "message"),
     [
-        ("", "Base32 secret is required"),
-        ("   ", "Base32 secret is required"),
-        ("!!!!", "Invalid Base32 secret"),
+        ("", "empty secret"),
+        ("   ", "empty secret"),
+        ("AAAA1AAA", "invalid Base32 character"),
+        ("GE=ZDGNA", "padding must appear only at the end"),
+        ("GEZDGNA==", "padded Base32 length must be a multiple of 8"),
+        ("A=======", "invalid Base32 padding"),
+        ("========", "invalid Base32 padding"),
+        ("A", "invalid unpadded Base32 length"),
     ],
 )
-def test_generate_totp_rejects_invalid_base32(secret: str, message: str) -> None:
+def test_generate_totp_preserves_base32_validation_messages(
+    secret: str, message: str
+) -> None:
     with pytest.raises(ValueError, match=f"^{message}$"):
         generate_totp(secret, now=59)
 
 
 def test_generate_totp_rejects_nonzero_discarded_base32_bits() -> None:
-    with pytest.raises(ValueError, match="^Invalid Base32 secret$"):
+    with pytest.raises(ValueError, match="^invalid Base32 encoding$"):
         generate_totp("GEZD", now=59)
 
 
