@@ -26,11 +26,11 @@ bud help
 
 Config paths: [setup.md — Local config](setup.md#local-config).
 
-Example template: `mac_scripts/functions/brew-desired-update/desired.json.example`.
+Example template: `mac_scripts/functions/brew-desired-update/desired.example.json`.
 
 ## Config (`desired.json`)
 
-Single JSON document with `version`, `formulas`, `casks`, and `taps` arrays. On first run, if `desired.json` is missing, `bud` bootstraps from `desired.json.example`. If the taps list is still empty after bootstrap, `bud` seeds taps from `brew tap`.
+Single JSON document with `version`, `formulas`, `casks`, and `taps` arrays. On first run, if `desired.json` is missing, `bud` bootstraps from `desired.example.json`. If the taps list is still empty after bootstrap, `bud` seeds taps from `brew tap`.
 
 ## `bud list`
 

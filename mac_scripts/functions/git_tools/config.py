@@ -304,15 +304,6 @@ def _as_raw_document(document: object) -> object:
 def _reject_json_constant(value: str) -> None:
     raise ValueError(f"invalid JSON constant: {value}")
 
-def _normalize_json_strings(value: object) -> object:
-    if isinstance(value, str):
-        return _normalize_surrogate_pairs(value)
-    if isinstance(value, list):
-        return [_normalize_json_strings(item) for item in value]
-    if isinstance(value, dict):
-        return {_normalize_surrogate_pairs(key): _normalize_json_strings(item) for key, item in value.items()}
-    return value
-
 def _js_json_pretty(value: object, level: int = 0) -> str:
     if isinstance(value, Mapping):
         rendered = (

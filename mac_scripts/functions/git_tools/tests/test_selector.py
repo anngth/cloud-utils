@@ -1,6 +1,8 @@
 import io
 import os
 import pty
+import threading
+import time
 
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
@@ -138,18 +140,27 @@ def test_run_selector_supports_vim_select_all_clear_and_cancel_bindings() -> Non
 
 
 def test_run_selector_preserves_a_split_arrow_sequence() -> None:
+    selector_started = threading.Event()
     with create_pipe_input() as pipe_input:
-        pipe_input.send_text("\x1b[")
-        pipe_input.send_text("B\r")
+        def send_split_arrow() -> None:
+            assert selector_started.wait(timeout=1)
+            pipe_input.send_text("\x1b[")
+            time.sleep(0.05)
+            pipe_input.send_text("B\r")
+
+        producer = threading.Thread(target=send_split_arrow)
+        producer.start()
         result = run_selector(
             ITEMS,
             initial=(),
             multiple=False,
             input=pipe_input,
             output=DummyOutput(),
-            render=lambda _state: None,
+            render=lambda _state: selector_started.set(),
         )
+        producer.join(timeout=1)
 
+    assert not producer.is_alive()
     assert result.kind == "submit"
     assert result.selected == (ITEMS[1].value,)
 

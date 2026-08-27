@@ -105,13 +105,13 @@ Layout:
 
 | Tool  | Config                                              | Template/reference in repo                                                    |
 | ----- | --------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `bud` | `bud/desired.json`                                  | `mac_scripts/functions/brew-desired-update/desired.json.example`           |
+| `bud` | `bud/desired.json`                                  | `mac_scripts/functions/brew-desired-update/desired.example.json`             |
 | `gt`  | `gt/backups.json`                                   | Created by `gt backup add`; older schemas migrate automatically               |
 | `skm` | `skm/sources.json`                                  | `mac_scripts/functions/skills-manager/sources.json.example` (reference only) |
 | `dbt` | `dbt/secrets`                                       | `mac_scripts/functions/db-tools/secrets.example`                              |
 
 On first run, `bud` bootstraps missing `desired.json` from
-`desired.json.example`. `dbt` bootstraps missing files from
+`desired.example.json`. `dbt` bootstraps missing files from
 legacy paths or `*.example`. SKM creates `sources.json` automatically; legacy `profiles.json`,
 `projects.json`, and `list.json` are migrated once and retained unchanged.
 `gt backup` creates `backups.json` on first list use (and migrates older schemas).

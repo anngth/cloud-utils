@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from git_tools.fetch import run_fetch_command
+from git_tools.fetch import _sync_local_branch_with_origin_ff, run_fetch_command
 from git_tools.ui import GitToolsUi
 from shared.process import CommandResult
 
@@ -71,6 +71,120 @@ def _git(
         return responses.get(tuple(args), _result())
 
     return run, calls
+
+
+def _primary_sync_git(
+    overrides: dict[tuple[str, ...], CommandResult],
+) -> tuple[object, list[list[str]]]:
+    calls: list[list[str]] = []
+
+    def run(args: list[str]) -> CommandResult:
+        calls.append(args)
+        return overrides[tuple(args)]
+
+    return run, calls
+
+
+def test_primary_sync_creates_missing_local_branch_in_exact_order() -> None:
+    git, calls = _primary_sync_git(
+        {
+            ("show-ref", "--verify", "--quiet", "refs/remotes/origin/main"): _result(),
+            ("show-ref", "--verify", "--quiet", "refs/heads/main"): _result(1),
+            ("branch", "main", "origin/main"): _result(),
+        }
+    )
+    ui = FetchUi()
+
+    _sync_local_branch_with_origin_ff(git, ui, "main", "feature")
+
+    assert calls == [
+        ["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"],
+        ["show-ref", "--verify", "--quiet", "refs/heads/main"],
+        ["branch", "main", "origin/main"],
+    ]
+    assert ui.events == [
+        ("status", "Creating local 'main' from origin/main", "success"),
+        ("status", "Created local 'main'", "success"),
+    ]
+
+
+def test_primary_sync_fast_forwards_local_branch_in_exact_order() -> None:
+    git, calls = _primary_sync_git(
+        {
+            ("show-ref", "--verify", "--quiet", "refs/remotes/origin/main"): _result(),
+            ("show-ref", "--verify", "--quiet", "refs/heads/main"): _result(),
+            ("rev-parse", "refs/heads/main"): _result(stdout="local\n"),
+            ("rev-parse", "refs/remotes/origin/main"): _result(stdout="remote\n"),
+            ("merge-base", "--is-ancestor", "main", "origin/main"): _result(),
+            ("update-ref", "refs/heads/main", "remote", "local"): _result(),
+        }
+    )
+    ui = FetchUi()
+
+    _sync_local_branch_with_origin_ff(git, ui, "main", "feature")
+
+    assert calls == [
+        ["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"],
+        ["show-ref", "--verify", "--quiet", "refs/heads/main"],
+        ["rev-parse", "refs/heads/main"],
+        ["rev-parse", "refs/remotes/origin/main"],
+        ["merge-base", "--is-ancestor", "main", "origin/main"],
+        ["update-ref", "refs/heads/main", "remote", "local"],
+    ]
+    assert ui.events[-1] == ("status", "Updated local 'main' to origin/main", "success")
+
+
+def test_primary_sync_skips_diverged_local_branch_without_update() -> None:
+    git, calls = _primary_sync_git(
+        {
+            ("show-ref", "--verify", "--quiet", "refs/remotes/origin/main"): _result(),
+            ("show-ref", "--verify", "--quiet", "refs/heads/main"): _result(),
+            ("rev-parse", "refs/heads/main"): _result(stdout="local\n"),
+            ("rev-parse", "refs/remotes/origin/main"): _result(stdout="remote\n"),
+            ("merge-base", "--is-ancestor", "main", "origin/main"): _result(1),
+        }
+    )
+    ui = FetchUi()
+
+    _sync_local_branch_with_origin_ff(git, ui, "main", "feature")
+
+    assert calls == [
+        ["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"],
+        ["show-ref", "--verify", "--quiet", "refs/heads/main"],
+        ["rev-parse", "refs/heads/main"],
+        ["rev-parse", "refs/remotes/origin/main"],
+        ["merge-base", "--is-ancestor", "main", "origin/main"],
+    ]
+    assert ui.events == [
+        ("status", "Local 'main' has local-only commits; skipping auto-sync", "warning"),
+        ("detail", "Run: git switch main && git pull --ff-only origin main", "muted"),
+    ]
+
+
+def test_primary_sync_warns_when_fast_forward_update_fails() -> None:
+    git, calls = _primary_sync_git(
+        {
+            ("show-ref", "--verify", "--quiet", "refs/remotes/origin/main"): _result(),
+            ("show-ref", "--verify", "--quiet", "refs/heads/main"): _result(),
+            ("rev-parse", "refs/heads/main"): _result(stdout="local\n"),
+            ("rev-parse", "refs/remotes/origin/main"): _result(stdout="remote\n"),
+            ("merge-base", "--is-ancestor", "main", "origin/main"): _result(),
+            ("update-ref", "refs/heads/main", "remote", "local"): _result(1),
+        }
+    )
+    ui = FetchUi()
+
+    _sync_local_branch_with_origin_ff(git, ui, "main", "feature")
+
+    assert calls == [
+        ["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"],
+        ["show-ref", "--verify", "--quiet", "refs/heads/main"],
+        ["rev-parse", "refs/heads/main"],
+        ["rev-parse", "refs/remotes/origin/main"],
+        ["merge-base", "--is-ancestor", "main", "origin/main"],
+        ["update-ref", "refs/heads/main", "remote", "local"],
+    ]
+    assert ui.events[-1] == ("status", "Failed to update local 'main'", "warning")
 
 
 def test_fetch_rejects_unknown_option_before_git_calls() -> None:

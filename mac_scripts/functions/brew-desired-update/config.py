@@ -26,7 +26,7 @@ def resolve_paths(env: dict) -> BudPaths:
         config_dir=config_dir,
         desired_file=os.path.join(config_dir, "bud", "desired.json"),
         example_file=os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "desired.json.example"
+            os.path.dirname(os.path.abspath(__file__)), "desired.example.json"
         ),
     )
 

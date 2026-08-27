@@ -44,7 +44,7 @@ class ResolvePathsTests(unittest.TestCase):
         paths = resolve_paths({"HOME": "/Users/me"})
         self.assertEqual(
             paths.example_file,
-            os.path.join(os.path.dirname(config.__file__), "desired.json.example"),
+            os.path.join(os.path.dirname(config.__file__), "desired.example.json"),
         )
 
 
