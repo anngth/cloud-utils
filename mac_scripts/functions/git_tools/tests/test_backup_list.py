@@ -217,6 +217,29 @@ def test_remove_out_of_range_uses_en_dash_message(tmp_path: Path, token: str) ->
     assert result.error == f"Index out of range: {token} (valid 1–1)"
 
 
+def test_remove_handles_a_very_long_decimal_out_of_range_index(tmp_path: Path) -> None:
+    paths = paths_for(tmp_path)
+    seed(paths, {"version": 1, "repos": [URL_A]})
+    token = "9" * 5000
+
+    result = remove_backup_repo(paths, token)
+
+    assert result.ok is False
+    assert result.error == f"Index out of range: {token} (valid 1–1)"
+
+
+def test_remove_handles_a_very_long_zero_padded_valid_index(tmp_path: Path) -> None:
+    paths = paths_for(tmp_path)
+    seed(paths, {"version": 1, "repos": [URL_A, URL_B]})
+    token = f"{'0' * 5000}2"
+
+    result = remove_backup_repo(paths, token)
+
+    assert result.ok is True
+    assert result.removed == URL_B
+    assert read_repos(paths) == [repo(URL_A)]
+
+
 @pytest.mark.parametrize(
     ("document", "expected"),
     [

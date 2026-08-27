@@ -139,6 +139,18 @@ def _format_timestamp(now: datetime) -> str:
     )
 
 
+def _parse_index(token: str, maximum: int) -> int | None:
+    """Parse a decimal index without converting an arbitrarily long string."""
+
+    significant = token.lstrip("0") or "0"
+    maximum_text = str(maximum)
+    if len(significant) > len(maximum_text) or (
+        len(significant) == len(maximum_text) and significant > maximum_text
+    ):
+        return None
+    return int(significant)
+
+
 def add_backup_repo(paths: GtPaths, ssh_url: str) -> AddBackupRepoResult:
     parsed, error = _canonicalize(ssh_url)
     if error is not None:
@@ -236,11 +248,11 @@ def remove_backup_repo(paths: GtPaths, token: str) -> RemoveBackupRepoResult:
         return RemoveBackupRepoResult(
             ok=False,
             error=f"Backups list is empty. {ADD_HINT}",
-        )
+    )
 
     if _INDEX_RE.fullmatch(token):
-        index = int(token)
-        if index < 1 or index > len(document.repos):
+        index = _parse_index(token, len(document.repos))
+        if index is None or index < 1:
             return RemoveBackupRepoResult(
                 ok=False,
                 error=(
