@@ -1,6 +1,8 @@
 # gt
 
-Git workflow helpers (`push`, `fetch`, `backup`). Implemented in Node under `mac_scripts/functions/git-tools/`.
+Git workflow helpers (`push`, `fetch`, `backup`). Implemented in Python 3.14
+under `mac_scripts/functions/git_tools/` and run from the repository's locked
+`uv` environment.
 
 Config paths: [setup.md — Local config](setup.md#local-config).
 
@@ -42,7 +44,7 @@ gt backup remove git@github.com:org/my-app.git
   - `selectedLast` — per-repo flag for the last interactive submit selection; updated on Enter with ≥1 repo selected (whole list rewritten); cancel / empty submit leave flags unchanged; `add` sets `false`.
   - Interactive selector is compact: checkbox + URL only (no Last backup / Last checked lines). Timestamps remain in `backups.json` for skip / stale.
   - v1 string arrays, v2 `{ url, lastBackupAt }`, and v3 lists migrate to v4 on load (`lastCheckedAt: null` for v2; `selectedLast: false` for older schemas).
-  - Example template: [`backups.json.example`](../mac_scripts/functions/git-tools/backups.json.example) (reference only).
+  - The file is created by `gt backup add`; no checked-in user list is copied.
 - **Migration:** old one-shot `gt backup <ssh-url>` / `-n` / `--new` are removed. Use `gt backup add <ssh-url> [<ssh-url> ...]`, then `gt backup` or `gt backup --all`.
 - Per URL: missing project → create; live → compare `git ls-remote` fingerprints (heads + tags only) — equal → skip mirror, update `lastCheckedAt` only (`skip` in summary, `→ unchanged`); differ → full mirror (all branches + tags); inactive/soft-deleted → recreate at the base name (never skip). Creates the private `anngth-dev/backups` subgroup when missing (parent `anngth-dev` must already exist). After push, sets the GitLab default branch to `main` if present, otherwise `develop`. Protects `main` and/or `develop` when those branches exist (force-push allowed for later mirror updates).
 - Batch summary lists `ok`, `skip`, and `fail` per URL; exit `0` only when there are no `fail` entries (`ok` and `skip` both succeed).

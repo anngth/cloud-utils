@@ -24,6 +24,14 @@ def _copy_twofa_wrapper(tmp_path: Path) -> Path:
     return wrapper
 
 
+def _copy_gt_wrapper(tmp_path: Path) -> Path:
+    scripts_dir = tmp_path / "repo" / "mac_scripts"
+    scripts_dir.mkdir(parents=True)
+    wrapper = scripts_dir / "gt"
+    shutil.copy2(REPO_ROOT / "mac_scripts" / "gt", wrapper)
+    return wrapper
+
+
 def _recording_python(
     repo_root: Path,
     exit_code: int,
@@ -128,5 +136,55 @@ def test_twofa_reports_how_to_create_missing_project_environment(
     stderr_lines = result.stderr.splitlines()
     assert len(stderr_lines) == 1
     assert "2fa" in stderr_lines[0]
+    assert "uv sync --locked" in stderr_lines[0]
+    assert not (wrapper.parents[1] / ".venv").exists()
+
+
+def test_gt_uses_project_venv_and_forwards_arguments_from_foreign_cwd(
+    tmp_path: Path,
+) -> None:
+    wrapper = _copy_gt_wrapper(tmp_path)
+    repo_root = wrapper.parents[1]
+    _recording_python(
+        repo_root,
+        exit_code=37,
+        invocation_variable="GT_INVOCATION",
+    )
+    invocation_path = tmp_path / "invocation.json"
+    foreign_cwd = tmp_path / "foreign"
+    foreign_cwd.mkdir()
+
+    result = subprocess.run(
+        [str(wrapper), "backup", "--all", "--dry-run"],
+        cwd=foreign_cwd,
+        env={"GT_INVOCATION": str(invocation_path)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert invocation_path.exists(), "gt did not use the project Python"
+    invocation = json.loads(invocation_path.read_text(encoding="utf-8"))
+    assert invocation == ["-m", "git_tools.cli", "backup", "--all", "--dry-run"]
+    assert result.returncode == 37
+
+
+def test_gt_reports_how_to_create_missing_project_environment(
+    tmp_path: Path,
+) -> None:
+    wrapper = _copy_gt_wrapper(tmp_path)
+
+    result = subprocess.run(
+        [str(wrapper)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    stderr_lines = result.stderr.splitlines()
+    assert len(stderr_lines) == 1
+    assert "gt" in stderr_lines[0]
     assert "uv sync --locked" in stderr_lines[0]
     assert not (wrapper.parents[1] / ".venv").exists()

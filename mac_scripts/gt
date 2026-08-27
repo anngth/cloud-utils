@@ -1,7 +1,8 @@
 #!/bin/zsh
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-if ! command -v node >/dev/null 2>&1; then
-  print -P "%F{red}❌ node is required to run gt%f" >&2
+PYTHON_BIN="$SCRIPT_DIR/../.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  print -P "%F{red}❌ gt requires the project environment; run 'uv sync --locked' in ${SCRIPT_DIR:h}%f" >&2
   exit 1
 fi
-exec node "$SCRIPT_DIR/functions/git-tools/cli.mjs" "$@"
+exec "$PYTHON_BIN" -m git_tools.cli "$@"

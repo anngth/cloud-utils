@@ -35,8 +35,8 @@ brew install mongosh mongodb-database-tools
 
 - `libpq` — PostgreSQL clients (`psql`, `pg_dump`, `pg_restore`). `dbt` can also use `postgresql@18`.
 - `mongosh` / `mongodb-database-tools` — used by `dbt sync mongodb`.
-- Node.js — required by `gt` and `skm`; install a current release with `fnm`.
-- Python 3.14 — required by `bud` and `2fa`; `uv` installs and manages the project interpreter.
+- Node.js — required only by `skm`; install a current release with `fnm`.
+- Python 3.14 — required by `bud`, `2fa`, and `gt`; `uv` installs and manages the shared project interpreter.
 - `pbcopy` — provided by macOS and used by `2fa` to copy generated codes.
 
 ## Project Python environment
@@ -55,7 +55,7 @@ For a runtime-only environment without test dependencies, use:
 uv sync --locked --no-dev
 ```
 
-The `bud` and `2fa` wrappers require `.venv/bin/python`. They report a setup
+The `bud`, `2fa`, and `gt` wrappers require `.venv/bin/python`. They report a setup
 error if it is missing; wrappers do not run `uv`, activate an environment, or
 create one automatically.
 
@@ -106,7 +106,7 @@ Layout:
 | Tool  | Config                                              | Template/reference in repo                                                    |
 | ----- | --------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `bud` | `bud/desired.json`                                  | `mac_scripts/functions/brew-desired-update/desired.json.example`           |
-| `gt`  | `gt/backups.json`                                   | `mac_scripts/functions/git-tools/backups.json.example` (reference only)       |
+| `gt`  | `gt/backups.json`                                   | Created by `gt backup add`; older schemas migrate automatically               |
 | `skm` | `skm/sources.json`                                  | `mac_scripts/functions/skills-manager/sources.json.example` (reference only) |
 | `dbt` | `dbt/secrets`                                       | `mac_scripts/functions/db-tools/secrets.example`                              |
 
