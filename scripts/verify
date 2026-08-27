@@ -1,0 +1,56 @@
+#!/bin/zsh
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+ROOT_DIR="${SCRIPT_DIR:h}"
+PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+SOURCE_LIMIT=3309
+
+cd "$ROOT_DIR"
+
+if ! command -v uv >/dev/null 2>&1; then
+  print -u2 -r -- "❌ Missing required command: uv"
+  exit 1
+fi
+if ! command -v node >/dev/null 2>&1; then
+  print -u2 -r -- "❌ Missing required command: node"
+  exit 1
+fi
+
+print -r -- "==> Syncing locked Python environment"
+uv sync --locked
+git diff --exit-code -- uv.lock
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  print -u2 -r -- "❌ Missing project Python: $PYTHON_BIN"
+  exit 1
+fi
+
+coverage_file="$(mktemp "${TMPDIR:-/tmp}/cloud-utils-verify.XXXXXX")"
+trap 'rm -f "$coverage_file"' EXIT
+
+print -r -- "==> Running Python tests with coverage"
+COVERAGE_FILE="$coverage_file" "$PYTHON_BIN" -m pytest \
+  --cov=shared --cov=twofa --cov=git_tools
+
+print -r -- "==> Running SKM Node tests"
+node --test mac_scripts/functions/skills-manager/__tests__/*.test.mjs
+
+print -r -- "==> Checking production Python source budget"
+python_lines="$(
+  find mac_scripts/functions/shared mac_scripts/functions/twofa \
+    mac_scripts/functions/git_tools -type f -name '*.py' \
+    ! -path '*/tests/*' -print0 \
+    | xargs -0 wc -l \
+    | tail -n 1 \
+    | awk '{print $1}'
+)"
+if (( python_lines > SOURCE_LIMIT )); then
+  print -u2 -r -- "❌ Production Python source is $python_lines lines; limit is $SOURCE_LIMIT"
+  exit 1
+fi
+print -r -- "    Production Python: $python_lines/$SOURCE_LIMIT lines"
+
+print -r -- "==> Checking diff hygiene"
+git diff --check
+
+print -r -- "✅ Verification complete"

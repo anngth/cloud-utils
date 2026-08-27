@@ -61,6 +61,17 @@ create one automatically.
 
 ## Verify
 
+Run the complete local verification gate from any working directory:
+
+```bash
+~/Documents/cloud-utils/scripts/verify
+```
+
+It synchronizes the locked Python environment, runs the Python and `skm` test
+suites, enforces the production Python source limit, and checks diff hygiene.
+
+For a manual command smoke check:
+
 ```bash
 exec zsh
 gt fetch
