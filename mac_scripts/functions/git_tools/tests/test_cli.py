@@ -83,6 +83,13 @@ def test_missing_command_prints_usage_and_exits_one() -> None:
     assert stderr == ""
 
 
+def test_empty_command_token_prints_usage_without_unknown_command_error() -> None:
+    code, stdout, stderr = run([""], Dependencies())
+    assert code == 1
+    assert "Usage: gt <command>" in stdout
+    assert stderr == ""
+
+
 def test_help_mentions_managed_backup_list_commands() -> None:
     code, stdout, stderr = run(["--help"], Dependencies())
     assert code == 0

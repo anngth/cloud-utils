@@ -15,7 +15,12 @@ from git_tools.backup import (
     run_backup_batch,
     run_backup_command,
 )
-from git_tools.config import GtPaths, resolve_gt_paths
+from git_tools.config import (
+    GtPaths,
+    WriteBackupsResult,
+    resolve_gt_paths,
+    write_backups_document,
+)
 from git_tools.gitlab import (
     ActionResult,
     BACKUP_GROUP,
@@ -1053,6 +1058,95 @@ def test_run_backup_command_all_migrates_v1_list_on_load(tmp_path: Path) -> None
     }
 
 
+@pytest.mark.parametrize("args", [["--all"], ["stale", "--all"]])
+def test_run_backup_command_automatic_batch_writes_migration_before_external_work(
+    tmp_path: Path, args: list[str]
+) -> None:
+    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
+    seed_repos(paths, [SOURCE], version=1)
+    events: list[str] = []
+
+    def write_migration(path, document):
+        events.append("write-migration")
+        return write_backups_document(path, document)
+
+    def has_command(name: str) -> bool:
+        events.append(f"external:{name}")
+        document = read_disk(paths)
+        assert document["version"] == 4
+        assert document["repos"][0]["lastBackupAt"] is None
+        return True
+
+    h = make_harness(
+        tmp_path,
+        write_backups_document=write_migration,
+        has_command=has_command,
+    )
+
+    assert run_backup_command(args, context=h.context) == 0
+    assert events[:2] == ["write-migration", "external:git"]
+
+
+@pytest.mark.parametrize("args", [["--all"], ["stale", "--all"]])
+def test_run_backup_command_migration_write_failure_prevents_external_work(
+    tmp_path: Path, args: list[str]
+) -> None:
+    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
+    seed_repos(paths, [SOURCE], version=1)
+    before = paths.backups_file.read_bytes()
+    external_calls: list[str] = []
+    h = make_harness(
+        tmp_path,
+        write_backups_document=lambda *_args: WriteBackupsResult(
+            False, error="disk full"
+        ),
+        has_command=lambda name: external_calls.append(name) or True,
+        ensure_backup_group=lambda group: external_calls.append(group)
+        or EnsureGroupResult(True),
+        create_private_project=lambda group, name: external_calls.append(
+            f"{group}/{name}"
+        )
+        or ActionResult(True),
+        run_git=lambda args, **_kwargs: external_calls.append(args[0])
+        or CommandResult(0),
+    )
+
+    assert run_backup_command(args, context=h.context) == 1
+    assert h.ui.errors == ["disk full"]
+    assert external_calls == []
+    assert h.created == []
+    assert h.removed == []
+    assert paths.backups_file.read_bytes() == before
+
+
+def test_run_backup_command_v1_submit_uses_selection_write_before_external_work(
+    tmp_path: Path,
+) -> None:
+    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
+    seed_repos(paths, [SOURCE], version=1)
+
+    def selector(items, **_kwargs):
+        state = SelectorState(tuple(items), 0, frozenset({0}))
+        return SelectorResult("submit", state, (SOURCE,))
+
+    def has_command(_name: str) -> bool:
+        document = read_disk(paths)
+        assert document["version"] == 4
+        assert document["repos"][0]["selectedLast"] is True
+        return True
+
+    h = make_harness(
+        tmp_path,
+        run_selector=selector,
+        has_command=has_command,
+        write_backups_document=lambda *_args: pytest.fail(
+            "selected flow must not add a second migration write"
+        ),
+    )
+
+    assert run_backup_command([], context=h.context) == 0
+
+
 def test_run_backup_command_add_then_all_backs_up_listed_repo(tmp_path: Path) -> None:
     h = make_harness(tmp_path)
     assert run_backup_command(["add", SOURCE], context=h.context) == 0
@@ -1089,6 +1183,20 @@ def test_run_backup_command_remove_by_one_based_index(tmp_path: Path) -> None:
     assert "Remove repository" in h.ui.statuses
     assert f"Removed {SOURCE}" in h.ui.statuses
     assert [repo["url"] for repo in read_disk(paths)["repos"]] == [SOURCE_B]
+
+
+def test_run_backup_command_remove_empty_token_renders_usage_without_reading(
+    tmp_path: Path,
+) -> None:
+    h = make_harness(
+        tmp_path,
+        remove_backup_repo=lambda *_args: pytest.fail(
+            "empty remove token must be rejected before reading config"
+        ),
+    )
+
+    assert run_backup_command(["remove", ""], context=h.context) == 1
+    assert h.ui.errors == ["Usage: gt backup remove <index|ssh-url>"]
 
 
 def test_run_backup_command_interactive_backs_up_only_selected_repo(
@@ -1330,6 +1438,23 @@ def test_run_backup_command_v1_cancel_does_not_persist_migration(
     assert paths.backups_file.read_bytes() == before
 
 
+def test_run_backup_command_v1_empty_submit_does_not_persist_migration(
+    tmp_path: Path,
+) -> None:
+    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
+    seed_repos(paths, [SOURCE], version=1)
+    before = paths.backups_file.read_bytes()
+
+    def selector(items, **_kwargs):
+        state = SelectorState(tuple(items), 0, frozenset())
+        return SelectorResult("submit", state, ())
+
+    h = make_harness(tmp_path, run_selector=selector)
+    assert run_backup_command([], context=h.context) == 1
+    assert h.ui.errors == ["No repos selected"]
+    assert paths.backups_file.read_bytes() == before
+
+
 def test_run_backup_command_reports_invalid_timestamp_before_external_calls(
     tmp_path: Path,
 ) -> None:
@@ -1489,7 +1614,7 @@ def test_run_backup_command_stale_days_changes_filtered_set(tmp_path: Path) -> N
     assert captured == [SOURCE]
 
 
-@pytest.mark.parametrize("value", ["abc", "0", "1.5", "-1"])
+@pytest.mark.parametrize("value", ["abc", "0", "1.5", "-1", "\x1c1\x1c"])
 def test_run_backup_command_stale_invalid_days_errors(
     tmp_path: Path, value: str
 ) -> None:
@@ -1505,7 +1630,9 @@ def test_run_backup_command_stale_invalid_days_errors(
         ]
 
 
-@pytest.mark.parametrize("value", ["1e3", "0x10", "+1", " 1 "])
+@pytest.mark.parametrize(
+    "value", ["1e3", "0x10", "+1", " 1 ", "\ufeff1\ufeff"]
+)
 def test_run_backup_command_stale_days_accepts_js_number_integer_forms(
     tmp_path: Path, value: str
 ) -> None:

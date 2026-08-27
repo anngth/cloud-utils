@@ -25,10 +25,12 @@ from .backup_list import (
 )
 from .config import (
     BackupRepoV4,
+    BackupsDocumentV4,
     GtPaths,
     format_display_path,
     migrate_backups_document,
     read_backups_document,
+    write_backups_document,
 )
 from .git import run_git
 from .gitlab import (
@@ -110,6 +112,7 @@ class BackupContext:
     set_selected_last: Callable[..., object] = set_selected_last
     read_backups_document: Callable[..., object] = read_backups_document
     migrate_backups_document: Callable[..., object] = migrate_backups_document
+    write_backups_document: Callable[..., object] = write_backups_document
     run_selector: Callable[..., SelectorResult] = run_selector
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
 
@@ -126,6 +129,13 @@ class BackupResult:
 class _BackupSelectorItem(SelectorItem):
     last_backup_at: str | None = None
     last_checked_at: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _LoadedRepos:
+    repos: tuple[BackupRepoV4, ...]
+    document: BackupsDocumentV4
+    migrated: bool
 
 
 def _failed(source_url: str, error: str | None, fallback: str) -> BackupResult:
@@ -477,7 +487,7 @@ def _start_backup_frame(
     context.ui.detail(list_path)
 
 
-def _load_repos(context: BackupContext) -> list[BackupRepoV4] | None:
+def _load_repos(context: BackupContext) -> _LoadedRepos | None:
     read = context.read_backups_document(context.paths.backups_file)
     if not read.ok:
         if read.missing:
@@ -492,7 +502,25 @@ def _load_repos(context: BackupContext) -> list[BackupRepoV4] | None:
     if not migrated.document.repos:
         context.ui.error(f"Backups list is empty. {ADD_HINT}")
         return None
-    return list(migrated.document.repos)
+    return _LoadedRepos(
+        repos=tuple(migrated.document.repos),
+        document=migrated.document,
+        migrated=migrated.migrated,
+    )
+
+
+def _persist_migration(
+    loaded: _LoadedRepos, context: BackupContext
+) -> bool:
+    if not loaded.migrated:
+        return True
+    written = context.write_backups_document(
+        context.paths.backups_file, loaded.document
+    )
+    if not written.ok:
+        context.ui.error(written.error)
+        return False
+    return True
 
 
 def _is_tty(stream: object) -> bool:
@@ -605,7 +633,7 @@ def _run_remove(args: tuple[str, ...], context: BackupContext) -> int:
     if "--dry-run" in args:
         context.ui.error(DRY_RUN_ONLY_HINT)
         return 1
-    if len(args) != 1:
+    if len(args) != 1 or not args[0]:
         context.ui.error("Usage: gt backup remove <index|ssh-url>")
         return 1
     result = context.remove_backup_repo(context.paths, args[0])
@@ -669,9 +697,15 @@ _JS_DECIMAL_RE = re.compile(
     re.ASCII,
 )
 
+_ECMASCRIPT_TRIM_CHARS = (
+    "\u0009\u000b\u000c\u0020\u00a0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000\ufeff\u000a\u000d"
+)
+
 
 def _parse_js_positive_integer(raw: str) -> float | None:
-    text = raw.strip()
+    text = raw.strip(_ECMASCRIPT_TRIM_CHARS)
     try:
         if re.fullmatch(r"0[xX][0-9a-fA-F]+", text):
             value = float(int(text[2:], 16))
@@ -696,13 +730,15 @@ def _run_stale(args: tuple[str, ...], context: BackupContext) -> int:
     if force and dry_run:
         context.ui.error("Cannot combine --force and --dry-run")
         return 1
-    repos = _load_repos(context)
-    if repos is None:
+    loaded = _load_repos(context)
+    if loaded is None:
+        return 1
+    if all_repos and not dry_run and not _persist_migration(loaded, context):
         return 1
     now = context.now()
     stale = [
         repo
-        for repo in repos
+        for repo in loaded.repos
         if is_stale_repo(repo.model_dump(by_alias=True), now=now, days=days)
     ]
     list_path = format_display_path(
@@ -768,22 +804,24 @@ def run_backup_command(
     if force and dry_run:
         context.ui.error("Cannot combine --force and --dry-run")
         return 1
-    repos = _load_repos(context)
-    if repos is None:
+    loaded = _load_repos(context)
+    if loaded is None:
         return 1
     list_path = format_display_path(
         context.paths.backups_file, home=context.env.get("HOME")
     )
     if all_repos:
+        if not dry_run and not _persist_migration(loaded, context):
+            return 1
         _start_backup_frame(context, list_path, dry_run=dry_run)
         return run_backup_batch(
-            [repo.url for repo in repos],
+            [repo.url for repo in loaded.repos],
             context=context,
             force=force,
             dry_run=dry_run,
         )
     return _select_and_backup(
-        repos,
+        loaded.repos,
         context=context,
         heading="Select repos to backup",
         tty_error=(

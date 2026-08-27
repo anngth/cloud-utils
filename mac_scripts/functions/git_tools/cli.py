@@ -71,7 +71,7 @@ def run_cli(
 
     action = argv[0] if argv else None
     args = list(argv[1:])
-    if action is None:
+    if not action:
         ui.usage()
         return 1
     if action in {"help", "-h", "--help"}:
