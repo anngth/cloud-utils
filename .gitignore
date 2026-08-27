@@ -53,6 +53,7 @@ tmp/
 # Python
 __pycache__/
 *.py[cod]
+.venv/
 
 # User-specific application data that shouldn't be shared
 StirlingPDF/logs/

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cloud-utils-mac-cli"
+version = "0.1.0"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "click",
+  "prompt-toolkit",
+  "pydantic",
+  "pyotp",
+]
+
+[dependency-groups]
+dev = [
+  "pytest",
+  "pytest-cov",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+  "mac_scripts/functions/shared",
+  "mac_scripts/functions/twofa",
+  "mac_scripts/functions/git_tools",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests", "mac_scripts/functions"]
