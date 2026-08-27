@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import os
 import signal
+import sys
 import termios
 import threading
 from types import FrameType
@@ -14,7 +15,7 @@ from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.containers import Window
-from prompt_toolkit.output import Output, create_output
+from prompt_toolkit.output import DummyOutput, Output, create_output
 
 
 SelectorKind = Literal["continue", "submit", "cancel"]
@@ -88,6 +89,17 @@ def _prompt_input(source: Input | TextIO | None) -> tuple[Input, bool]:
 
 
 def _prompt_output(destination: Output | TextIO | None) -> Output:
+    stream = (
+        getattr(destination, "stdout", None)
+        if isinstance(destination, Output)
+        else (sys.stdout if destination is None else destination)
+    )
+    try:
+        is_tty = bool(stream is not None and stream.isatty())
+    except (AttributeError, OSError):
+        is_tty = False
+    if not is_tty:
+        return DummyOutput()
     if isinstance(destination, Output):
         return destination
     return create_output(stdout=destination)

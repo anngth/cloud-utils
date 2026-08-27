@@ -1,3 +1,7 @@
+import io
+import os
+import pty
+
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
@@ -148,3 +152,42 @@ def test_run_selector_preserves_a_split_arrow_sequence() -> None:
 
     assert result.kind == "submit"
     assert result.selected == (ITEMS[1].value,)
+
+
+def test_run_selector_does_not_paint_prompt_toolkit_to_redirected_output() -> None:
+    master_fd, slave_fd = pty.openpty()
+    redirected = io.StringIO()
+    sent_keys = False
+    tty_input = open(
+        os.dup(slave_fd),
+        "r",
+        encoding="utf-8",
+        buffering=1,
+        closefd=True,
+    )
+
+    def render(state) -> None:
+        nonlocal sent_keys
+        selected = ",".join(str(index) for index in sorted(state.selected))
+        redirected.write(f"FRAME:{state.cursor}:{selected}\n")
+        if not sent_keys:
+            sent_keys = True
+            os.write(master_fd, b" \r")
+
+    try:
+        result = run_selector(
+            ITEMS,
+            initial=(),
+            multiple=True,
+            input=tty_input,
+            output=redirected,
+            render=render,
+        )
+    finally:
+        tty_input.close()
+        os.close(master_fd)
+        os.close(slave_fd)
+
+    assert result.kind == "submit"
+    assert result.selected == (ITEMS[0].value,)
+    assert redirected.getvalue() == "FRAME:0:\nFRAME:0:0\n"
