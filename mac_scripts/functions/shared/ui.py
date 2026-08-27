@@ -29,6 +29,10 @@ def _fg(color: str, text: object) -> str:
     return f"{color}{text}{FG_RESET}"
 
 
+def _split_lines(text: object) -> list[str]:
+    return str(text).replace("\r\n", "\n").split("\n")
+
+
 class FrameUi:
     def __init__(self, stdout: TextWriter, stderr: TextWriter) -> None:
         self.stdout = stdout
@@ -79,14 +83,14 @@ class FrameUi:
     ) -> None:
         resolved = tone if tone in TONE_COLOR else "muted"
         symbol = marker or ("□" if resolved == "muted" else "■")
-        first, *rest = str(text).splitlines() or [""]
+        first, *rest = _split_lines(text)
         self._out(f"{self.pipe}  {_fg(TONE_COLOR[resolved], symbol)} {first}")
         for continuation in rest:
             self.detail(continuation)
 
     def detail(self, text: object, *, tone: str = "muted") -> None:
         resolved = tone if tone in TONE_COLOR else "muted"
-        for line in str(text).splitlines() or [""]:
+        for line in _split_lines(text):
             self._out(f"{self.pipe}      {_fg(TONE_COLOR[resolved], line)}")
 
     def end(self, text: object = "") -> None:

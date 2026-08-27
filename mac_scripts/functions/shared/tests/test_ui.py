@@ -81,6 +81,22 @@ def test_multiline_items_and_details_stay_inside_frame() -> None:
     )
 
 
+def test_terminal_newlines_preserve_blank_continuation_rows() -> None:
+    stdout, stderr = io.StringIO(), io.StringIO()
+    ui = FrameUi(stdout, stderr)
+
+    ui.item("a\n")
+    ui.detail("b\n")
+
+    assert stderr.getvalue() == ""
+    assert stdout.getvalue() == (
+        "\x1b[36m│\x1b[39m  \x1b[32m■\x1b[39m a\n"
+        "\x1b[36m│\x1b[39m      \x1b[90m\x1b[39m\n"
+        "\x1b[36m│\x1b[39m      \x1b[90mb\x1b[39m\n"
+        "\x1b[36m│\x1b[39m      \x1b[90m\x1b[39m\n"
+    )
+
+
 def test_help_rows_and_prompt_text_use_frame_primitives() -> None:
     stdout, stderr = io.StringIO(), io.StringIO()
     ui = FrameUi(stdout, stderr)
