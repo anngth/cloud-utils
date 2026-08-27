@@ -162,6 +162,7 @@ def _sitecustomize(tmp_path: Path) -> Path:
         "elif prior == 'callable':\n"
         "    def prior_handler(signum, frame):\n"
         "        Path(os.environ['TWOFA_SIGNAL_MARKER']).write_text(str(signum))\n"
+        "        time.sleep(0.2)\n"
         "    signal.signal(signal.SIGHUP, prior_handler)\n"
         "if os.environ.get('TWOFA_UNEXPECTED') == '1':\n"
         "    import pyotp\n"
@@ -363,7 +364,7 @@ def test_ignored_prior_sighup_handler_keeps_reading_hidden_input(
         session.close()
 
 
-def test_callable_prior_sighup_handler_runs_after_cleanup_then_read_resumes(
+def test_immediate_input_during_returning_sighup_handler_stays_hidden(
     tmp_path: Path,
 ) -> None:
     marker = tmp_path / "signal.marker"
@@ -373,9 +374,6 @@ def test_callable_prior_sighup_handler_runs_after_cleanup_then_read_resumes(
         os.kill(session.child_pid, signal.SIGHUP)
         session.wait_until(marker.exists)
         assert marker.read_text(encoding="utf-8") == str(signal.SIGHUP)
-        session.wait_until(
-            lambda: not (termios.tcgetattr(session.slave)[3] & termios.ECHO)
-        )
         os.write(session.master, f"{SECRET}\n".encode())
         returncode, transcript = session.finish()
 

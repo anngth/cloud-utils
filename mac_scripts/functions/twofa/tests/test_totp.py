@@ -1,6 +1,6 @@
 import pytest
 
-from twofa.totp import generate_totp, normalize_base32
+from twofa.totp import Base32Error, generate_totp, normalize_base32
 
 
 # RFC 6238 Appendix B secret (ASCII) as Base32.
@@ -43,12 +43,16 @@ def test_normalize_base32_strips_whitespace_and_uppercases() -> None:
 def test_generate_totp_preserves_base32_validation_messages(
     secret: str, message: str
 ) -> None:
-    with pytest.raises(ValueError, match=f"^{message}$"):
+    with pytest.raises(Base32Error, match=f"^{message}$"):
         generate_totp(secret, now=59)
 
 
+def test_base32_error_is_a_value_error() -> None:
+    assert issubclass(Base32Error, ValueError)
+
+
 def test_generate_totp_rejects_nonzero_discarded_base32_bits() -> None:
-    with pytest.raises(ValueError, match="^invalid Base32 encoding$"):
+    with pytest.raises(Base32Error, match="^invalid Base32 encoding$"):
         generate_totp("GEZD", now=59)
 
 

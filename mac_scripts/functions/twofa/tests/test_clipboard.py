@@ -1,7 +1,7 @@
 import pytest
 
 from shared.process import CommandResult
-from twofa.clipboard import copy_to_clipboard
+from twofa.clipboard import ClipboardError, copy_to_clipboard
 
 
 def test_copy_to_clipboard_sends_only_code_to_pbcopy() -> None:
@@ -22,7 +22,10 @@ def test_copy_to_clipboard_hides_code_when_pbcopy_fails() -> None:
     def runner(argv, **kwargs):
         return CommandResult(1, stderr="clipboard unavailable")
 
-    with pytest.raises(RuntimeError, match="^failed to copy code to clipboard$") as error:
+    with pytest.raises(
+        ClipboardError,
+        match="^failed to copy code to clipboard$",
+    ) as error:
         copy_to_clipboard(code, runner=runner)
 
     assert code not in str(error.value)
@@ -35,7 +38,14 @@ def test_copy_to_clipboard_hides_code_when_pbcopy_cannot_launch(error_type) -> N
     def runner(argv, **kwargs):
         raise error_type("clipboard unavailable")
 
-    with pytest.raises(RuntimeError, match="^failed to copy code to clipboard$") as error:
+    with pytest.raises(
+        ClipboardError,
+        match="^failed to copy code to clipboard$",
+    ) as error:
         copy_to_clipboard(code, runner=runner)
 
     assert code not in str(error.value)
+
+
+def test_clipboard_error_is_a_runtime_error() -> None:
+    assert issubclass(ClipboardError, RuntimeError)

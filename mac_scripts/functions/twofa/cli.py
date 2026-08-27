@@ -9,27 +9,19 @@ from typing import Callable, NoReturn, Sequence
 
 import click
 
-from .clipboard import copy_to_clipboard
-from .totp import generate_totp
+from .clipboard import ClipboardError, copy_to_clipboard
+from .totp import Base32Error, generate_totp
 from .ui import TwoFactorUi
 
 
 _MANAGED_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
-_TTY_ERROR_MESSAGES = {
-    "interactive terminal required",
-    "failed to disable terminal echo",
-    "failed to restore terminal echo",
-}
-_CLIPBOARD_ERROR_MESSAGE = "failed to copy code to clipboard"
-
-
-class _CliFailure(Exception):
+class TtyInputError(RuntimeError):
     pass
 
 
 class _SignalGuard:
     def __init__(self) -> None:
-        self.received: list[int] = []
+        self.received: list[tuple[int, FrameType | None]] = []
         self._previous_mask = signal.pthread_sigmask(
             signal.SIG_BLOCK, _MANAGED_SIGNALS
         )
@@ -59,7 +51,21 @@ class _SignalGuard:
         return self._read_fd
 
     def _record(self, signum: int, _frame: FrameType | None) -> None:
-        self.received.append(signum)
+        self.received.append((signum, _frame))
+
+    def handle_received(self) -> list[int]:
+        default_signals: list[int] = []
+        while self.received:
+            signum, frame = self.received.pop(0)
+            previous = self._previous_handlers[signum]
+            if previous == signal.SIG_DFL:
+                default_signals.append(signum)
+                break
+            if previous == signal.SIG_IGN:
+                continue
+            if callable(previous):
+                previous(signum, frame)
+        return default_signals
 
     def activate(self) -> None:
         signal.pthread_sigmask(signal.SIG_SETMASK, self._previous_mask)
@@ -133,8 +139,9 @@ def _read_hidden_line(
     data = bytearray()
 
     while True:
-        if guard.received:
-            return None, list(guard.received)
+        default_signals = guard.handle_received()
+        if default_signals:
+            return None, default_signals
 
         try:
             readable, _, _ = select.select([tty_fd, guard.wakeup_fd], [], [])
@@ -143,8 +150,9 @@ def _read_hidden_line(
 
         if guard.wakeup_fd in readable:
             _drain_wakeup(guard.wakeup_fd)
-            if guard.received:
-                return None, list(guard.received)
+            default_signals = guard.handle_received()
+            if default_signals:
+                return None, default_signals
 
         if tty_fd not in readable:
             continue
@@ -159,7 +167,6 @@ def _read_secret_once(
     prompt: str,
     *,
     tty_path: str,
-    show_prompt: bool,
 ) -> tuple[str | None, list[int]]:
     guard = _SignalGuard()
     tty = None
@@ -169,7 +176,7 @@ def _read_secret_once(
         try:
             tty_fd = os.open(tty_path, os.O_RDWR)
         except OSError:
-            raise RuntimeError("interactive terminal required") from None
+            raise TtyInputError("interactive terminal required") from None
 
         try:
             tty = open(
@@ -181,12 +188,12 @@ def _read_secret_once(
             )
         except (OSError, ValueError):
             os.close(tty_fd)
-            raise RuntimeError("interactive terminal required") from None
+            raise TtyInputError("interactive terminal required") from None
 
         try:
             original = termios.tcgetattr(tty.fileno())
         except (OSError, termios.error):
-            raise RuntimeError("interactive terminal required") from None
+            raise TtyInputError("interactive terminal required") from None
 
         hidden = list(original)
         hidden[3] &= ~termios.ECHO
@@ -194,30 +201,30 @@ def _read_secret_once(
         try:
             termios.tcsetattr(tty.fileno(), termios.TCSADRAIN, hidden)
         except (OSError, termios.error):
-            raise RuntimeError("failed to disable terminal echo") from None
+            raise TtyInputError("failed to disable terminal echo") from None
 
-        if show_prompt:
-            try:
-                _write_tty(tty.fileno(), prompt)
-            except OSError:
-                raise RuntimeError("interactive terminal required") from None
+        try:
+            _write_tty(tty.fileno(), prompt)
+        except OSError:
+            raise TtyInputError("interactive terminal required") from None
 
         guard.activate()
         try:
             try:
                 secret, caught_signals = _read_hidden_line(tty.fileno(), guard)
             except (OSError, UnicodeError):
-                raise RuntimeError("interactive terminal required") from None
+                raise TtyInputError("interactive terminal required") from None
         finally:
             guard.block()
 
-        if guard.received:
-            return None, list(guard.received)
+        caught_signals.extend(guard.handle_received())
+        if caught_signals:
+            return None, caught_signals
 
         try:
             _write_tty(tty.fileno(), "\n")
         except OSError:
-            raise RuntimeError("interactive terminal required") from None
+            raise TtyInputError("interactive terminal required") from None
         return secret, caught_signals
     finally:
         try:
@@ -225,7 +232,7 @@ def _read_secret_once(
                 try:
                     termios.tcsetattr(tty.fileno(), termios.TCSADRAIN, original)
                 except (OSError, termios.error):
-                    raise RuntimeError("failed to restore terminal echo") from None
+                    raise TtyInputError("failed to restore terminal echo") from None
         finally:
             try:
                 if tty is not None:
@@ -236,22 +243,16 @@ def _read_secret_once(
 
 def read_secret(prompt: str, *, tty_path: str = "/dev/tty") -> str:
     if threading.current_thread() is not threading.main_thread():
-        raise RuntimeError("interactive terminal required")
+        raise TtyInputError("interactive terminal required")
 
-    show_prompt = True
-    while True:
-        secret, caught_signals = _read_secret_once(
-            prompt,
-            tty_path=tty_path,
-            show_prompt=show_prompt,
-        )
-        if not caught_signals:
-            return secret or ""
+    secret, caught_signals = _read_secret_once(prompt, tty_path=tty_path)
+    if not caught_signals:
+        return secret or ""
 
-        for signum in caught_signals:
-            os.kill(os.getpid(), signum)
+    for signum in caught_signals:
+        os.kill(os.getpid(), signum)
 
-        show_prompt = False
+    return ""
 
 
 def run_cli(
@@ -291,43 +292,32 @@ def run_cli(
         resolved_ui.begin_totp()
         frame_open = True
 
-        try:
-            secret = read_secret_fn(resolved_ui.secret_prompt())
-        except RuntimeError as error:
-            if str(error) not in _TTY_ERROR_MESSAGES:
-                raise
-            raise _CliFailure(str(error)) from None
-
-        try:
-            code = generate_totp(secret, now=now)
-        except ValueError as error:
-            raise _CliFailure(str(error)) from None
-
-        try:
-            copy_fn(code)
-        except RuntimeError as error:
-            if str(error) != _CLIPBOARD_ERROR_MESSAGE:
-                raise
-            raise _CliFailure(str(error)) from None
+        secret = read_secret_fn(resolved_ui.secret_prompt())
+        code = generate_totp(secret, now=now)
+        copy_fn(code)
 
         resolved_ui.success_copied(code)
         frame_open = False
         return 0
 
     try:
-        context = command.make_context("2fa", list(argv))
-        with context:
-            result = command.invoke(context)
-    except (KeyboardInterrupt, click.Abort):
+        try:
+            context = command.make_context("2fa", list(argv))
+            with context:
+                result = command.invoke(context)
+        except (KeyboardInterrupt, click.Abort):
+            return 130
+        except (
+            TtyInputError,
+            Base32Error,
+            ClipboardError,
+            click.ClickException,
+        ) as error:
+            close_frame()
+            resolved_ui.error(str(error))
+            return 1
+    finally:
         close_frame()
-        return 130
-    except (_CliFailure, click.ClickException) as error:
-        close_frame()
-        resolved_ui.error(str(error))
-        return 1
-    except BaseException:
-        close_frame()
-        raise
 
     return int(result)
 

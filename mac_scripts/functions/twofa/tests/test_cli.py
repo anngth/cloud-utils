@@ -128,13 +128,13 @@ def test_success_never_emits_secret(harness: CliHarness) -> None:
         (
             lambda _prompt: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
             lambda _code: (_ for _ in ()).throw(
-                RuntimeError("failed to copy code to clipboard")
+                cli.ClipboardError("failed to copy code to clipboard")
             ),
             "failed to copy code to clipboard",
         ),
         (
             lambda _prompt: (_ for _ in ()).throw(
-                RuntimeError("interactive terminal required")
+                cli.TtyInputError("interactive terminal required")
             ),
             lambda _code: None,
             "interactive terminal required",
@@ -198,6 +198,49 @@ def test_unexpected_common_exceptions_propagate_without_printing_message(
     def copy(_code: str) -> None:
         if operation == "copy":
             raise error_type(message)
+
+    with pytest.raises(error_type, match=f"^{message}$"):
+        run_cli([], read_secret_fn=read, copy_fn=copy, now=59, ui=harness.ui)
+
+    assert message not in harness.stdout.getvalue()
+    assert message not in harness.stderr.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("operation", "error_type", "message"),
+    [
+        ("read", RuntimeError, "interactive terminal required"),
+        ("generate", ValueError, "invalid Base32 character"),
+        ("copy", RuntimeError, "failed to copy code to clipboard"),
+    ],
+)
+def test_same_message_non_domain_exceptions_propagate_without_printing(
+    harness: CliHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+
+    def raise_collision() -> None:
+        raise error_type(message)
+
+    def read(_prompt: str) -> str:
+        if operation == "read":
+            raise_collision()
+        return secret
+
+    def copy(_code: str) -> None:
+        if operation == "copy":
+            raise_collision()
+
+    if operation == "generate":
+        monkeypatch.setattr(
+            cli,
+            "generate_totp",
+            lambda *_args, **_kwargs: raise_collision(),
+        )
 
     with pytest.raises(error_type, match=f"^{message}$"):
         run_cli([], read_secret_fn=read, copy_fn=copy, now=59, ui=harness.ui)
@@ -324,7 +367,7 @@ def test_read_secret_rejects_non_main_thread_before_opening_tty(
     assert not thread.is_alive()
     assert opened == []
     assert len(errors) == 1
-    assert type(errors[0]) is RuntimeError
+    assert type(errors[0]) is cli.TtyInputError
     assert str(errors[0]) == "interactive terminal required"
 
 
@@ -468,22 +511,23 @@ def test_signal_arriving_during_handler_restore_uses_restored_handler(
     assert events == [(True, True, True)]
 
 
-def test_signal_arriving_during_handler_installation_is_deferred_and_redelivered(
+def test_signal_arriving_during_handler_installation_runs_callable_with_echo_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tty = FakeTty(line="hidden\n")
     original, changes = _fake_tty_setup(monkeypatch, tty)
     real_signal = signal.signal
     previous = signal.getsignal(signal.SIGHUP)
-    events: list[tuple[bool, bool, bool]] = []
+    events: list[tuple[int, bool, bool, bool]] = []
     injected = False
 
-    def prior_handler(_signum: int, _frame: object) -> None:
+    def prior_handler(signum: int, frame: object) -> None:
         events.append(
             (
+                signum,
+                frame is not None,
                 tty.closed,
-                signal.getsignal(signal.SIGHUP) is prior_handler,
-                changes[-1] == original,
+                bool(changes[-1][3] & cli.termios.ECHO),
             )
         )
 
@@ -503,8 +547,55 @@ def test_signal_arriving_during_handler_installation_is_deferred_and_redelivered
     finally:
         real_signal(signal.SIGHUP, previous)
 
-    assert events == [(True, True, True)]
+    assert events == [(signal.SIGHUP, True, False, False)]
     assert tty.writes.count("prompt: ") == 1
+
+
+def test_raising_prior_handler_restores_terminal_and_signal_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class HandlerFailure(Exception):
+        pass
+
+    tty = FakeTty(line="hidden\n")
+    original, changes = _fake_tty_setup(monkeypatch, tty)
+    real_signal = signal.signal
+    previous = signal.getsignal(signal.SIGHUP)
+    events: list[tuple[int, bool, bool]] = []
+    injected = False
+
+    def prior_handler(signum: int, _frame: object) -> None:
+        events.append(
+            (
+                signum,
+                tty.closed,
+                bool(changes[-1][3] & cli.termios.ECHO),
+            )
+        )
+        raise HandlerFailure("handler failed")
+
+    real_signal(signal.SIGHUP, prior_handler)
+
+    def signal_with_injection(signum: int, handler: object):
+        nonlocal injected
+        result = real_signal(signum, handler)
+        if signum == signal.SIGHUP and handler is not prior_handler and not injected:
+            injected = True
+            os.kill(os.getpid(), signal.SIGHUP)
+        return result
+
+    monkeypatch.setattr(cli.signal, "signal", signal_with_injection)
+    try:
+        with pytest.raises(HandlerFailure, match="^handler failed$"):
+            read_secret("prompt: ", tty_path="ignored")
+
+        assert signal.getsignal(signal.SIGHUP) is prior_handler
+    finally:
+        real_signal(signal.SIGHUP, previous)
+
+    assert events == [(signal.SIGHUP, False, False)]
+    assert changes[-1] == original
+    assert tty.closed
 
 
 def test_read_secret_translates_missing_tty(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -513,7 +604,10 @@ def test_read_secret_translates_missing_tty(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(cli.os, "open", missing)
 
-    with pytest.raises(RuntimeError, match="^interactive terminal required$"):
+    with pytest.raises(
+        cli.TtyInputError,
+        match="^interactive terminal required$",
+    ):
         read_secret("prompt: ", tty_path="missing")
 
 
@@ -531,7 +625,10 @@ def test_read_secret_restores_after_read_failure(
     tty = FakeTty(read_error=read_error)
     original, changes = _fake_tty_setup(monkeypatch, tty)
 
-    with pytest.raises(RuntimeError, match="^interactive terminal required$"):
+    with pytest.raises(
+        cli.TtyInputError,
+        match="^interactive terminal required$",
+    ):
         read_secret("prompt: ", tty_path="ignored")
 
     assert changes[-1] == original
@@ -568,7 +665,10 @@ def test_read_secret_reports_disable_failure_after_restoration_attempt(
 
     monkeypatch.setattr(cli.termios, "tcsetattr", fail_disable)
 
-    with pytest.raises(RuntimeError, match="^failed to disable terminal echo$"):
+    with pytest.raises(
+        cli.TtyInputError,
+        match="^failed to disable terminal echo$",
+    ):
         read_secret("prompt: ", tty_path="ignored")
 
     assert calls[-1] == original
@@ -589,10 +689,17 @@ def test_read_secret_reports_restore_failure(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(cli.termios, "tcsetattr", fail_restore)
 
-    with pytest.raises(RuntimeError, match="^failed to restore terminal echo$"):
+    with pytest.raises(
+        cli.TtyInputError,
+        match="^failed to restore terminal echo$",
+    ):
         read_secret("prompt: ", tty_path="ignored")
 
     assert tty.closed
+
+
+def test_tty_input_error_is_a_runtime_error() -> None:
+    assert issubclass(cli.TtyInputError, RuntimeError)
 
 
 def test_main_exits_with_run_cli_result(monkeypatch: pytest.MonkeyPatch) -> None:
