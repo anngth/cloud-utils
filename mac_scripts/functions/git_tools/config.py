@@ -12,8 +12,10 @@ from typing import Annotated, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, InstanceOf, TypeAdapter, ValidationError
 from pydantic import field_validator, model_validator
 
+from .last_backup import parse_js_timestamp
+
 _ISO_UTC_TIMESTAMP_RE = re.compile(
-    r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?Z$"
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$"
 )
 _TIMESTAMP_FIELDS_BY_VERSION = {
     2: ("lastBackupAt",),
@@ -22,22 +24,11 @@ _TIMESTAMP_FIELDS_BY_VERSION = {
 }
 
 def is_iso_utc_timestamp(value: object) -> bool:
-    if not isinstance(value, str):
-        return False
-    match = _ISO_UTC_TIMESTAMP_RE.fullmatch(value)
-    if match is None:
-        return False
-
-    _, month, day, hour, minute, second, millis = match.groups()
-    month, day, hour, minute, second = map(int, (month, day, hour, minute, second))
-
-    if not 1 <= month <= 12 or not 1 <= day <= 31:
-        return False
-    if not 0 <= minute <= 59 or not 0 <= second <= 59:
-        return False
-    if hour == 24:
-        return minute == 0 and second == 0 and (millis is None or millis == "000")
-    return 0 <= hour <= 23
+    return (
+        isinstance(value, str)
+        and _ISO_UTC_TIMESTAMP_RE.fullmatch(value) is not None
+        and parse_js_timestamp(value) is not None
+    )
 
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="ignore", strict=True, populate_by_name=True)

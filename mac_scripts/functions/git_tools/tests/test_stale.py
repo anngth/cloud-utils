@@ -45,6 +45,14 @@ def test_node_invalid_compact_and_week_timestamps_are_stale(timestamp: str) -> N
     assert is_stale_repo({"lastCheckedAt": timestamp}, now=NOW)
 
 
+def test_node_normalized_config_timestamp_does_not_trigger_unintended_backup() -> None:
+    now = datetime(2026, 3, 5, tzinfo=timezone.utc)
+
+    assert not is_stale_repo(
+        {"lastCheckedAt": "2026-02-31T24:00:00Z"}, now=now, days=7
+    )
+
+
 def test_datetime_must_be_timezone_aware() -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
         is_stale_repo({}, now=datetime(2026, 8, 8, 12))

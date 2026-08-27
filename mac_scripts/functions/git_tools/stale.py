@@ -1,32 +1,13 @@
 from datetime import datetime, timezone
-import re
 from typing import Any, Mapping
+
+from .last_backup import parse_js_timestamp
 
 _MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000
 _UTC = timezone.utc
-_DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_UTC_ISO_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$"
-)
 
-def _parse_timestamp(value: str | None) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not text:
-        return None
-    date_only = _DATE_ONLY_RE.fullmatch(text) is not None
-    if not date_only and _UTC_ISO_RE.fullmatch(text) is None:
-        return None
-    if date_only:
-        text = f"{text}T00:00:00+00:00"
-    elif text.endswith("Z"):
-        text = f"{text[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    return parsed
+def _parse_timestamp(value: str | None) -> int | None:
+    return parse_js_timestamp(value)
 
 def _epoch_milliseconds(value: datetime) -> int:
     if value.tzinfo is None or value.utcoffset() is None:
@@ -46,8 +27,8 @@ def is_stale_repo(
     last_checked = entry.get("lastCheckedAt")
     if last_checked is None:
         return True
-    then = _parse_timestamp(last_checked)
-    if then is None:
+    then_ms = _parse_timestamp(last_checked)
+    if then_ms is None:
         return True
     threshold = days * _MILLISECONDS_PER_DAY
-    return now_ms - _epoch_milliseconds(then) > threshold
+    return now_ms - then_ms > threshold

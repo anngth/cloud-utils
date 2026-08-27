@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+import json
+import subprocess
 
 import pytest
 
@@ -6,10 +8,46 @@ from git_tools.last_backup import (
     format_last_backup_label,
     format_last_checked_label,
     format_timestamp_label,
+    parse_js_timestamp,
 )
 
 
 NOW = datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "2026-02-31T00:00:00Z",
+        "2023-02-29T24:00:00.000Z",
+        "2024-02-30T12:34:56+07:00",
+        "2026-08-08T09:30:00.123456789Z",
+        "2026-08-08T09:30:00.1-0230",
+        "2026-02-31T00:00:00",
+        "0000-02-30T24:00:00Z",
+        "2026-01-32T00:00:00Z",
+        "2026-08-08T24:00:00.001Z",
+        "2026-08-08T00:00:00+24:00",
+        "20260808",
+        "2026-W32-5",
+        " 2026-08-08T00:00:00Z ",
+    ],
+)
+def test_parse_js_timestamp_matches_node_normalization(value: object) -> None:
+    script = (
+        "const value = JSON.parse(process.argv[1]); "
+        "const parsed = new Date(value).getTime(); "
+        "process.stdout.write(JSON.stringify(Number.isNaN(parsed) ? null : parsed));"
+    )
+    node = subprocess.run(
+        ["node", "-e", script, json.dumps(value)],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert parse_js_timestamp(value) == json.loads(node.stdout)
 
 
 def test_format_last_backup_label_uses_relative_and_local_datetime() -> None:
@@ -71,3 +109,19 @@ def test_format_timestamp_label_clamps_future_timestamps_to_just_now() -> None:
     assert format_timestamp_label(
         "2026-08-08T11:00:00.000Z", prefix="Last backup", now=NOW
     ).startswith("Last backup: just now (")
+
+
+def test_format_timestamp_label_uses_node_normalized_overflow() -> None:
+    now = datetime(2026, 3, 5, tzinfo=timezone.utc)
+
+    assert format_timestamp_label(
+        "2026-02-31T24:00:00Z", prefix="Last backup", now=now
+    ).startswith("Last backup: 1 day ago (")
+
+
+def test_format_timestamp_label_handles_year_zero_like_node() -> None:
+    label = format_timestamp_label(
+        "0000-01-01T00:00:00Z", prefix="Last backup", now=NOW
+    )
+
+    assert "Invalid timestamp" not in label
