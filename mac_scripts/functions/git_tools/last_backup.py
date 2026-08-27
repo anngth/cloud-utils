@@ -1,6 +1,7 @@
 """Pure timestamp labels used by the ``gt`` UI."""
 
 from datetime import datetime, timezone
+import re
 
 
 _MILLISECONDS_PER_SECOND = 1000
@@ -8,16 +9,25 @@ _MILLISECONDS_PER_MINUTE = 60 * _MILLISECONDS_PER_SECOND
 _MILLISECONDS_PER_HOUR = 60 * _MILLISECONDS_PER_MINUTE
 _MILLISECONDS_PER_DAY = 24 * _MILLISECONDS_PER_HOUR
 _UTC = timezone.utc
+_DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_UTC_ISO_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$"
+)
+_UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=_UTC)
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
+    if value is None:
+        return _UNIX_EPOCH
     if not isinstance(value, str):
         return None
     text = value.strip()
     if not text:
         return None
-    date_only = len(text) == 10 and text[4] == "-" and text[7] == "-"
-    if text.endswith(("Z", "z")):
+    date_only = _DATE_ONLY_RE.fullmatch(text) is not None
+    if not date_only and _UTC_ISO_RE.fullmatch(text) is None:
+        return None
+    if text.endswith("Z"):
         text = f"{text[:-1]}+00:00"
     try:
         parsed = datetime.fromisoformat(text)
@@ -25,8 +35,6 @@ def _parse_timestamp(value: str | None) -> datetime | None:
         return None
     if date_only:
         parsed = parsed.replace(tzinfo=_UTC)
-    elif parsed.tzinfo is None or parsed.utcoffset() is None:
-        parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
     return parsed
 
 

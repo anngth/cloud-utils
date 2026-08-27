@@ -53,6 +53,20 @@ def test_format_timestamp_label_soft_fallback_on_bad_iso(prefix: str) -> None:
     )
 
 
+@pytest.mark.parametrize("iso_string", ["20260808", "2026-W32-5"])
+def test_format_timestamp_label_rejects_node_invalid_date_forms(iso_string: str) -> None:
+    assert format_timestamp_label(iso_string, prefix="Last backup", now=NOW) == (
+        "Last backup: Invalid timestamp"
+    )
+
+
+def test_format_timestamp_label_treats_none_as_epoch_like_node_date() -> None:
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    label = format_timestamp_label(None, prefix="Last backup", now=epoch)
+    assert label.startswith("Last backup: just now (")
+    assert "1970-01-01" in label
+
+
 def test_format_timestamp_label_clamps_future_timestamps_to_just_now() -> None:
     assert format_timestamp_label(
         "2026-08-08T11:00:00.000Z", prefix="Last backup", now=NOW

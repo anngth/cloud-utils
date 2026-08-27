@@ -40,6 +40,11 @@ def test_invalid_last_checked_is_stale() -> None:
     assert is_stale_repo({"lastCheckedAt": "not-a-date"}, now=NOW)
 
 
+@pytest.mark.parametrize("timestamp", ["20260808", "2026-W32-5"])
+def test_node_invalid_compact_and_week_timestamps_are_stale(timestamp: str) -> None:
+    assert is_stale_repo({"lastCheckedAt": timestamp}, now=NOW)
+
+
 def test_datetime_must_be_timezone_aware() -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
         is_stale_repo({}, now=datetime(2026, 8, 8, 12))

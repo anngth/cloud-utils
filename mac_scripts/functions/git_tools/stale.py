@@ -1,11 +1,16 @@
 """Pure stale-repository policy helper."""
 
 from datetime import datetime, timezone
+import re
 from typing import Any, Mapping
 
 
 _MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000
 _UTC = timezone.utc
+_DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_UTC_ISO_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$"
+)
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -14,14 +19,17 @@ def _parse_timestamp(value: str | None) -> datetime | None:
     text = value.strip()
     if not text:
         return None
-    if text.endswith(("Z", "z")):
+    date_only = _DATE_ONLY_RE.fullmatch(text) is not None
+    if not date_only and _UTC_ISO_RE.fullmatch(text) is None:
+        return None
+    if date_only:
+        text = f"{text}T00:00:00+00:00"
+    elif text.endswith("Z"):
         text = f"{text[:-1]}+00:00"
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
     return parsed
 
 
