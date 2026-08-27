@@ -337,8 +337,14 @@ def test_metadata_update_preserves_nested_extensions_and_js_bytes(tmp_path: Path
         "repos": [
             {
                 "url": URL_A,
+                "10": {"value": "ten"},
                 "provider": {"kind": "github", "flags": ["mirror", {"depth": 2}]},
-                "tuning": {"ratio": 1.0, "tiny": 1e-7, "huge": 1e21},
+                "tuning": {
+                    "ratio": 1.0,
+                    "tiny": 1e-7,
+                    "huge": 1e21,
+                    "indexes": {"10": "ten", "2": "two", "01": "leading"},
+                },
                 "lastBackupAt": None,
                 "labels": ["critical", {"team": "platform"}],
                 "lastCheckedAt": None,

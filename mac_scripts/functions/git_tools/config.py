@@ -216,6 +216,12 @@ def _js_quote_string(value: str) -> str:
     quoted = json.dumps(_normalize_surrogate_pairs(value), ensure_ascii=False)
     return quoted.encode("utf-8", errors="backslashreplace").decode("utf-8")
 
+def _js_property_order(item: tuple[object, object]) -> tuple[bool, int]:
+    key = str(item[0])
+    index = int(key) if key.isascii() and key.isdigit() and len(key) <= 10 else -1
+    indexed = 0 <= index < 4_294_967_295 and str(index) == key
+    return not indexed, index if indexed else 0
+
 def _js_json_stringify(value: object) -> str:
     if value is None:
         return "null"
@@ -230,7 +236,10 @@ def _js_json_stringify(value: object) -> str:
     if isinstance(value, list | tuple):
         return f"[{','.join(_js_json_stringify(item) for item in value)}]"
     if isinstance(value, Mapping):
-        entries = (f"{_js_quote_string(str(key))}:{_js_json_stringify(item)}" for key, item in value.items())
+        entries = (
+            f"{_js_quote_string(str(key))}:{_js_json_stringify(item)}"
+            for key, item in sorted(value.items(), key=_js_property_order)
+        )
         return f"{{{','.join(entries)}}}"
     return "undefined"
 
@@ -308,7 +317,7 @@ def _js_json_pretty(value: object, level: int = 0) -> str:
     if isinstance(value, Mapping):
         rendered = (
             f"{_js_quote_string(str(key))}: {_js_json_pretty(item, level + 1)}"
-            for key, item in value.items()
+            for key, item in sorted(value.items(), key=_js_property_order)
         )
         opening, closing = "{", "}"
     if isinstance(value, list | tuple):
@@ -378,9 +387,7 @@ def write_backups_document(
 ) -> WriteBackupsResult:
     raw_document = _as_raw_document(document)
     try:
-        parsed = BackupsDocumentV4.model_validate(
-            raw_document, by_alias=True, by_name=False
-        )
+        parsed = BackupsDocumentV4.model_validate(raw_document, by_alias=True, by_name=False)
         _remember_repo_order(parsed, raw_document)
     except ValidationError:
         return WriteBackupsResult(ok=False, error="Invalid backups document")
