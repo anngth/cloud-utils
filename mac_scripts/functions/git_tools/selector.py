@@ -36,9 +36,7 @@ class SelectorResult:
     state: SelectorState
     selected: tuple[str, ...]
 
-def create_selector_state(
-    items: Iterable[SelectorItem], *, initial: Iterable[str] = ()
-) -> SelectorState:
+def create_selector_state(items: Iterable[SelectorItem], *, initial: Iterable[str] = ()) -> SelectorState:
     copied = tuple(items)
     initial_values = frozenset(initial)
     selected = frozenset(
@@ -46,9 +44,7 @@ def create_selector_state(
     )
     return SelectorState(copied, 0, selected)
 
-def reduce_selector(
-    state: SelectorState, key: str, *, multiple: bool
-) -> SelectorResult:
+def reduce_selector(state: SelectorState, key: str, *, multiple: bool) -> SelectorResult:
     cursor = state.cursor
     selected = set(state.selected)
 
@@ -132,41 +128,38 @@ def run_selector(
         else:
             event.app.exit(result=result)
 
-    @bindings.add("up")
-    @bindings.add("k")
     def move_up(event: KeyPressEvent) -> None:
         apply("up", event)
 
-    @bindings.add("down")
-    @bindings.add("j")
     def move_down(event: KeyPressEvent) -> None:
         apply("down", event)
 
-    @bindings.add(" ")
     def toggle(event: KeyPressEvent) -> None:
         apply("toggle", event)
 
-    @bindings.add("a")
     def select_all(event: KeyPressEvent) -> None:
         apply("select_all", event)
 
-    @bindings.add("c")
     def clear(event: KeyPressEvent) -> None:
         apply("clear", event)
 
-    @bindings.add("enter")
     def submit(event: KeyPressEvent) -> None:
         apply("submit", event)
 
-    @bindings.add("q")
-    @bindings.add("c-c")
-    @bindings.add("c-d")
     def cancel(event: KeyPressEvent) -> None:
         apply("cancel", event)
 
-    @bindings.add("c-z")
     def suspend(event: KeyPressEvent) -> None:
         event.app.suspend_to_background(suspend_group=False)
+
+    handlers = (
+        (("up", "k"), move_up), (("down", "j"), move_down), ((" ",), toggle),
+        (("a",), select_all), (("c",), clear), (("enter",), submit),
+        (("q", "c-c", "c-d"), cancel), (("c-z",), suspend),
+    )
+    for keys, handler in handlers:
+        for key in keys:
+            bindings.add(key)(handler)
 
     received: list[int] = []
 
@@ -177,13 +170,9 @@ def run_selector(
             app.exit(result=SelectorResult("cancel", state, ()))
 
     application: Application[SelectorResult] = Application(
-        layout=Layout(Window(FormattedTextControl(text=""))),
-        key_bindings=bindings,
-        full_screen=True,
-        erase_when_done=False,
-        after_render=after_render,
-        input=prompt_input,
-        output=prompt_output,
+        layout=Layout(Window(FormattedTextControl(text=""))), key_bindings=bindings,
+        full_screen=True, erase_when_done=False, after_render=after_render,
+        input=prompt_input, output=prompt_output,
     )
 
     prior_handlers: dict[int, object] = {}
@@ -201,10 +190,7 @@ def run_selector(
                 prior_handlers[signum] = signal.getsignal(signum)
                 signal.signal(signum, on_signal)
         try:
-            result = application.run(
-                handle_sigint=False,
-                set_exception_handler=False,
-            )
+            result = application.run(handle_sigint=False, set_exception_handler=False)
         except (EOFError, KeyboardInterrupt):
             result = SelectorResult("cancel", state, ())
     finally:
@@ -216,17 +202,12 @@ def run_selector(
             try:
                 if tty_fd is not None and original_attributes is not None:
                     termios.tcflush(tty_fd, termios.TCIFLUSH)
-                    termios.tcsetattr(
-                        tty_fd, termios.TCSANOW, original_attributes
-                    )
+                    termios.tcsetattr(tty_fd, termios.TCSANOW, original_attributes)
             finally:
                 if owns_input:
                     prompt_input.close()
 
-    terminating = next(
-        (signum for signum in received if signum in (signal.SIGTERM, signal.SIGHUP)),
-        None,
-    )
+    terminating = next((s for s in received if s in (signal.SIGTERM, signal.SIGHUP)), None)
     if terminating is not None:
         signal.signal(terminating, signal.SIG_DFL)
         os.kill(os.getpid(), terminating)

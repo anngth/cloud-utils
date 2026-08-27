@@ -16,45 +16,41 @@ from .selector import SelectorState
 WHITE = "\033[97m"
 RESET = "\033[0m"
 
+_HELP_SECTIONS = (
+    ("Core", (
+        ("gt push", "Force push (safe --force-with-lease)", ""),
+        ("gt fetch [--sync-upstream]", "Fetch with optional upstream sync", ""),
+    )),
+    ("Backup", (
+        ("gt backup [(-f | --force) | --dry-run]", "",
+         "Interactive select; force and dry-run are mutually exclusive"),
+        ("gt backup --all [(-f | --force) | --dry-run]", "", "Backup or preview every listed repo"),
+        ("gt backup stale [--days <n>] [--all] [(-f | --force) | --dry-run]", "",
+         "Stale repos only (default 7 days)"),
+        ("gt backup add <ssh-url> [<ssh-url> ...]", "Add SSH URL(s) to managed list", ""),
+        ("gt backup remove <index|ssh-url>", "Remove by 1-based index or URL", ""),
+    )),
+)
+_HELP_NOTES = (
+    "Selector: space toggle, a all, c clear, enter start, q quit",
+    "Remove indexes are 1-based (same as skm).",
+    "--force skips fingerprint short-circuit; cannot combine with --dry-run.",
+)
+
 class GitToolsUi(FrameUi):
     def usage(self) -> None:
         self.title("GT")
         self.step("Usage: gt <command>")
         self.command("gt (help | -h | --help)", "Show this help")
-
-        self.section("Core")
-        self.command("gt push", "Force push (safe --force-with-lease)")
-        self.command(
-            "gt fetch [--sync-upstream]", "Fetch with optional upstream sync"
-        )
-
-        self.section("Backup")
-        self.command("gt backup [(-f | --force) | --dry-run]")
-        self._continuation(
-            "", "Interactive select; force and dry-run are mutually exclusive"
-        )
-        self.command("gt backup --all [(-f | --force) | --dry-run]")
-        self._continuation("", "Backup or preview every listed repo")
-        self.command(
-            "gt backup stale [--days <n>] [--all] "
-            "[(-f | --force) | --dry-run]"
-        )
-        self._continuation("", "Stale repos only (default 7 days)")
-        self.command(
-            "gt backup add <ssh-url> [<ssh-url> ...]",
-            "Add SSH URL(s) to managed list",
-        )
-        self.command(
-            "gt backup remove <index|ssh-url>",
-            "Remove by 1-based index or URL",
-        )
-
+        for section, commands in _HELP_SECTIONS:
+            self.section(section)
+            for syntax, description, continuation in commands:
+                self.command(syntax, description)
+                if continuation:
+                    self._continuation("", continuation)
         self.section("Notes")
-        self.note("Selector: space toggle, a all, c clear, enter start, q quit")
-        self.note("Remove indexes are 1-based (same as skm).")
-        self.note(
-            "--force skips fingerprint short-circuit; cannot combine with --dry-run."
-        )
+        for note in _HELP_NOTES:
+            self.note(note)
         self.end()
 
     def _continuation(self, syntax: str, description: str) -> None:
@@ -78,11 +74,7 @@ class GitToolsUi(FrameUi):
         self._err(_fg(GRAY, message))
 
     def begin(
-        self,
-        headline: object,
-        *,
-        label: object = "GT",
-        section: object = "Progress",
+        self, headline: object, *, label: object = "GT", section: object = "Progress",
     ) -> None:
         self.title(label)
         self.step(headline)
@@ -90,11 +82,7 @@ class GitToolsUi(FrameUi):
         self._out(self.pipe)
 
     def status(
-        self,
-        message: object,
-        *,
-        tone: str = "success",
-        marker: str | None = None,
+        self, message: object, *, tone: str = "success", marker: str | None = None,
     ) -> None:
         self.item(message, tone=tone, marker=marker)
 
@@ -117,19 +105,16 @@ class GitToolsUi(FrameUi):
         if list_path:
             self.step(list_path)
         self.step(heading)
-        self.active(
-            f"Select repos {_fg(WHITE, '(space toggle, a all, c clear, enter to start, q to quit)')}"
-        )
+        hint = _fg(WHITE, "(space toggle, a all, c clear, enter to start, q to quit)")
+        self.active(f"Select repos {hint}")
         self._out(self.pipe)
         for index, entry in enumerate(state.items):
             selected = index in state.selected
             box = "■" if selected else "□"
             box_color = BRIGHT_GREEN if selected else GRAY
             label_color = WHITE if index == state.cursor else GRAY
-            self._out(
-                f"{self.pipe}  {index + 1}  {box_color}{box}{RESET}  "
-                f"{_fg(label_color, entry.label)}"
-            )
+            row = f"{self.pipe}  {index + 1}  {box_color}{box}{RESET}  {_fg(label_color, entry.label)}"
+            self._out(row)
             self._out(self.pipe)
         if cancelled:
             self._out(f"{_fg(CYAN, '└')}  {_fg(RED, 'Selection cancelled')}")
