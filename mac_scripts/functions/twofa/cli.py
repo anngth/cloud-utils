@@ -305,14 +305,9 @@ def run_cli(
             context = command.make_context("2fa", list(argv))
             with context:
                 result = command.invoke(context)
-        except (KeyboardInterrupt, click.Abort):
+        except click.Abort:
             return 130
-        except (
-            TtyInputError,
-            Base32Error,
-            ClipboardError,
-            click.ClickException,
-        ) as error:
+        except Exception as error:
             close_frame()
             resolved_ui.error(str(error))
             return 1

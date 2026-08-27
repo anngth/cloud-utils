@@ -156,12 +156,17 @@ def test_expected_failures_close_frame_and_match_js_bytes(
     )
 
 
-def test_unexpected_failure_is_not_hidden(harness: CliHarness) -> None:
+def test_unexpected_failure_matches_javascript_framed_boundary(
+    harness: CliHarness,
+) -> None:
     def fail_unexpectedly(_prompt: str) -> str:
         raise LookupError("unexpected")
 
-    with pytest.raises(LookupError, match="^unexpected$"):
-        run_cli([], read_secret_fn=fail_unexpectedly, ui=harness.ui)
+    result = run_cli([], read_secret_fn=fail_unexpectedly, ui=harness.ui)
+
+    assert result == 1
+    assert harness.stdout.getvalue() == ERROR_FRAME_GOLDEN
+    assert harness.stderr.getvalue() == "\x1b[31m❌ unexpected\x1b[39m\n"
 
 
 def test_ctrl_c_uses_only_injected_streams_and_exact_frame(
@@ -169,12 +174,17 @@ def test_ctrl_c_uses_only_injected_streams_and_exact_frame(
 ) -> None:
     global_stderr = io.StringIO()
 
-    def interrupt(_prompt: str) -> str:
-        raise KeyboardInterrupt
-
     monkeypatch.setattr(sys, "stderr", global_stderr)
 
-    assert run_cli([], read_secret_fn=interrupt, ui=harness.ui) == 130
+    error = KeyboardInterrupt()
+
+    def interrupt(_prompt: str) -> str:
+        raise error
+
+    with pytest.raises(KeyboardInterrupt) as error_info:
+        run_cli([], read_secret_fn=interrupt, ui=harness.ui)
+
+    assert error_info.value is error
     assert harness.stdout.getvalue() == ERROR_FRAME_GOLDEN
     assert harness.stderr.getvalue() == ""
     assert global_stderr.getvalue() == ""
@@ -182,7 +192,7 @@ def test_ctrl_c_uses_only_injected_streams_and_exact_frame(
 
 @pytest.mark.parametrize("error_type", [ValueError, RuntimeError])
 @pytest.mark.parametrize("operation", ["read", "copy"])
-def test_unexpected_common_exceptions_propagate_without_printing_message(
+def test_unexpected_common_exceptions_use_framed_javascript_error(
     harness: CliHarness,
     error_type: type[Exception],
     operation: str,
@@ -199,11 +209,13 @@ def test_unexpected_common_exceptions_propagate_without_printing_message(
         if operation == "copy":
             raise error_type(message)
 
-    with pytest.raises(error_type, match=f"^{message}$"):
-        run_cli([], read_secret_fn=read, copy_fn=copy, now=59, ui=harness.ui)
+    result = run_cli(
+        [], read_secret_fn=read, copy_fn=copy, now=59, ui=harness.ui
+    )
 
-    assert message not in harness.stdout.getvalue()
-    assert message not in harness.stderr.getvalue()
+    assert result == 1
+    assert harness.stdout.getvalue() == ERROR_FRAME_GOLDEN
+    assert harness.stderr.getvalue() == f"\x1b[31m❌ {message}\x1b[39m\n"
 
 
 @pytest.mark.parametrize(
@@ -214,7 +226,7 @@ def test_unexpected_common_exceptions_propagate_without_printing_message(
         ("copy", RuntimeError, "failed to copy code to clipboard"),
     ],
 )
-def test_same_message_non_domain_exceptions_propagate_without_printing(
+def test_same_message_non_domain_exceptions_still_use_framed_error(
     harness: CliHarness,
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
@@ -242,11 +254,28 @@ def test_same_message_non_domain_exceptions_propagate_without_printing(
             lambda *_args, **_kwargs: raise_collision(),
         )
 
-    with pytest.raises(error_type, match=f"^{message}$"):
-        run_cli([], read_secret_fn=read, copy_fn=copy, now=59, ui=harness.ui)
+    result = run_cli(
+        [], read_secret_fn=read, copy_fn=copy, now=59, ui=harness.ui
+    )
 
-    assert message not in harness.stdout.getvalue()
-    assert message not in harness.stderr.getvalue()
+    assert result == 1
+    assert harness.stdout.getvalue() == ERROR_FRAME_GOLDEN
+    assert harness.stderr.getvalue() == f"\x1b[31m❌ {message}\x1b[39m\n"
+
+
+@pytest.mark.parametrize("error", [SystemExit(23), BaseException("stop now")])
+def test_non_exception_base_failures_propagate_with_identity_after_frame_cleanup(
+    harness: CliHarness, error: BaseException
+) -> None:
+    def fail(_prompt: str) -> str:
+        raise error
+
+    with pytest.raises(type(error)) as error_info:
+        run_cli([], read_secret_fn=fail, ui=harness.ui)
+
+    assert error_info.value is error
+    assert harness.stdout.getvalue() == ERROR_FRAME_GOLDEN
+    assert harness.stderr.getvalue() == ""
 
 
 class FakeTty:

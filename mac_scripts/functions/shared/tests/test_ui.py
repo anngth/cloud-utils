@@ -1,4 +1,8 @@
 import io
+import select
+import subprocess
+import sys
+import time
 
 from mac_scripts.functions.shared.ui import FrameUi
 
@@ -15,6 +19,45 @@ EXPECTED_FRAME_BYTES = (
     "\x1b[36m│\x1b[39m      \x1b[90msecondary\x1b[39m\n"
     "\x1b[36m└\x1b[39m\n"
 )
+
+
+def test_frame_writes_are_visible_immediately_through_buffered_pipes() -> None:
+    script = (
+        "import sys, time; "
+        "from mac_scripts.functions.shared.ui import FrameUi; "
+        "sys.stdout.reconfigure(line_buffering=False, write_through=False); "
+        "sys.stderr.reconfigure(line_buffering=False, write_through=False); "
+        "ui = FrameUi(sys.stdout, sys.stderr); "
+        "ui.line('ready-out'); ui.error('ready-err'); time.sleep(10)"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdout is not None
+    assert process.stderr is not None
+    streams = {process.stdout, process.stderr}
+    ready: set[object] = set()
+    deadline = time.monotonic() + 5
+
+    try:
+        while ready != streams:
+            readable, _, _ = select.select(
+                list(streams - ready), [], [], max(0, deadline - time.monotonic())
+            )
+            if not readable:
+                break
+            ready.update(readable)
+
+        assert ready == streams
+        assert process.poll() is None
+        assert process.stdout.readline() == b"ready-out\n"
+        assert process.stderr.readline() == b"\x1b[31m\xe2\x9d\x8c ready-err\x1b[39m\n"
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        process.communicate(timeout=5)
 
 
 def test_frame_bytes_use_green_badge_and_reset_colors() -> None:

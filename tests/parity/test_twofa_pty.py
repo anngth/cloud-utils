@@ -320,8 +320,12 @@ def test_ctrl_c_restores_tty(tmp_path: Path) -> None:
         os.write(session.master, b"\x03")
         returncode, transcript = session.finish()
 
-        assert returncode == 130
-        assert transcript == CTRL_C_GOLDEN
+        assert returncode == -signal.SIGINT
+        assert transcript.startswith(
+            CTRL_C_GOLDEN + b"Traceback (most recent call last):\r\n"
+        )
+        assert transcript.endswith(b"KeyboardInterrupt\r\n")
+        assert b"\xe2\x9d\x8c" not in transcript
         assert SECRET.encode() not in transcript
         _assert_restored(session, original)
     finally:
@@ -394,7 +398,9 @@ def test_unexpected_failure_after_input_restores_tty(tmp_path: Path) -> None:
         returncode, transcript = session.finish()
 
         assert returncode == 1
-        assert b"LookupError: unexpected failure" in transcript
+        assert b"\x1b[31m\xe2\x9d\x8c unexpected failure\x1b[39m" in transcript
+        assert b"Traceback" not in transcript
+        assert b"LookupError" not in transcript
         assert SECRET.encode() not in transcript
         _assert_restored(session, original)
     finally:

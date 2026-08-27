@@ -60,6 +60,9 @@ def _run_case(name: str) -> dict[str, object]:
         read_secret = lambda _prompt: _raise(
             TtyInputError("interactive terminal required")
         )
+    elif name == "unexpected-failure":
+        argv = []
+        read_secret = lambda _prompt: _raise(LookupError("unexpected failure"))
     else:
         raise AssertionError(f"unknown parity case: {name}")
 

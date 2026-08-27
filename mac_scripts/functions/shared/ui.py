@@ -37,9 +37,11 @@ class FrameUi:
 
     def _out(self, text: str = "") -> None:
         self.stdout.write(f"{text}\n")
+        self.stdout.flush()
 
     def _err(self, text: str) -> None:
         self.stderr.write(f"{text}\n")
+        self.stderr.flush()
 
     def line(self, text: object = "") -> None:
         self._out(str(text))
