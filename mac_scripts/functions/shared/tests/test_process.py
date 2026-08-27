@@ -1,3 +1,4 @@
+import subprocess
 import sys
 
 from shared.process import CommandResult, run_process
@@ -24,6 +25,41 @@ def test_run_process_passes_input_without_shell() -> None:
     )
 
     assert result.stdout == "123456"
+
+
+def test_captured_process_ignores_nonempty_parent_stdin_like_node() -> None:
+    driver = (
+        "import sys; from shared.process import run_process; "
+        "result = run_process([sys.executable, '-c', "
+        "'import sys; sys.stdout.write(sys.stdin.read(1))'], capture=True); "
+        "print(repr(result.stdout))"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", driver],
+        input="reserved-for-parent",
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == "''\n"
+    assert completed.stderr == ""
+
+
+def test_run_process_can_ignore_stdout_while_capturing_stderr() -> None:
+    result = run_process(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('discarded'); print('detail', file=sys.stderr)",
+        ],
+        capture="stderr",
+    )
+
+    assert result == CommandResult(0, "", "detail\n")
 
 
 def test_run_process_inherits_streams_when_capture_is_disabled(capfd) -> None:
