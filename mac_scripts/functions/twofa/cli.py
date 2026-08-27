@@ -147,9 +147,14 @@ def _read_hidden_line(
             readable, _, _ = select.select([tty_fd, guard.wakeup_fd], [], [])
         except InterruptedError:
             continue
+        except (OSError, UnicodeError):
+            raise TtyInputError("interactive terminal required") from None
 
         if guard.wakeup_fd in readable:
-            _drain_wakeup(guard.wakeup_fd)
+            try:
+                _drain_wakeup(guard.wakeup_fd)
+            except (OSError, UnicodeError):
+                raise TtyInputError("interactive terminal required") from None
             default_signals = guard.handle_received()
             if default_signals:
                 return None, default_signals
@@ -157,9 +162,15 @@ def _read_hidden_line(
         if tty_fd not in readable:
             continue
 
-        chunk = os.read(tty_fd, 1)
+        try:
+            chunk = os.read(tty_fd, 1)
+        except (OSError, UnicodeError):
+            raise TtyInputError("interactive terminal required") from None
         if not chunk or chunk in {b"\n", b"\r"}:
-            return data.decode("utf-8"), []
+            try:
+                return data.decode("utf-8"), []
+            except UnicodeError:
+                raise TtyInputError("interactive terminal required") from None
         data.extend(chunk)
 
 
@@ -210,10 +221,7 @@ def _read_secret_once(
 
         guard.activate()
         try:
-            try:
-                secret, caught_signals = _read_hidden_line(tty.fileno(), guard)
-            except (OSError, UnicodeError):
-                raise TtyInputError("interactive terminal required") from None
+            secret, caught_signals = _read_hidden_line(tty.fileno(), guard)
         finally:
             guard.block()
 

@@ -551,18 +551,18 @@ def test_signal_arriving_during_handler_installation_runs_callable_with_echo_off
     assert tty.writes.count("prompt: ") == 1
 
 
-def test_raising_prior_handler_restores_terminal_and_signal_state(
+@pytest.mark.parametrize("error_type", [OSError, UnicodeError])
+def test_common_exception_from_prior_handler_propagates_after_exact_cleanup(
     monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
 ) -> None:
-    class HandlerFailure(Exception):
-        pass
-
     tty = FakeTty(line="hidden\n")
     original, changes = _fake_tty_setup(monkeypatch, tty)
     real_signal = signal.signal
     previous = signal.getsignal(signal.SIGHUP)
     events: list[tuple[int, bool, bool]] = []
     injected = False
+    handler_error = error_type("interactive terminal required")
 
     def prior_handler(signum: int, _frame: object) -> None:
         events.append(
@@ -572,7 +572,7 @@ def test_raising_prior_handler_restores_terminal_and_signal_state(
                 bool(changes[-1][3] & cli.termios.ECHO),
             )
         )
-        raise HandlerFailure("handler failed")
+        raise handler_error
 
     real_signal(signal.SIGHUP, prior_handler)
 
@@ -586,9 +586,10 @@ def test_raising_prior_handler_restores_terminal_and_signal_state(
 
     monkeypatch.setattr(cli.signal, "signal", signal_with_injection)
     try:
-        with pytest.raises(HandlerFailure, match="^handler failed$"):
+        with pytest.raises(error_type) as error_info:
             read_secret("prompt: ", tty_path="ignored")
 
+        assert error_info.value is handler_error
         assert signal.getsignal(signal.SIGHUP) is prior_handler
     finally:
         real_signal(signal.SIGHUP, previous)
