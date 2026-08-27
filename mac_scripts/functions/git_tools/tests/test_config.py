@@ -323,6 +323,98 @@ def test_read_backups_document_maps_shape_errors_to_stable_domain_message(
 
 
 @pytest.mark.parametrize(
+    "raw",
+    [
+        {
+            "version": 2,
+            "repos": [{"url": "repo", "last_backup_at": None}],
+        },
+        {
+            "version": 3,
+            "repos": [
+                {
+                    "url": "repo",
+                    "last_backup_at": None,
+                    "last_checked_at": None,
+                }
+            ],
+        },
+        {
+            "version": 4,
+            "repos": [
+                {
+                    "url": "repo",
+                    "last_backup_at": None,
+                    "last_checked_at": None,
+                    "selected_last": False,
+                }
+            ],
+        },
+    ],
+)
+def test_raw_documents_require_canonical_camel_case_aliases(
+    tmp_path: Path, raw: dict
+) -> None:
+    backups_file = tmp_path / "backups.json"
+    backups_file.write_text(json.dumps(raw), encoding="utf-8")
+
+    read_result = read_backups_document(backups_file)
+    migrate_result = migrate_backups_document(raw)
+
+    assert read_result.ok is False
+    assert read_result.error == f"Invalid backups document: {backups_file}"
+    assert migrate_result.ok is False
+    assert migrate_result.error == "Invalid backups document"
+
+
+def test_write_raw_document_requires_canonical_camel_case_aliases(
+    tmp_path: Path,
+) -> None:
+    backups_file = tmp_path / "backups.json"
+    raw = {
+        "version": 4,
+        "repos": [
+            {
+                "url": "repo",
+                "last_backup_at": None,
+                "last_checked_at": None,
+                "selected_last": False,
+            }
+        ],
+    }
+
+    result = write_backups_document(backups_file, raw)
+
+    assert result.ok is False
+    assert result.error == "Invalid backups document"
+    assert not backups_file.exists()
+
+
+def test_raw_documents_keep_accepting_unrelated_extra_keys(tmp_path: Path) -> None:
+    backups_file = tmp_path / "backups.json"
+    raw = {
+        "version": 4,
+        "documentExtra": "ignored",
+        "repos": [
+            {
+                "url": "repo",
+                "lastBackupAt": None,
+                "lastCheckedAt": None,
+                "selectedLast": False,
+                "last_backup_at": "ignored",
+                "repoExtra": "ignored",
+            }
+        ],
+    }
+    backups_file.write_text(json.dumps(raw), encoding="utf-8")
+
+    result = read_backups_document(backups_file)
+
+    assert result.ok is True
+    assert result.document.repos[0].last_backup_at is None
+
+
+@pytest.mark.parametrize(
     ("raw", "message"),
     [
         (
@@ -471,6 +563,70 @@ def test_migrate_backups_document_reports_exact_timestamp_error() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("value", "rendered"),
+    [
+        (1.0, "1"),
+        (-0.0, "0"),
+        (1e-6, "0.000001"),
+        (1e-7, "1e-7"),
+        (1e20, "100000000000000000000"),
+        (1e21, "1e+21"),
+        (-12.5, "-12.5"),
+        (9_007_199_254_740_993, "9007199254740992"),
+        ("bad", '"bad"'),
+        ("\ud800", '"\\ud800"'),
+        ("\ud83d\ude00", '"😀"'),
+        (True, "true"),
+        (
+            [1.0, 1e-7, None, True, "é"],
+            '[1,1e-7,null,true,"é"]',
+        ),
+        (
+            {
+                "fixed": 1e20,
+                "exponent": 1e-7,
+                "nil": None,
+                "flag": False,
+                "text": "é",
+            },
+            '{"fixed":100000000000000000000,"exponent":1e-7,'
+            '"nil":null,"flag":false,"text":"é"}',
+        ),
+        (float("inf"), "null"),
+    ],
+)
+def test_migrate_backups_document_formats_timestamp_values_like_json_stringify(
+    value: object, rendered: str
+) -> None:
+    result = migrate_backups_document(
+        {
+            "version": 2,
+            "repos": [{"url": "repo", "lastBackupAt": value}],
+        }
+    )
+
+    assert result.ok is False
+    assert result.error == f"Invalid lastBackupAt for repo: {rendered}"
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_read_backups_document_rejects_nonstandard_json_numbers(
+    tmp_path: Path, constant: str
+) -> None:
+    backups_file = tmp_path / "backups.json"
+    backups_file.write_text(
+        '{"version":2,"repos":[{"url":"repo","lastBackupAt":'
+        f"{constant}" + "}]}",
+        encoding="utf-8",
+    )
+
+    result = read_backups_document(backups_file)
+
+    assert result.ok is False
+    assert result.error == f"Invalid JSON in backups file: {backups_file}"
+
+
 def test_write_backups_document_creates_parent_and_serializes_exact_bytes(
     tmp_path: Path,
 ) -> None:
@@ -493,6 +649,83 @@ def test_write_backups_document_creates_parent_and_serializes_exact_bytes(
     assert result.error is None
     assert backups_file.read_bytes() == V4_BYTES
     assert not Path(f"{backups_file}.tmp").exists()
+
+
+@pytest.mark.parametrize(
+    ("url", "encoded_url"),
+    [
+        ("\ud800", b"\\ud800"),
+        ("\udc00", b"\\udc00"),
+        ("\ud83d\ude00", b"\xf0\x9f\x98\x80"),
+        ("café", b"caf\xc3\xa9"),
+    ],
+)
+def test_write_backups_document_serializes_utf16_surrogates_like_javascript(
+    tmp_path: Path, url: str, encoded_url: bytes
+) -> None:
+    backups_file = tmp_path / "backups.json"
+    document = {
+        "version": 4,
+        "repos": [
+            {
+                "url": url,
+                "lastBackupAt": None,
+                "lastCheckedAt": None,
+                "selectedLast": False,
+            }
+        ],
+    }
+
+    result = write_backups_document(backups_file, document)
+
+    assert result.ok is True
+    assert backups_file.read_bytes() == (
+        b'{\n  "version": 4,\n  "repos": [\n'
+        b'    {\n      "url": "'
+        + encoded_url
+        + b'",\n      "lastBackupAt": null,\n      "lastCheckedAt": null,\n'
+        b'      "selectedLast": false\n    }\n  ]\n}\n'
+    )
+
+
+@pytest.mark.parametrize(
+    ("encoded_url", "url"),
+    [(b"\\ud800", "\ud800"), (b"\\udc00", "\udc00")],
+)
+def test_read_backups_document_accepts_json_lone_surrogates(
+    tmp_path: Path, encoded_url: bytes, url: str
+) -> None:
+    backups_file = tmp_path / "backups.json"
+    backups_file.write_bytes(
+        b'{"version":4,"repos":[{"url":"'
+        + encoded_url
+        + b'","lastBackupAt":null,"lastCheckedAt":null,"selectedLast":false}]}'
+    )
+
+    result = read_backups_document(backups_file)
+
+    assert result.ok is True
+    assert result.document.repos[0].url == url
+
+
+def test_write_backups_document_cleans_temp_after_serialization_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backups_file = tmp_path / "backups.json"
+    temp_file = Path(f"{backups_file}.tmp")
+    temp_file.write_bytes(b"stale")
+
+    def fail_serialization(*args: object, **kwargs: object) -> str:
+        raise UnicodeEncodeError("utf-8", "\ud800", 0, 1, "surrogate")
+
+    monkeypatch.setattr("git_tools.config.json.dumps", fail_serialization)
+
+    result = write_backups_document(backups_file, EMPTY_BACKUPS)
+
+    assert result.ok is False
+    assert "can't encode character" in result.error
+    assert not temp_file.exists()
+    assert not backups_file.exists()
 
 
 def test_write_backups_document_replaces_from_exact_tmp_path(

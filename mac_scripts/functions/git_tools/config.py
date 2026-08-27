@@ -2,14 +2,23 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 import json
+import math
 import os
 from pathlib import Path
 import re
 import tempfile
 from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    InstanceOf,
+    TypeAdapter,
+    ValidationError,
+)
 from pydantic import field_validator, model_validator
 
 
@@ -64,8 +73,15 @@ class _VersionedDocument(_StrictModel):
 
 
 class BackupRepoV2(_StrictModel):
-    url: str = Field(min_length=1)
-    last_backup_at: str | None = Field(alias="lastBackupAt")
+    url: InstanceOf[str]
+    last_backup_at: InstanceOf[str] | None = Field(alias="lastBackupAt")
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, value: str) -> str:
+        if not value:
+            raise ValueError("url must not be empty")
+        return value
 
     @field_validator("last_backup_at")
     @classmethod
@@ -76,7 +92,7 @@ class BackupRepoV2(_StrictModel):
 
 
 class BackupRepoV3(BackupRepoV2):
-    last_checked_at: str | None = Field(alias="lastCheckedAt")
+    last_checked_at: InstanceOf[str] | None = Field(alias="lastCheckedAt")
 
     @field_validator("last_checked_at")
     @classmethod
@@ -90,12 +106,16 @@ class BackupRepoV4(BackupRepoV3):
     selected_last: bool = Field(alias="selectedLast")
 
 
-_RepoUrl = Annotated[str, Field(min_length=1)]
-
-
 class BackupsDocumentV1(_VersionedDocument):
     version: Literal[1]
-    repos: list[_RepoUrl]
+    repos: list[InstanceOf[str]]
+
+    @field_validator("repos")
+    @classmethod
+    def _validate_repo_urls(cls, value: list[str]) -> list[str]:
+        if any(not url for url in value):
+            raise ValueError("repo URLs must not be empty")
+        return value
 
 
 class BackupsDocumentV2(_VersionedDocument):
@@ -216,8 +236,75 @@ def format_display_path(
     return file_path
 
 
+def _js_number_to_string(value: int | float) -> str:
+    try:
+        number = float(value)
+    except OverflowError:
+        return "null"
+    if not math.isfinite(number):
+        return "null"
+    if number == 0:
+        return "0"
+
+    decimal = Decimal(repr(number))
+    if -6 <= decimal.adjusted() < 21:
+        rendered = format(decimal, "f")
+        if "." in rendered:
+            rendered = rendered.rstrip("0").rstrip(".")
+        return rendered
+
+    coefficient, exponent = format(decimal.normalize(), "e").split("e")
+    exponent_number = int(exponent)
+    exponent_sign = "+" if exponent_number >= 0 else ""
+    return f"{coefficient}e{exponent_sign}{exponent_number}"
+
+
+def _normalize_surrogate_pairs(value: str) -> str:
+    normalized: list[str] = []
+    index = 0
+    while index < len(value):
+        code = ord(value[index])
+        if 0xD800 <= code <= 0xDBFF and index + 1 < len(value):
+            low = ord(value[index + 1])
+            if 0xDC00 <= low <= 0xDFFF:
+                scalar = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
+                normalized.append(chr(scalar))
+                index += 2
+                continue
+        normalized.append(value[index])
+        index += 1
+    return "".join(normalized)
+
+
+def _js_quote_string(value: str) -> str:
+    quoted = json.dumps(_normalize_surrogate_pairs(value), ensure_ascii=False)
+    return quoted.encode("utf-8", errors="backslashreplace").decode("utf-8")
+
+
+def _js_json_stringify(value: object) -> str:
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, str):
+        return _js_quote_string(value)
+    if isinstance(value, int | float):
+        return _js_number_to_string(value)
+    if isinstance(value, list | tuple):
+        return f"[{','.join(_js_json_stringify(item) for item in value)}]"
+    if isinstance(value, Mapping):
+        entries = (
+            f"{_js_quote_string(str(key))}:{_js_json_stringify(item)}"
+            for key, item in value.items()
+        )
+        return f"{{{','.join(entries)}}}"
+    return "undefined"
+
+
 def _format_invalid_timestamp_value(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return _js_json_stringify(value)
 
 
 def _find_repo_timestamp_error(document: object) -> str | None:
@@ -252,7 +339,7 @@ def _find_repo_timestamp_error(document: object) -> str | None:
 def _parse_document(
     document: object,
 ) -> BackupsDocumentV1 | BackupsDocumentV2 | BackupsDocumentV3 | BackupsDocumentV4:
-    return _DOCUMENT_ADAPTER.validate_python(document)
+    return _DOCUMENT_ADAPTER.validate_python(document, by_alias=True, by_name=False)
 
 
 def _as_raw_document(document: object) -> object:
@@ -263,6 +350,19 @@ def _as_raw_document(document: object) -> object:
 
 def _reject_json_constant(value: str) -> None:
     raise ValueError(f"invalid JSON constant: {value}")
+
+
+def _normalize_json_strings(value: object) -> object:
+    if isinstance(value, str):
+        return _normalize_surrogate_pairs(value)
+    if isinstance(value, list):
+        return [_normalize_json_strings(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            _normalize_surrogate_pairs(key): _normalize_json_strings(item)
+            for key, item in value.items()
+        }
+    return value
 
 
 def read_backups_document(path: str | os.PathLike[str]) -> ReadBackupsResult:
@@ -360,23 +460,25 @@ def write_backups_document(
 ) -> WriteBackupsResult:
     raw_document = _as_raw_document(document)
     try:
-        parsed = BackupsDocumentV4.model_validate(raw_document)
+        parsed = BackupsDocumentV4.model_validate(
+            raw_document, by_alias=True, by_name=False
+        )
     except ValidationError:
         return WriteBackupsResult(ok=False, error="Invalid backups document")
 
     backups_file = Path(path)
     temp_file = Path(f"{backups_file}.tmp")
-    encoded = (
-        json.dumps(
-            parsed.model_dump(by_alias=True),
-            ensure_ascii=False,
-            allow_nan=False,
-            indent=2,
-        )
-        + "\n"
-    ).encode("utf-8")
 
     try:
+        encoded = (
+            json.dumps(
+                _normalize_json_strings(parsed.model_dump(by_alias=True)),
+                ensure_ascii=False,
+                allow_nan=False,
+                indent=2,
+            )
+            + "\n"
+        ).encode("utf-8", errors="backslashreplace")
         backups_file.parent.mkdir(parents=True, exist_ok=True)
         temp_file.write_bytes(encoded)
         os.replace(temp_file, backups_file)
