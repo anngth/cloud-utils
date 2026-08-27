@@ -58,11 +58,8 @@ class ProtectResult:
 RunGlab = Callable[[list[str]], CommandResult]
 
 def run_glab(
-    args: Sequence[str],
-    *,
-    cwd: str | Path | None = None,
-    env: Mapping[str, str] | None = None,
-    runner=run_process,
+    args: Sequence[str], *, cwd: str | Path | None = None,
+    env: Mapping[str, str] | None = None, runner=run_process,
 ) -> CommandResult:
     try:
         return runner(["glab", *args], cwd=cwd, env=env, capture=True)
@@ -72,6 +69,14 @@ def run_glab(
 def _result_error(result: CommandResult, fallback: str) -> str:
     return result.stderr.strip() or result.stdout.strip() or fallback
 
+def _not_found(result: CommandResult) -> bool:
+    return re.search(r"404|not found", f"{result.stdout}\n{result.stderr}", re.IGNORECASE) is not None
+
+def _action_result(result: CommandResult, fallback: str) -> ActionResult:
+    if result.returncode != 0:
+        return ActionResult(False, error=_result_error(result, fallback))
+    return ActionResult(True, stdout=result.stdout, stderr=result.stderr)
+
 def _parse_strict_json(value: str) -> Any:
     def reject_constant(_constant: str) -> None:
         raise ValueError("nonstandard JSON constant")
@@ -79,10 +84,8 @@ def _parse_strict_json(value: str) -> Any:
     return json.loads(value, parse_constant=reject_constant)
 
 def assert_glab_ready(
-    *,
-    has_command: Callable[[str], object] = shutil.which,
-    run_glab_fn: RunGlab | None = None,
-    env: Mapping[str, str] | None = None,
+    *, has_command: Callable[[str], object] = shutil.which,
+    run_glab_fn: RunGlab | None = None, env: Mapping[str, str] | None = None,
 ) -> ReadyResult:
     if not has_command("glab"):
         return ReadyResult(False, "glab is not installed or not available on PATH")
@@ -100,18 +103,9 @@ def _inactive_project(project: object, requested_name: str) -> bool:
     if project.get("marked_for_deletion_on") or project.get("marked_for_deletion_at"):
         return True
     path = project.get("path")
-    return (
-        isinstance(path, str)
-        and path != requested_name
-        and _DELETION_PATH_RE.search(path) is not None
-    )
+    return isinstance(path, str) and path != requested_name and _DELETION_PATH_RE.search(path) is not None
 
-def project_exists(
-    group: str,
-    name: str,
-    *,
-    run_glab_fn: RunGlab = run_glab,
-) -> ExistsResult:
+def project_exists(group: str, name: str, *, run_glab_fn: RunGlab = run_glab) -> ExistsResult:
     path = f"projects/{quote(f'{group}/{name}', safe='')}"
     result = run_glab_fn(["api", path])
     if result.returncode == 0:
@@ -124,85 +118,45 @@ def project_exists(
             return ExistsResult(True, inactive=True, project=project)
         return ExistsResult(True, exists=True, project=project)
 
-    detail = f"{result.stdout}\n{result.stderr}"
-    if re.search(r"404|not found", detail, re.IGNORECASE):
+    if _not_found(result):
         return ExistsResult(True)
     return ExistsResult(False, error=_result_error(result, "glab API request failed"))
 
-def group_exists(
-    group: str,
-    *,
-    run_glab_fn: RunGlab = run_glab,
-) -> ExistsResult:
+def group_exists(group: str, *, run_glab_fn: RunGlab = run_glab) -> ExistsResult:
     result = run_glab_fn(["api", f"groups/{quote(group, safe='')}"])
     if result.returncode == 0:
         return ExistsResult(True, exists=True)
-    detail = f"{result.stdout}\n{result.stderr}"
-    if re.search(r"404|not found", detail, re.IGNORECASE):
+    if _not_found(result):
         return ExistsResult(True)
     return ExistsResult(False, error=_result_error(result, "glab API request failed"))
 
-def create_private_group(
-    group: str,
-    *,
-    run_glab_fn: RunGlab = run_glab,
-) -> ActionResult:
+def _group_create_args(name: str, path: str, parent_id: object | None = None) -> list[str]:
+    args = ["api", "--method", "POST", "groups", "-f", f"name={name}", "-f", f"path={path}"]
+    if parent_id is not None:
+        args.extend(["-f", f"parent_id={parent_id}"])
+    return [*args, "-f", "visibility=private"]
+
+def create_private_group(group: str, *, run_glab_fn: RunGlab = run_glab) -> ActionResult:
     if "/" not in group:
-        result = run_glab_fn(
-            [
-                "api", "--method", "POST", "groups",
-                "-f", f"name={group}",
-                "-f", f"path={group}",
-                "-f", "visibility=private",
-            ]
-        )
-        if result.returncode != 0:
-            return ActionResult(
-                False,
-                error=_result_error(result, "failed to create GitLab group"),
-            )
-        return ActionResult(True, stdout=result.stdout, stderr=result.stderr)
+        return _action_result(run_glab_fn(_group_create_args(group, group)), "failed to create GitLab group")
 
     parent_path, leaf = group.rsplit("/", 1)
-    parent_result = run_glab_fn(
-        ["api", f"groups/{quote(parent_path, safe='')}"]
-    )
+    parent_result = run_glab_fn(["api", f"groups/{quote(parent_path, safe='')}"])
     if parent_result.returncode != 0:
-        return ActionResult(
-            False,
-            error=_result_error(parent_result, f"parent group {parent_path} not found"),
-        )
+        error = _result_error(parent_result, f"parent group {parent_path} not found")
+        return ActionResult(False, error=error)
     try:
         parent = _parse_strict_json(parent_result.stdout)
     except (ValueError, TypeError):
-        return ActionResult(
-            False,
-            error=f"could not parse parent group id for {parent_path}",
-        )
+        return ActionResult(False, error=f"could not parse parent group id for {parent_path}")
     if parent is None:
-        return ActionResult(
-            False,
-            error=f"could not parse parent group id for {parent_path}",
-        )
+        return ActionResult(False, error=f"could not parse parent group id for {parent_path}")
     parent_id = parent.get("id") if isinstance(parent, Mapping) else None
     if parent_id is None:
         return ActionResult(False, error=f"parent group {parent_path} has no id")
 
-    result = run_glab_fn(
-        [
-            "api", "--method", "POST", "groups",
-            "-f", f"name={leaf}",
-            "-f", f"path={leaf}",
-            "-f", f"parent_id={parent_id}",
-            "-f", "visibility=private",
-        ]
-    )
-    if result.returncode != 0:
-        return ActionResult(
-            False,
-            error=_result_error(result, "failed to create GitLab subgroup"),
-        )
-    return ActionResult(True, stdout=result.stdout, stderr=result.stderr)
+    result = run_glab_fn(_group_create_args(leaf, leaf, parent_id))
+    return _action_result(result, "failed to create GitLab subgroup")
 
 def ensure_backup_group(
     group: str,
@@ -212,49 +166,27 @@ def ensure_backup_group(
     create_private_group_fn: Callable[[str], ActionResult] | None = None,
 ) -> EnsureGroupResult:
     existing = (
-        group_exists_fn(group)
-        if group_exists_fn is not None
+        group_exists_fn(group) if group_exists_fn is not None
         else group_exists(group, run_glab_fn=run_glab_fn)
     )
     if not existing.ok:
-        return EnsureGroupResult(
-            False,
-            error=existing.error or "could not check GitLab group",
-        )
+        return EnsureGroupResult(False, error=existing.error or "could not check GitLab group")
     if existing.exists:
         return EnsureGroupResult(True)
 
     created = (
-        create_private_group_fn(group)
-        if create_private_group_fn is not None
+        create_private_group_fn(group) if create_private_group_fn is not None
         else create_private_group(group, run_glab_fn=run_glab_fn)
     )
     if not created.ok:
-        return EnsureGroupResult(
-            False,
-            error=created.error or "failed to create GitLab group",
-        )
+        return EnsureGroupResult(False, error=created.error or "failed to create GitLab group")
     return EnsureGroupResult(True, created=True)
 
 def create_private_project(
-    group: str,
-    name: str,
-    *,
-    run_glab_fn: RunGlab = run_glab,
+    group: str, name: str, *, run_glab_fn: RunGlab = run_glab,
 ) -> ActionResult:
-    result = run_glab_fn(
-        [
-            "repo", "create", name,
-            "--group", group,
-            "--private", "--skipGitInit",
-        ]
-    )
-    if result.returncode != 0:
-        return ActionResult(
-            False,
-            error=_result_error(result, "failed to create GitLab project"),
-        )
-    return ActionResult(True, stdout=result.stdout, stderr=result.stderr)
+    args = ["repo", "create", name, "--group", group, "--private", "--skipGitInit"]
+    return _action_result(run_glab_fn(args), "failed to create GitLab project")
 
 def _find_name(
     group: str,
@@ -267,27 +199,20 @@ def _find_name(
         name = base_name if suffix == 0 else f"{base_name}-{suffix}"
         result = project_exists_fn(group, name)
         if not result.ok:
-            return NameResult(
-                False,
-                error=result.error or "could not check GitLab project",
-            )
+            return NameResult(False, error=result.error or "could not check GitLab project")
         if not result.exists:
             return NameResult(True, name=name)
         suffix += 1
 
 def next_available_name(
-    group: str,
-    base_name: str,
-    *,
-    project_exists_fn: Callable[[str, str], ExistsResult] = project_exists,
+    group: str, base_name: str,
+    *, project_exists_fn: Callable[[str, str], ExistsResult] = project_exists,
 ) -> NameResult:
     return _find_name(group, base_name, project_exists_fn, 0)
 
 def next_suffixed_name(
-    group: str,
-    base_name: str,
-    *,
-    project_exists_fn: Callable[[str, str], ExistsResult] = project_exists,
+    group: str, base_name: str,
+    *, project_exists_fn: Callable[[str, str], ExistsResult] = project_exists,
 ) -> NameResult:
     return _find_name(group, base_name, project_exists_fn, 2)
 
@@ -297,62 +222,36 @@ def project_ssh_url(group: str, name: str) -> str:
 def project_web_url(group: str, name: str) -> str:
     return f"https://{GITLAB_HOST}/{group}/{name}"
 
-def pick_preferred_default_branch(
-    repo_dir: str | Path,
-    *,
-    run_git_fn=run_git,
-) -> str | None:
+def pick_preferred_default_branch(repo_dir: str | Path, *, run_git_fn=run_git) -> str | None:
     for branch in ("main", "develop"):
-        result = run_git_fn(
-            ["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
-            cwd=repo_dir,
-        )
+        result = run_git_fn(["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=repo_dir)
         if result.returncode == 0:
             return branch
     return None
 
 def set_default_branch(
-    group: str,
-    name: str,
-    branch: str,
-    *,
-    run_glab_fn: RunGlab = run_glab,
+    group: str, name: str, branch: str, *, run_glab_fn: RunGlab = run_glab,
 ) -> ActionResult:
     path = f"projects/{quote(f'{group}/{name}', safe='')}"
-    result = run_glab_fn(
-        ["api", "--method", "PUT", path, "-f", f"default_branch={branch}"]
-    )
+    result = run_glab_fn(["api", "--method", "PUT", path, "-f", f"default_branch={branch}"])
     if result.returncode != 0:
-        return ActionResult(
-            False,
-            error=_result_error(result, "failed to set default branch"),
-        )
+        return ActionResult(False, error=_result_error(result, "failed to set default branch"))
     return ActionResult(True)
 
 def protect_branch(
-    group: str,
-    name: str,
-    branch: str,
-    *,
-    run_glab_fn: RunGlab = run_glab,
+    group: str, name: str, branch: str, *, run_glab_fn: RunGlab = run_glab,
 ) -> ProtectResult:
     project = quote(f"{group}/{name}", safe="")
     path = f"projects/{project}/protected_branches"
     result = run_glab_fn(
         [
-            "api", "--method", "POST", path,
-            "-f", f"name={branch}",
-            "-f", "push_access_level=40",
-            "-f", "merge_access_level=40",
+            "api", "--method", "POST", path, "-f", f"name={branch}",
+            "-f", "push_access_level=40", "-f", "merge_access_level=40",
             "-f", "allow_force_push=true",
         ]
     )
     if result.returncode == 0:
         return ProtectResult(True)
-    detail = f"{result.stdout}\n{result.stderr}"
-    if re.search(r"already exists|already protected", detail, re.IGNORECASE):
+    if re.search(r"already exists|already protected", f"{result.stdout}\n{result.stderr}", re.IGNORECASE):
         return ProtectResult(True, already_protected=True)
-    return ProtectResult(
-        False,
-        error=_result_error(result, "failed to protect branch"),
-    )
+    return ProtectResult(False, error=_result_error(result, "failed to protect branch"))
