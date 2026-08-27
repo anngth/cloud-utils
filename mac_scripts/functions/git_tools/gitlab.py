@@ -1,5 +1,3 @@
-"""GitLab CLI and API boundaries used by the backup workflow."""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
@@ -15,17 +13,14 @@ from shared.process import CommandResult, run_process
 
 from .git import run_git
 
-
 BACKUP_GROUP = "anngth-dev/backups"
 GITLAB_HOST = "gitlab.com"
 _DELETION_PATH_RE = re.compile(r"-(?:deletion_scheduled|deleted)-\d+$")
-
 
 @dataclass(frozen=True, slots=True)
 class ReadyResult:
     ok: bool
     error: str | None = None
-
 
 @dataclass(frozen=True, slots=True)
 class ExistsResult:
@@ -35,7 +30,6 @@ class ExistsResult:
     project: Mapping[str, object] | None = None
     error: str | None = None
 
-
 @dataclass(frozen=True, slots=True)
 class ActionResult:
     ok: bool
@@ -43,13 +37,11 @@ class ActionResult:
     stdout: str = ""
     stderr: str = ""
 
-
 @dataclass(frozen=True, slots=True)
 class EnsureGroupResult:
     ok: bool
     created: bool = False
     error: str | None = None
-
 
 @dataclass(frozen=True, slots=True)
 class NameResult:
@@ -57,16 +49,13 @@ class NameResult:
     name: str | None = None
     error: str | None = None
 
-
 @dataclass(frozen=True, slots=True)
 class ProtectResult:
     ok: bool
     already_protected: bool = False
     error: str | None = None
 
-
 RunGlab = Callable[[list[str]], CommandResult]
-
 
 def run_glab(
     args: Sequence[str],
@@ -75,24 +64,19 @@ def run_glab(
     env: Mapping[str, str] | None = None,
     runner=run_process,
 ) -> CommandResult:
-    """Run ``glab`` with captured streams and no shell."""
-
     try:
         return runner(["glab", *args], cwd=cwd, env=env, capture=True)
     except OSError as error:
         return CommandResult(1, stderr=str(error))
 
-
 def _result_error(result: CommandResult, fallback: str) -> str:
     return result.stderr.strip() or result.stdout.strip() or fallback
-
 
 def _parse_strict_json(value: str) -> Any:
     def reject_constant(_constant: str) -> None:
         raise ValueError("nonstandard JSON constant")
 
     return json.loads(value, parse_constant=reject_constant)
-
 
 def assert_glab_ready(
     *,
@@ -110,7 +94,6 @@ def assert_glab_ready(
         return ReadyResult(False, f"glab authentication is required: {detail}")
     return ReadyResult(True)
 
-
 def _inactive_project(project: object, requested_name: str) -> bool:
     if not isinstance(project, Mapping):
         return False
@@ -122,7 +105,6 @@ def _inactive_project(project: object, requested_name: str) -> bool:
         and path != requested_name
         and _DELETION_PATH_RE.search(path) is not None
     )
-
 
 def project_exists(
     group: str,
@@ -147,7 +129,6 @@ def project_exists(
         return ExistsResult(True)
     return ExistsResult(False, error=_result_error(result, "glab API request failed"))
 
-
 def group_exists(
     group: str,
     *,
@@ -160,7 +141,6 @@ def group_exists(
     if re.search(r"404|not found", detail, re.IGNORECASE):
         return ExistsResult(True)
     return ExistsResult(False, error=_result_error(result, "glab API request failed"))
-
 
 def create_private_group(
     group: str,
@@ -224,7 +204,6 @@ def create_private_group(
         )
     return ActionResult(True, stdout=result.stdout, stderr=result.stderr)
 
-
 def ensure_backup_group(
     group: str,
     *,
@@ -257,7 +236,6 @@ def ensure_backup_group(
         )
     return EnsureGroupResult(True, created=True)
 
-
 def create_private_project(
     group: str,
     name: str,
@@ -278,7 +256,6 @@ def create_private_project(
         )
     return ActionResult(True, stdout=result.stdout, stderr=result.stderr)
 
-
 def _find_name(
     group: str,
     base_name: str,
@@ -298,7 +275,6 @@ def _find_name(
             return NameResult(True, name=name)
         suffix += 1
 
-
 def next_available_name(
     group: str,
     base_name: str,
@@ -306,7 +282,6 @@ def next_available_name(
     project_exists_fn: Callable[[str, str], ExistsResult] = project_exists,
 ) -> NameResult:
     return _find_name(group, base_name, project_exists_fn, 0)
-
 
 def next_suffixed_name(
     group: str,
@@ -316,14 +291,11 @@ def next_suffixed_name(
 ) -> NameResult:
     return _find_name(group, base_name, project_exists_fn, 2)
 
-
 def project_ssh_url(group: str, name: str) -> str:
     return f"git@{GITLAB_HOST}:{group}/{name}.git"
 
-
 def project_web_url(group: str, name: str) -> str:
     return f"https://{GITLAB_HOST}/{group}/{name}"
-
 
 def pick_preferred_default_branch(
     repo_dir: str | Path,
@@ -338,7 +310,6 @@ def pick_preferred_default_branch(
         if result.returncode == 0:
             return branch
     return None
-
 
 def set_default_branch(
     group: str,
@@ -357,7 +328,6 @@ def set_default_branch(
             error=_result_error(result, "failed to set default branch"),
         )
     return ActionResult(True)
-
 
 def protect_branch(
     group: str,

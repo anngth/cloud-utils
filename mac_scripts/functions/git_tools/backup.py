@@ -1,5 +1,3 @@
-"""Managed repository backup orchestration for ``gt backup``."""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
@@ -52,7 +50,6 @@ from .ssh_url import parse_ssh_git_url
 from .stale import is_stale_repo
 from .ui import GitToolsUi
 
-
 ADD_HINT = "Use `gt backup add <ssh-url>` to add a repo first."
 FORCE_ONLY_HINT = (
     "The --force flag is only valid for interactive backup, "
@@ -67,10 +64,8 @@ STALE_USAGE = (
     "[-f|--force] [--dry-run]"
 )
 
-
 def _make_temp_dir(prefix: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=prefix))
-
 
 def _remove_tree(path: str | Path) -> None:
     try:
@@ -78,10 +73,8 @@ def _remove_tree(path: str | Path) -> None:
     except FileNotFoundError:
         pass
 
-
 def _has_command(name: str) -> bool:
     return shutil.which(name) is not None
-
 
 @dataclass(slots=True)
 class BackupContext:
@@ -116,7 +109,6 @@ class BackupContext:
     run_selector: Callable[..., SelectorResult] = run_selector
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
 
-
 @dataclass(frozen=True, slots=True)
 class BackupResult:
     status: Literal["ok", "skip", "fail"]
@@ -124,12 +116,10 @@ class BackupResult:
     destination_url: str | None = None
     error: str | None = None
 
-
 @dataclass(frozen=True, slots=True)
 class _BackupSelectorItem(SelectorItem):
     last_backup_at: str | None = None
     last_checked_at: str | None = None
-
 
 @dataclass(frozen=True, slots=True)
 class _LoadedRepos:
@@ -137,14 +127,11 @@ class _LoadedRepos:
     document: BackupsDocumentV4
     migrated: bool
 
-
 def _failed(source_url: str, error: str | None, fallback: str) -> BackupResult:
     return BackupResult("fail", source_url, error=error or fallback)
 
-
 def _git_error(result, fallback: str) -> str:
     return result.stderr.strip() or result.stdout.strip() or fallback
-
 
 def backup_one_repo(
     source_url: str,
@@ -153,8 +140,6 @@ def backup_one_repo(
     dry_run: bool = False,
     context: BackupContext,
 ) -> BackupResult:
-    """Mirror one SSH repository while preserving the oracle's decision order."""
-
     try:
         parsed = parse_ssh_git_url(source_url)
     except ValueError as error:
@@ -371,7 +356,6 @@ def backup_one_repo(
 
     return BackupResult("ok", source_url, web_url)
 
-
 def run_backup_batch(
     urls: Sequence[str],
     *,
@@ -443,7 +427,6 @@ def run_backup_batch(
     context.ui.list_end()
     return 1 if any(result.status == "fail" for result in results) else 0
 
-
 _TOKENIZER = click.Command(
     "backup",
     params=[
@@ -458,10 +441,7 @@ _TOKENIZER = click.Command(
     },
 )
 
-
 def _tokens(args: Sequence[str]) -> tuple[str, ...]:
-    """Use Click only as a silent token boundary; domain policy stays explicit."""
-
     sentinel = "__GT_BACKUP_LITERAL_DOUBLE_DASH__"
     values = tuple(args)
     while sentinel in values:
@@ -474,7 +454,6 @@ def _tokens(args: Sequence[str]) -> tuple[str, ...]:
     finally:
         context.close()
 
-
 def _start_backup_frame(
     context: BackupContext, list_path: str, *, dry_run: bool
 ) -> None:
@@ -485,7 +464,6 @@ def _start_backup_frame(
         else "Backup repositories"
     )
     context.ui.detail(list_path)
-
 
 def _load_repos(context: BackupContext) -> _LoadedRepos | None:
     read = context.read_backups_document(context.paths.backups_file)
@@ -508,7 +486,6 @@ def _load_repos(context: BackupContext) -> _LoadedRepos | None:
         migrated=migrated.migrated,
     )
 
-
 def _persist_migration(
     loaded: _LoadedRepos, context: BackupContext
 ) -> bool:
@@ -522,13 +499,11 @@ def _persist_migration(
         return False
     return True
 
-
 def _is_tty(stream: object) -> bool:
     try:
         return bool(stream.isatty())
     except (AttributeError, OSError):
         return False
-
 
 def _selector_items(repos: Sequence[BackupRepoV4]) -> tuple[_BackupSelectorItem, ...]:
     return tuple(
@@ -540,7 +515,6 @@ def _selector_items(repos: Sequence[BackupRepoV4]) -> tuple[_BackupSelectorItem,
         )
         for repo in repos
     )
-
 
 def _select_and_backup(
     repos: Sequence[BackupRepoV4],
@@ -590,7 +564,6 @@ def _select_and_backup(
         dry_run=dry_run,
     )
 
-
 def _run_add(args: tuple[str, ...], context: BackupContext) -> int:
     if any(arg in ("-f", "--force") for arg in args):
         context.ui.error(FORCE_ONLY_HINT)
@@ -625,7 +598,6 @@ def _run_add(args: tuple[str, ...], context: BackupContext) -> int:
         context.ui.list_end()
     return 0 if result.ok else 1
 
-
 def _run_remove(args: tuple[str, ...], context: BackupContext) -> int:
     if any(arg in ("-f", "--force") for arg in args):
         context.ui.error(FORCE_ONLY_HINT)
@@ -651,7 +623,6 @@ def _run_remove(args: tuple[str, ...], context: BackupContext) -> int:
     )
     context.ui.list_end()
     return 0
-
 
 def _parse_stale_options(
     args: tuple[str, ...], context: BackupContext
@@ -691,7 +662,6 @@ def _parse_stale_options(
         index += 1
     return all_repos, days, force, dry_run
 
-
 _JS_DECIMAL_RE = re.compile(
     r"[+]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)",
     re.ASCII,
@@ -702,7 +672,6 @@ _ECMASCRIPT_TRIM_CHARS = (
     "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
     "\u2028\u2029\u202f\u205f\u3000\ufeff\u000a\u000d"
 )
-
 
 def _parse_js_positive_integer(raw: str) -> float | None:
     text = raw.strip(_ECMASCRIPT_TRIM_CHARS)
@@ -720,7 +689,6 @@ def _parse_js_positive_integer(raw: str) -> float | None:
     except (OverflowError, ValueError):
         return None
     return value if math.isfinite(value) and value > 0 and value.is_integer() else None
-
 
 def _run_stale(args: tuple[str, ...], context: BackupContext) -> int:
     parsed = _parse_stale_options(args, context)
@@ -769,7 +737,6 @@ def _run_stale(args: tuple[str, ...], context: BackupContext) -> int:
         dry_run=dry_run,
         list_path=list_path,
     )
-
 
 def run_backup_command(
     args: Sequence[str] = (), *, context: BackupContext

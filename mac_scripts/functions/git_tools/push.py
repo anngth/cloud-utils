@@ -1,5 +1,3 @@
-"""Implementation of the safe force-push ``gt push`` command."""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
@@ -10,9 +8,7 @@ from shared.process import CommandResult
 from .git import run_git
 from .ui import GitToolsUi
 
-
 RunGit = Callable[..., CommandResult]
-
 
 def _git_command(
     run_git_fn: RunGit,
@@ -23,7 +19,6 @@ def _git_command(
 ) -> CommandResult:
     return run_git_fn(list(args), cwd=cwd, env=env)
 
-
 def run_push_command(
     _args: Sequence[str],
     *,
@@ -32,8 +27,6 @@ def run_push_command(
     ui: GitToolsUi,
     run_git_fn: RunGit = run_git,
 ) -> int:
-    """Force-push the current branch and refresh its remote tracking refs."""
-
     def git(args: Sequence[str]) -> CommandResult:
         return _git_command(run_git_fn, args, cwd=cwd, env=env)
 

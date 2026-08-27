@@ -3,13 +3,11 @@ from pathlib import Path
 import subprocess
 from typing import Mapping, Sequence
 
-
 @dataclass(frozen=True, slots=True)
 class CommandResult:
     returncode: int
     stdout: str = ""
     stderr: str = ""
-
 
 def run_process(
     argv: Sequence[str],

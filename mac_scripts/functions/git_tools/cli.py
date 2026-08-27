@@ -1,5 +1,3 @@
-"""Top-level ``gt`` command routing."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -14,9 +12,7 @@ from .fetch import run_fetch_command
 from .push import run_push_command
 from .ui import GitToolsUi
 
-
 _MISSING = object()
-
 
 def _get(dependencies: object | None, name: str, default):
     if dependencies is None:
@@ -24,7 +20,6 @@ def _get(dependencies: object | None, name: str, default):
     if isinstance(dependencies, Mapping):
         return dependencies.get(name, default)
     return getattr(dependencies, name, default)
-
 
 def _backup_context(
     *,
@@ -52,7 +47,6 @@ def _backup_context(
         if value is not _MISSING:
             setattr(context, name, value)
     return context
-
 
 def run_cli(
     argv: Sequence[str],
@@ -99,10 +93,8 @@ def run_cli(
     ui.usage()
     return 1
 
-
 def main() -> NoReturn:
     raise SystemExit(run_cli(sys.argv[1:]))
-
 
 if __name__ == "__main__":
     main()

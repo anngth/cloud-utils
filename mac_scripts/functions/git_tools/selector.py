@@ -17,15 +17,12 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.output import DummyOutput, Output, create_output
 
-
 SelectorKind = Literal["continue", "submit", "cancel"]
-
 
 @dataclass(frozen=True, slots=True)
 class SelectorItem:
     label: str
     value: str
-
 
 @dataclass(frozen=True, slots=True)
 class SelectorState:
@@ -33,13 +30,11 @@ class SelectorState:
     cursor: int
     selected: frozenset[int]
 
-
 @dataclass(frozen=True, slots=True)
 class SelectorResult:
     kind: SelectorKind
     state: SelectorState
     selected: tuple[str, ...]
-
 
 def create_selector_state(
     items: Iterable[SelectorItem], *, initial: Iterable[str] = ()
@@ -50,7 +45,6 @@ def create_selector_state(
         index for index, item in enumerate(copied) if item.value in initial_values
     )
     return SelectorState(copied, 0, selected)
-
 
 def reduce_selector(
     state: SelectorState, key: str, *, multiple: bool
@@ -81,12 +75,10 @@ def reduce_selector(
         return SelectorResult("submit", next_state, values)
     return SelectorResult("continue", next_state, ())
 
-
 def _prompt_input(source: Input | TextIO | None) -> tuple[Input, bool]:
     if isinstance(source, Input):
         return source, False
     return create_input(stdin=source), True
-
 
 def _prompt_output(destination: Output | TextIO | None) -> Output:
     stream = (
@@ -103,7 +95,6 @@ def _prompt_output(destination: Output | TextIO | None) -> Output:
     if isinstance(destination, Output):
         return destination
     return create_output(stdout=destination)
-
 
 def run_selector(
     items: Iterable[SelectorItem],

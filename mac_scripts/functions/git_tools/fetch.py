@@ -1,5 +1,3 @@
-"""Implementation of the ``gt fetch`` repository refresh command."""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
@@ -10,11 +8,9 @@ from shared.process import CommandResult
 from .git import run_git
 from .ui import GitToolsUi
 
-
 FETCH_USAGE = "Usage: gt fetch [--sync-upstream]"
 PROTECTED_BRANCHES = ("main", "master", "develop")
 RunGit = Callable[..., CommandResult]
-
 
 def _git_command(
     run_git_fn: RunGit,
@@ -24,7 +20,6 @@ def _git_command(
     env: Mapping[str, str] | None,
 ) -> CommandResult:
     return run_git_fn(list(args), cwd=cwd, env=env)
-
 
 def _refresh_primary_remote_refs(
     git: Callable[[Sequence[str]], CommandResult], ui: GitToolsUi
@@ -39,7 +34,6 @@ def _refresh_primary_remote_refs(
             ui.status(f"Successfully fetched origin/{branch}")
         else:
             ui.status(f"Failed to fetch origin/{branch}", tone="warning")
-
 
 def _fetch_and_prune(
     git: Callable[[Sequence[str]], CommandResult], ui: GitToolsUi
@@ -60,7 +54,6 @@ def _fetch_and_prune(
 
     ui.error("Failed to fetch")
     return False
-
 
 def _sync_local_branch_with_origin_ff(
     git: Callable[[Sequence[str]], CommandResult],
@@ -106,7 +99,6 @@ def _sync_local_branch_with_origin_ff(
         )
         ui.detail(f"Run: git switch {branch} && git pull --ff-only origin {branch}")
 
-
 def _sync_with_origin(
     git: Callable[[Sequence[str]], CommandResult], ui: GitToolsUi, branch: str
 ) -> bool:
@@ -124,7 +116,6 @@ def _sync_with_origin(
         return True
     ui.error("Pull failed (non fast-forward or uncommitted changes)")
     return False
-
 
 def _sync_with_upstream(
     git: Callable[[Sequence[str]], CommandResult], ui: GitToolsUi
@@ -169,7 +160,6 @@ def _sync_with_upstream(
             "Failed to push to origin, but local merge was successful", tone="warning"
         )
 
-
 def _cleanup_gone_branches(
     git: Callable[[Sequence[str]], CommandResult], ui: GitToolsUi
 ) -> None:
@@ -190,7 +180,6 @@ def _cleanup_gone_branches(
         else:
             ui.status(f"Skipped (not merged): {branch}", tone="warning")
 
-
 def _get_cleanup_base_branch(
     git: Callable[[Sequence[str]], CommandResult], current_branch: str
 ) -> str:
@@ -201,7 +190,6 @@ def _get_cleanup_base_branch(
     if git(["show-ref", "--verify", "--quiet", "refs/heads/develop"]).returncode == 0:
         return "develop"
     return current_branch
-
 
 def _cleanup_merged_branches(
     git: Callable[[Sequence[str]], CommandResult],
@@ -242,7 +230,6 @@ def _cleanup_merged_branches(
     if not cleaned_any:
         ui.status("No merged local branches to clean", tone="muted")
 
-
 def _parse_args(args: Sequence[str], ui: GitToolsUi) -> tuple[bool, bool, bool]:
     sync_upstream = False
     for arg in args:
@@ -261,7 +248,6 @@ def _parse_args(args: Sequence[str], ui: GitToolsUi) -> tuple[bool, bool, bool]:
         return False, False, True
     return sync_upstream, False, False
 
-
 def run_fetch_command(
     args: Sequence[str],
     *,
@@ -270,8 +256,6 @@ def run_fetch_command(
     ui: GitToolsUi,
     run_git_fn: RunGit = run_git,
 ) -> int:
-    """Fetch all remotes, synchronize safe primary refs, and clean branches."""
-
     def git(git_args: Sequence[str]) -> CommandResult:
         return _git_command(run_git_fn, git_args, cwd=cwd, env=env)
 

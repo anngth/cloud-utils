@@ -1,16 +1,10 @@
-"""Pure parsing and canonicalization helpers for Git SSH URLs."""
-
 from dataclasses import dataclass
 import re
 
-
 _SSH_RE = re.compile(r"^git@([^:]+):(.+)/([^/]+?)(?:\.git)?$", re.IGNORECASE)
-
 
 @dataclass(frozen=True, slots=True)
 class ParsedSshUrl:
-    """The parsed URL and its two stable URL representations."""
-
     host: str
     owner: str
     repo: str
@@ -21,16 +15,11 @@ class ParsedSshUrl:
     def project_name(self) -> str:
         return build_project_name(self.owner, self.repo)
 
-
 def slugify_segment(value: str) -> str:
-    """Lowercase a name and collapse non-ASCII-alphanumeric runs to dashes."""
-
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]+", "-", value.lower())).strip("-")
-
 
 def build_project_name(owner: str, repo: str) -> str:
     return f"{slugify_segment(owner)}-{slugify_segment(repo)}"
-
 
 def parse_ssh_git_url(value: str) -> ParsedSshUrl:
     """Parse a Git SSH URL, preserving owner/repo casing and path nesting.
@@ -59,7 +48,6 @@ def parse_ssh_git_url(value: str) -> ParsedSshUrl:
         ssh_url=f"{canonical}.git",
         canonical=canonical,
     )
-
 
 def canonicalize_ssh_git_url(value: str) -> ParsedSshUrl:
     return parse_ssh_git_url(value)

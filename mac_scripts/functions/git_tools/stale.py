@@ -1,9 +1,6 @@
-"""Pure stale-repository policy helper."""
-
 from datetime import datetime, timezone
 import re
 from typing import Any, Mapping
-
 
 _MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000
 _UTC = timezone.utc
@@ -11,7 +8,6 @@ _DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _UTC_ISO_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$"
 )
-
 
 def _parse_timestamp(value: str | None) -> datetime | None:
     if not isinstance(value, str):
@@ -32,7 +28,6 @@ def _parse_timestamp(value: str | None) -> datetime | None:
         return None
     return parsed
 
-
 def _epoch_milliseconds(value: datetime) -> int:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("datetime must be timezone-aware")
@@ -40,12 +35,9 @@ def _epoch_milliseconds(value: datetime) -> int:
     delta = utc_value - datetime(1970, 1, 1, tzinfo=_UTC)
     return delta.days * _MILLISECONDS_PER_DAY + delta.seconds * 1000 + delta.microseconds // 1000
 
-
 def is_stale_repo(
     entry: Mapping[str, Any], *, now: datetime | None = None, days: float = 7
 ) -> bool:
-    """Whether ``lastCheckedAt`` is absent, invalid, or strictly too old."""
-
     if now is None:
         now = datetime.now(tz=_UTC)
     # Validate the caller-supplied clock even when the entry has no timestamp;

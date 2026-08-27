@@ -1,6 +1,5 @@
 from shared.ui import FrameUi
 
-
 class TwoFactorUi(FrameUi):
     def usage(self) -> None:
         self.title("2FA")

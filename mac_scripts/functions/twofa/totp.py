@@ -4,18 +4,14 @@ import time
 
 import pyotp
 
-
 _ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 _VALID_PADDING = {(0, 0), (2, 6), (4, 4), (5, 3), (7, 1)}
-
 
 class Base32Error(ValueError):
     pass
 
-
 def normalize_base32(value: str) -> str:
     return "".join(value.split()).upper()
-
 
 def _validate_base32(secret: str) -> None:
     if any(char not in _ALPHABET + "=" for char in secret):
@@ -51,7 +47,6 @@ def _validate_base32(secret: str) -> None:
         raise Base32Error("invalid Base32 encoding")
     if not decoded_bytes:
         raise Base32Error("decoded secret is empty")
-
 
 def generate_totp(secret: str, *, now: float | int | None = None) -> str:
     normalized = normalize_base32(secret)

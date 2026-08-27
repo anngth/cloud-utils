@@ -1,5 +1,3 @@
-"""Mutations for the versioned ``gt`` backup repository list."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,22 +14,18 @@ from .config import (
 )
 from .ssh_url import ParsedSshUrl, canonicalize_ssh_git_url
 
-
 ADD_HINT = "Use `gt backup add <ssh-url>` to add a repo first."
 _INDEX_RE = re.compile(r"^[0-9]+$")
-
 
 @dataclass(frozen=True, slots=True)
 class AddedRepo:
     url: str
     index: int
 
-
 @dataclass(frozen=True, slots=True)
 class FailedRepo:
     url: str
     error: str
-
 
 @dataclass(frozen=True, slots=True)
 class AddBackupRepoResult:
@@ -40,7 +34,6 @@ class AddBackupRepoResult:
     document: BackupsDocumentV4 | None = None
     created_file: bool = False
     error: str | None = None
-
 
 @dataclass(frozen=True, slots=True)
 class AddBackupReposResult:
@@ -51,7 +44,6 @@ class AddBackupReposResult:
     created_file: bool = False
     error: str | None = None
 
-
 @dataclass(frozen=True, slots=True)
 class RemoveBackupRepoResult:
     ok: bool
@@ -59,13 +51,11 @@ class RemoveBackupRepoResult:
     document: BackupsDocumentV4 | None = None
     error: str | None = None
 
-
 @dataclass(frozen=True, slots=True)
 class BackupListUpdateResult:
     ok: bool
     document: BackupsDocumentV4 | None = None
     error: str | None = None
-
 
 @dataclass(frozen=True, slots=True)
 class _LoadedDocument:
@@ -73,22 +63,17 @@ class _LoadedDocument:
     missing: bool = False
     error: str | None = None
 
-
 def _canonicalize(value: str) -> tuple[ParsedSshUrl | None, str | None]:
     try:
         return canonicalize_ssh_git_url(value), None
     except ValueError as error:
         return None, str(error)
 
-
 def _canonical_key(value: str) -> str | None:
     parsed, _ = _canonicalize(value)
     return parsed.canonical if parsed is not None else None
 
-
 def _load_for_mutation(paths: GtPaths) -> _LoadedDocument:
-    """Read and upgrade a document without writing an intermediate migration."""
-
     read = read_backups_document(paths.backups_file)
     if not read.ok:
         return _LoadedDocument(missing=read.missing, error=read.error)
@@ -99,10 +84,8 @@ def _load_for_mutation(paths: GtPaths) -> _LoadedDocument:
 
     return _LoadedDocument(document=migrated.document.model_copy(deep=True))
 
-
 def _empty_document() -> BackupsDocumentV4:
     return BackupsDocumentV4(version=4, repos=[])
-
 
 def _repo(url: str) -> BackupRepoV4:
     return BackupRepoV4(
@@ -112,15 +95,12 @@ def _repo(url: str) -> BackupRepoV4:
         selected_last=False,
     )
 
-
 def _write(paths: GtPaths, document: BackupsDocumentV4) -> str | None:
     written = write_backups_document(paths.backups_file, document)
     return None if written.ok else written.error
 
-
 def _missing_list_error() -> str:
     return f"No backups list found. {ADD_HINT}"
-
 
 def _find_repo(document: BackupsDocumentV4, canonical: str) -> int:
     return next(
@@ -132,16 +112,12 @@ def _find_repo(document: BackupsDocumentV4, canonical: str) -> int:
         -1,
     )
 
-
 def _format_timestamp(now: datetime) -> str:
     return now.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace(
         "+00:00", "Z"
     )
 
-
 def _parse_index(token: str, maximum: int) -> int | None:
-    """Parse a decimal index without converting an arbitrarily long string."""
-
     significant = token.lstrip("0") or "0"
     maximum_text = str(maximum)
     if len(significant) > len(maximum_text) or (
@@ -149,7 +125,6 @@ def _parse_index(token: str, maximum: int) -> int | None:
     ):
         return None
     return int(significant)
-
 
 def add_backup_repo(paths: GtPaths, ssh_url: str) -> AddBackupRepoResult:
     parsed, error = _canonicalize(ssh_url)
@@ -182,7 +157,6 @@ def add_backup_repo(paths: GtPaths, ssh_url: str) -> AddBackupRepoResult:
         document=document,
         created_file=created_file,
     )
-
 
 def add_backup_repos(paths: GtPaths, urls: list[str]) -> AddBackupReposResult:
     loaded = _load_for_mutation(paths)
@@ -236,7 +210,6 @@ def add_backup_repos(paths: GtPaths, urls: list[str]) -> AddBackupReposResult:
         created_file=created_file,
     )
 
-
 def remove_backup_repo(paths: GtPaths, token: str) -> RemoveBackupRepoResult:
     loaded = _load_for_mutation(paths)
     if loaded.document is None:
@@ -278,7 +251,6 @@ def remove_backup_repo(paths: GtPaths, token: str) -> RemoveBackupRepoResult:
         return RemoveBackupRepoResult(ok=False, error=error)
     return RemoveBackupRepoResult(ok=True, removed=removed, document=document)
 
-
 def _update_timestamp(
     paths: GtPaths,
     ssh_url: str,
@@ -314,18 +286,15 @@ def _update_timestamp(
         return BackupListUpdateResult(ok=False, error=error)
     return BackupListUpdateResult(ok=True, document=document)
 
-
 def record_last_backup_at(
     paths: GtPaths, ssh_url: str, *, now: datetime | None = None
 ) -> BackupListUpdateResult:
     return _update_timestamp(paths, ssh_url, now=now, include_backup=True)
 
-
 def record_last_checked_at(
     paths: GtPaths, ssh_url: str, *, now: datetime | None = None
 ) -> BackupListUpdateResult:
     return _update_timestamp(paths, ssh_url, now=now, include_backup=False)
-
 
 def set_selected_last(
     paths: GtPaths, selected_urls: list[str]

@@ -1,9 +1,7 @@
 from shared.process import run_process
 
-
 class ClipboardError(RuntimeError):
     pass
-
 
 def copy_to_clipboard(text: str, *, runner=run_process) -> None:
     try:

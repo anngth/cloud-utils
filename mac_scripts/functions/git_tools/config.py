@@ -1,5 +1,3 @@
-"""Versioned backup configuration models and atomic persistence."""
-
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -21,7 +19,6 @@ from pydantic import (
 )
 from pydantic import field_validator, model_validator
 
-
 _ISO_UTC_TIMESTAMP_RE = re.compile(
     r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?Z$"
 )
@@ -31,10 +28,7 @@ _TIMESTAMP_FIELDS_BY_VERSION = {
     4: ("lastBackupAt", "lastCheckedAt"),
 }
 
-
 def is_iso_utc_timestamp(value: object) -> bool:
-    """Match the exact UTC ``Z`` timestamp forms accepted by the JS oracle."""
-
     if not isinstance(value, str):
         return False
     match = _ISO_UTC_TIMESTAMP_RE.fullmatch(value)
@@ -58,10 +52,8 @@ def is_iso_utc_timestamp(value: object) -> bool:
         return minute == 0 and second == 0 and (millis is None or millis == "000")
     return 0 <= hour <= 23
 
-
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="ignore", strict=True, populate_by_name=True)
-
 
 class _VersionedDocument(_StrictModel):
     @model_validator(mode="before")
@@ -70,7 +62,6 @@ class _VersionedDocument(_StrictModel):
         if isinstance(value, Mapping) and type(value.get("version")) is not int:
             raise ValueError("version must be an integer")
         return value
-
 
 class BackupRepoV2(_StrictModel):
     url: InstanceOf[str]
@@ -90,7 +81,6 @@ class BackupRepoV2(_StrictModel):
             raise ValueError("invalid UTC timestamp")
         return value
 
-
 class BackupRepoV3(BackupRepoV2):
     last_checked_at: InstanceOf[str] | None = Field(alias="lastCheckedAt")
 
@@ -101,10 +91,8 @@ class BackupRepoV3(BackupRepoV2):
             raise ValueError("invalid UTC timestamp")
         return value
 
-
 class BackupRepoV4(BackupRepoV3):
     selected_last: bool = Field(alias="selectedLast")
-
 
 class BackupsDocumentV1(_VersionedDocument):
     version: Literal[1]
@@ -117,21 +105,17 @@ class BackupsDocumentV1(_VersionedDocument):
             raise ValueError("repo URLs must not be empty")
         return value
 
-
 class BackupsDocumentV2(_VersionedDocument):
     version: Literal[2]
     repos: list[BackupRepoV2]
-
 
 class BackupsDocumentV3(_VersionedDocument):
     version: Literal[3]
     repos: list[BackupRepoV3]
 
-
 class BackupsDocumentV4(_VersionedDocument):
     version: Literal[4]
     repos: list[BackupRepoV4]
-
 
 BackupsDocument: TypeAlias = Annotated[
     BackupsDocumentV1 | BackupsDocumentV2 | BackupsDocumentV3 | BackupsDocumentV4,
@@ -139,16 +123,13 @@ BackupsDocument: TypeAlias = Annotated[
 ]
 _DOCUMENT_ADAPTER = TypeAdapter(BackupsDocument)
 
-
 EMPTY_BACKUPS = BackupsDocumentV4(version=4, repos=[])
-
 
 @dataclass(frozen=True, slots=True)
 class GtPaths:
     config_dir: Path
     gt_dir: Path
     backups_file: Path
-
 
 @dataclass(frozen=True, slots=True)
 class ReadBackupsResult:
@@ -163,7 +144,6 @@ class ReadBackupsResult:
     error: str | None = None
     missing: bool = False
 
-
 @dataclass(frozen=True, slots=True)
 class MigrateBackupsResult:
     ok: bool
@@ -171,12 +151,10 @@ class MigrateBackupsResult:
     migrated: bool = False
     error: str | None = None
 
-
 @dataclass(frozen=True, slots=True)
 class WriteBackupsResult:
     ok: bool
     error: str | None = None
-
 
 @dataclass(frozen=True, slots=True)
 class LoadBackupsResult:
@@ -186,13 +164,11 @@ class LoadBackupsResult:
     error: str | None = None
     missing: bool = False
 
-
 def default_config_dir(env: Mapping[str, str] = os.environ) -> Path:
     home = env.get("HOME") or ""
     return Path(
         f"{home}/Library/Mobile Documents/com~apple~CloudDocs/Backups/cloud-utils"
     )
-
 
 def resolve_gt_paths(env: Mapping[str, str] = os.environ) -> GtPaths:
     configured = env.get("CLOUD_UTILS_CONFIG_DIR")
@@ -203,7 +179,6 @@ def resolve_gt_paths(env: Mapping[str, str] = os.environ) -> GtPaths:
         gt_dir=gt_dir,
         backups_file=gt_dir / "backups.json",
     )
-
 
 def format_display_path(
     path: str | os.PathLike[str],
@@ -235,7 +210,6 @@ def format_display_path(
 
     return file_path
 
-
 def _js_number_to_string(value: int | float) -> str:
     try:
         number = float(value)
@@ -258,7 +232,6 @@ def _js_number_to_string(value: int | float) -> str:
     exponent_sign = "+" if exponent_number >= 0 else ""
     return f"{coefficient}e{exponent_sign}{exponent_number}"
 
-
 def _normalize_surrogate_pairs(value: str) -> str:
     normalized: list[str] = []
     index = 0
@@ -275,11 +248,9 @@ def _normalize_surrogate_pairs(value: str) -> str:
         index += 1
     return "".join(normalized)
 
-
 def _js_quote_string(value: str) -> str:
     quoted = json.dumps(_normalize_surrogate_pairs(value), ensure_ascii=False)
     return quoted.encode("utf-8", errors="backslashreplace").decode("utf-8")
-
 
 def _js_json_stringify(value: object) -> str:
     if value is None:
@@ -302,10 +273,8 @@ def _js_json_stringify(value: object) -> str:
         return f"{{{','.join(entries)}}}"
     return "undefined"
 
-
 def _format_invalid_timestamp_value(value: object) -> str:
     return _js_json_stringify(value)
-
 
 def _find_repo_timestamp_error(document: object) -> str | None:
     if not isinstance(document, Mapping):
@@ -335,22 +304,18 @@ def _find_repo_timestamp_error(document: object) -> str | None:
             )
     return None
 
-
 def _parse_document(
     document: object,
 ) -> BackupsDocumentV1 | BackupsDocumentV2 | BackupsDocumentV3 | BackupsDocumentV4:
     return _DOCUMENT_ADAPTER.validate_python(document, by_alias=True, by_name=False)
-
 
 def _as_raw_document(document: object) -> object:
     if isinstance(document, BaseModel):
         return document.model_dump(by_alias=True)
     return document
 
-
 def _reject_json_constant(value: str) -> None:
     raise ValueError(f"invalid JSON constant: {value}")
-
 
 def _normalize_json_strings(value: object) -> object:
     if isinstance(value, str):
@@ -363,7 +328,6 @@ def _normalize_json_strings(value: object) -> object:
             for key, item in value.items()
         }
     return value
-
 
 def read_backups_document(path: str | os.PathLike[str]) -> ReadBackupsResult:
     backups_file = Path(path)
@@ -398,7 +362,6 @@ def read_backups_document(path: str | os.PathLike[str]) -> ReadBackupsResult:
             error=timestamp_error or f"Invalid backups document: {backups_file}",
         )
     return ReadBackupsResult(ok=True, document=parsed)
-
 
 def migrate_backups_document(document: object) -> MigrateBackupsResult:
     if isinstance(document, BackupsDocumentV4):
@@ -454,7 +417,6 @@ def migrate_backups_document(document: object) -> MigrateBackupsResult:
         migrated=True,
     )
 
-
 def write_backups_document(
     path: str | os.PathLike[str], document: object
 ) -> WriteBackupsResult:
@@ -492,7 +454,6 @@ def write_backups_document(
             error=str(error) or f"Could not write backups file: {backups_file}",
         )
     return WriteBackupsResult(ok=True)
-
 
 def load_backups_document(path: str | os.PathLike[str]) -> LoadBackupsResult:
     read_result = read_backups_document(path)

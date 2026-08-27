@@ -3,7 +3,6 @@ from typing import Final
 
 from .streams import TextWriter
 
-
 CYAN: Final = "\033[36m"
 GREEN: Final = "\033[32m"
 BRIGHT_GREEN: Final = "\033[92m"
@@ -24,14 +23,11 @@ TONE_COLOR: Final = MappingProxyType(
     }
 )
 
-
 def _fg(color: str, text: object) -> str:
     return f"{color}{text}{FG_RESET}"
 
-
 def _split_lines(text: object) -> list[str]:
     return str(text).replace("\r\n", "\n").split("\n")
-
 
 class FrameUi:
     def __init__(self, stdout: TextWriter, stderr: TextWriter) -> None:

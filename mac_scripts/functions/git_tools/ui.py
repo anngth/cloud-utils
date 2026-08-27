@@ -13,10 +13,8 @@ from shared.ui import (
 
 from .selector import SelectorState
 
-
 WHITE = "\033[97m"
 RESET = "\033[0m"
-
 
 class GitToolsUi(FrameUi):
     def usage(self) -> None:

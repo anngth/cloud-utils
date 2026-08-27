@@ -13,11 +13,9 @@ from .clipboard import ClipboardError, copy_to_clipboard
 from .totp import Base32Error, generate_totp
 from .ui import TwoFactorUi
 
-
 _MANAGED_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 class TtyInputError(RuntimeError):
     pass
-
 
 class _SignalGuard:
     def __init__(self) -> None:
@@ -114,7 +112,6 @@ class _SignalGuard:
         if first_error is not None:
             raise first_error
 
-
 def _write_tty(fd: int, text: str) -> None:
     remaining = text.encode("utf-8")
     while remaining:
@@ -123,7 +120,6 @@ def _write_tty(fd: int, text: str) -> None:
             raise OSError("terminal write made no progress")
         remaining = remaining[written:]
 
-
 def _drain_wakeup(fd: int) -> None:
     while True:
         try:
@@ -131,7 +127,6 @@ def _drain_wakeup(fd: int) -> None:
                 return
         except BlockingIOError:
             return
-
 
 def _read_hidden_line(
     tty_fd: int, guard: _SignalGuard
@@ -172,7 +167,6 @@ def _read_hidden_line(
             except UnicodeError:
                 raise TtyInputError("interactive terminal required") from None
         data.extend(chunk)
-
 
 def _read_secret_once(
     prompt: str,
@@ -248,7 +242,6 @@ def _read_secret_once(
             finally:
                 guard.restore()
 
-
 def read_secret(prompt: str, *, tty_path: str = "/dev/tty") -> str:
     if threading.current_thread() is not threading.main_thread():
         raise TtyInputError("interactive terminal required")
@@ -261,7 +254,6 @@ def read_secret(prompt: str, *, tty_path: str = "/dev/tty") -> str:
         os.kill(os.getpid(), signum)
 
     return ""
-
 
 def run_cli(
     argv: Sequence[str],
@@ -329,10 +321,8 @@ def run_cli(
 
     return int(result)
 
-
 def main() -> NoReturn:
     raise SystemExit(run_cli(sys.argv[1:]))
-
 
 if __name__ == "__main__":
     main()
