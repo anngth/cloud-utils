@@ -28,14 +28,36 @@ source "$HOME/Documents/cloud-utils/mac_init/load.zsh"
 Requires [Homebrew](https://brew.sh) (`brew` on your PATH). Install it first if you do not have it yet.
 
 ```bash
-brew install eza bat zoxide fnm rbenv libpq
+brew install eza bat zoxide fnm rbenv libpq uv
 brew tap mongodb/brew
 brew install mongosh mongodb-database-tools
 ```
 
 - `libpq` — PostgreSQL clients (`psql`, `pg_dump`, `pg_restore`). `dbt` can also use `postgresql@18`.
 - `mongosh` / `mongodb-database-tools` — used by `dbt sync mongodb`.
-- `python3` — required to run `bud`. Install with `brew install python` if `python3` is missing.
+- Node.js — required by `gt` and `skm`; install a current release with `fnm`.
+- Python 3.14 — required by `bud` and `2fa`; `uv` installs and manages the project interpreter.
+- `pbcopy` — provided by macOS and used by `2fa` to copy generated codes.
+
+## Project Python environment
+
+From the repository root, install Python 3.14 and create the local `.venv` from
+the lockfile:
+
+```bash
+uv python install 3.14
+uv sync --locked
+```
+
+For a runtime-only environment without test dependencies, use:
+
+```bash
+uv sync --locked --no-dev
+```
+
+The `bud` and `2fa` wrappers require `.venv/bin/python`. They report a setup
+error if it is missing; wrappers do not run `uv`, activate an environment, or
+create one automatically.
 
 ## Verify
 
