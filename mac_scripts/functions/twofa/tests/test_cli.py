@@ -1,6 +1,10 @@
 import builtins
 from dataclasses import dataclass, field
 import io
+import os
+import signal
+import sys
+import threading
 from typing import Callable
 
 import pytest
@@ -160,6 +164,48 @@ def test_unexpected_failure_is_not_hidden(harness: CliHarness) -> None:
         run_cli([], read_secret_fn=fail_unexpectedly, ui=harness.ui)
 
 
+def test_ctrl_c_uses_only_injected_streams_and_exact_frame(
+    harness: CliHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    global_stderr = io.StringIO()
+
+    def interrupt(_prompt: str) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sys, "stderr", global_stderr)
+
+    assert run_cli([], read_secret_fn=interrupt, ui=harness.ui) == 130
+    assert harness.stdout.getvalue() == ERROR_FRAME_GOLDEN
+    assert harness.stderr.getvalue() == ""
+    assert global_stderr.getvalue() == ""
+
+
+@pytest.mark.parametrize("error_type", [ValueError, RuntimeError])
+@pytest.mark.parametrize("operation", ["read", "copy"])
+def test_unexpected_common_exceptions_propagate_without_printing_message(
+    harness: CliHarness,
+    error_type: type[Exception],
+    operation: str,
+) -> None:
+    secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+    message = f"unexpected {operation} detail"
+
+    def read(_prompt: str) -> str:
+        if operation == "read":
+            raise error_type(message)
+        return secret
+
+    def copy(_code: str) -> None:
+        if operation == "copy":
+            raise error_type(message)
+
+    with pytest.raises(error_type, match=f"^{message}$"):
+        run_cli([], read_secret_fn=read, copy_fn=copy, now=59, ui=harness.ui)
+
+    assert message not in harness.stdout.getvalue()
+    assert message not in harness.stderr.getvalue()
+
+
 class FakeTty:
     def __init__(
         self,
@@ -176,6 +222,9 @@ class FakeTty:
         return self
 
     def __exit__(self, *_args: object) -> None:
+        self.closed = True
+
+    def close(self) -> None:
         self.closed = True
 
     def fileno(self) -> int:
@@ -197,12 +246,34 @@ class FakeTty:
 def _fake_tty_setup(monkeypatch: pytest.MonkeyPatch, tty: FakeTty):
     original = [1, 2, 3, 4 | cli.termios.ECHO, 5, 6, [7]]
     changes: list[list[object]] = []
+    input_bytes = bytearray(tty.line.encode("utf-8"))
+    real_read = os.read
     monkeypatch.setattr(cli.os, "open", lambda *_args, **_kwargs: 42)
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: tty)
     monkeypatch.setattr(
         cli.os,
         "write",
         lambda _fd, data: tty.writes.append(data.decode("utf-8")) or len(data),
+    )
+
+    def read(fd: int, size: int) -> bytes:
+        if fd != 42:
+            return real_read(fd, size)
+        if tty.read_error is not None:
+            raise tty.read_error
+        if not input_bytes:
+            return b""
+        chunk = bytes(input_bytes[:size])
+        del input_bytes[:size]
+        return chunk
+
+    monkeypatch.setattr(cli.os, "read", read)
+    monkeypatch.setattr(
+        cli.select,
+        "select",
+        lambda readers, _writers, _errors: ([42], [], [])
+        if 42 in readers
+        else ([], [], []),
     )
     monkeypatch.setattr(cli.termios, "tcgetattr", lambda _fd: original)
 
@@ -227,6 +298,213 @@ def test_read_secret_hides_echo_strips_newline_and_restores_terminal(
     assert changes[0][3] == original[3] & ~cli.termios.ECHO
     assert changes[1] == original
     assert tty.closed
+
+
+def test_read_secret_rejects_non_main_thread_before_opening_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[str] = []
+    errors: list[BaseException] = []
+    monkeypatch.setattr(
+        cli.os,
+        "open",
+        lambda path, _flags: opened.append(path) or 42,
+    )
+
+    def worker() -> None:
+        try:
+            read_secret("prompt: ", tty_path="must-not-open")
+        except BaseException as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert opened == []
+    assert len(errors) == 1
+    assert type(errors[0]) is RuntimeError
+    assert str(errors[0]) == "interactive terminal required"
+
+
+def test_read_secret_restores_signal_handlers_after_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tty = FakeTty(line="hidden\n")
+    _fake_tty_setup(monkeypatch, tty)
+    original_handlers = {
+        signum: signal.getsignal(signum)
+        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+    }
+    original_mask = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    original_wakeup_fd = signal.set_wakeup_fd(-1)
+    signal.set_wakeup_fd(original_wakeup_fd)
+
+    assert read_secret("prompt: ", tty_path="ignored") == "hidden"
+
+    assert {
+        signum: signal.getsignal(signum) for signum in original_handlers
+    } == original_handlers
+    assert signal.pthread_sigmask(signal.SIG_BLOCK, []) == original_mask
+    restored_wakeup_fd = signal.set_wakeup_fd(-1)
+    signal.set_wakeup_fd(restored_wakeup_fd)
+    assert restored_wakeup_fd == original_wakeup_fd
+
+
+def test_signal_arriving_during_terminal_restore_runs_prior_handler_after_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tty = FakeTty(line="hidden\n")
+    original, changes = _fake_tty_setup(monkeypatch, tty)
+    previous = signal.getsignal(signal.SIGTERM)
+    events: list[tuple[bool, bool, bool]] = []
+
+    def prior_handler(_signum: int, _frame: object) -> None:
+        events.append(
+            (
+                tty.closed,
+                signal.getsignal(signal.SIGTERM) is prior_handler,
+                changes[-1] == original,
+            )
+        )
+
+    signal.signal(signal.SIGTERM, prior_handler)
+    original_setattr = cli.termios.tcsetattr
+    restore_signal_sent = False
+
+    def signal_during_restore(fd: int, when: int, attributes: list[object]) -> None:
+        nonlocal restore_signal_sent
+        original_setattr(fd, when, attributes)
+        if attributes == original and not restore_signal_sent:
+            restore_signal_sent = True
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    monkeypatch.setattr(cli.termios, "tcsetattr", signal_during_restore)
+    try:
+        assert read_secret("prompt: ", tty_path="ignored") == "hidden"
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+    assert events == [(True, True, True)]
+
+
+def test_signal_arriving_during_stream_close_runs_prior_handler_after_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tty = FakeTty(line="hidden\n")
+    original, changes = _fake_tty_setup(monkeypatch, tty)
+    previous = signal.getsignal(signal.SIGTERM)
+    events: list[tuple[bool, bool, bool]] = []
+    close_signal_sent = False
+
+    def prior_handler(_signum: int, _frame: object) -> None:
+        events.append(
+            (
+                tty.closed,
+                signal.getsignal(signal.SIGTERM) is prior_handler,
+                changes[-1] == original,
+            )
+        )
+
+    original_close = tty.close
+
+    def signal_during_close() -> None:
+        nonlocal close_signal_sent
+        original_close()
+        if not close_signal_sent:
+            close_signal_sent = True
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    tty.close = signal_during_close
+    signal.signal(signal.SIGTERM, prior_handler)
+    try:
+        assert read_secret("prompt: ", tty_path="ignored") == "hidden"
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+    assert events == [(True, True, True)]
+
+
+def test_signal_arriving_during_handler_restore_uses_restored_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tty = FakeTty(line="hidden\n")
+    original, changes = _fake_tty_setup(monkeypatch, tty)
+    real_signal = signal.signal
+    previous = signal.getsignal(signal.SIGTERM)
+    events: list[tuple[bool, bool, bool]] = []
+    restore_signal_sent = False
+
+    def prior_handler(_signum: int, _frame: object) -> None:
+        events.append(
+            (
+                tty.closed,
+                signal.getsignal(signal.SIGTERM) is prior_handler,
+                changes[-1] == original,
+            )
+        )
+
+    real_signal(signal.SIGTERM, prior_handler)
+
+    def signal_during_handler_restore(signum: int, handler: object):
+        nonlocal restore_signal_sent
+        result = real_signal(signum, handler)
+        if (
+            signum == signal.SIGTERM
+            and handler is prior_handler
+            and not restore_signal_sent
+        ):
+            restore_signal_sent = True
+            os.kill(os.getpid(), signal.SIGTERM)
+        return result
+
+    monkeypatch.setattr(cli.signal, "signal", signal_during_handler_restore)
+    try:
+        assert read_secret("prompt: ", tty_path="ignored") == "hidden"
+    finally:
+        real_signal(signal.SIGTERM, previous)
+
+    assert events == [(True, True, True)]
+
+
+def test_signal_arriving_during_handler_installation_is_deferred_and_redelivered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tty = FakeTty(line="hidden\n")
+    original, changes = _fake_tty_setup(monkeypatch, tty)
+    real_signal = signal.signal
+    previous = signal.getsignal(signal.SIGHUP)
+    events: list[tuple[bool, bool, bool]] = []
+    injected = False
+
+    def prior_handler(_signum: int, _frame: object) -> None:
+        events.append(
+            (
+                tty.closed,
+                signal.getsignal(signal.SIGHUP) is prior_handler,
+                changes[-1] == original,
+            )
+        )
+
+    real_signal(signal.SIGHUP, prior_handler)
+
+    def signal_with_injection(signum: int, handler: object):
+        nonlocal injected
+        result = real_signal(signum, handler)
+        if signum == signal.SIGHUP and handler is not prior_handler and not injected:
+            injected = True
+            os.kill(os.getpid(), signal.SIGHUP)
+        return result
+
+    monkeypatch.setattr(cli.signal, "signal", signal_with_injection)
+    try:
+        assert read_secret("prompt: ", tty_path="ignored") == "hidden"
+    finally:
+        real_signal(signal.SIGHUP, previous)
+
+    assert events == [(True, True, True)]
+    assert tty.writes.count("prompt: ") == 1
 
 
 def test_read_secret_translates_missing_tty(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -301,10 +579,7 @@ def test_read_secret_reports_restore_failure(monkeypatch: pytest.MonkeyPatch) ->
     tty = FakeTty()
     original = [1, 2, 3, 4 | cli.termios.ECHO, 5, 6, [7]]
     calls = 0
-    monkeypatch.setattr(cli.os, "open", lambda *_args, **_kwargs: 42)
-    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: tty)
-    monkeypatch.setattr(cli.os, "write", lambda _fd, data: len(data))
-    monkeypatch.setattr(cli.termios, "tcgetattr", lambda _fd: original)
+    _fake_tty_setup(monkeypatch, tty)
 
     def fail_restore(_fd: int, _when: int, _attributes: list[object]) -> None:
         nonlocal calls

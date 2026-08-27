@@ -18,6 +18,15 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
 PROMPT = b"Base32 secret: "
+CTRL_C_GOLDEN = (
+    "\r\n"
+    "   \x1b[42m\x1b[30m 2FA \x1b[39m\x1b[49m\r\n"
+    "\x1b[36m│\x1b[39m\r\n"
+    "\x1b[32m◇\x1b[39m  Generate TOTP\r\n"
+    "\x1b[36m│\x1b[39m\r\n"
+    "\x1b[36m◆\x1b[39m  Base32 secret: "
+    "\x1b[36m└\x1b[39m\r\n"
+).encode("utf-8")
 
 
 def _make_controlling_tty() -> None:
@@ -90,6 +99,20 @@ class PtyProcess:
             self.transcript
         )
 
+    def wait_until(self, predicate, timeout: float = 5) -> None:
+        deadline = time.monotonic() + timeout
+        while not predicate():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AssertionError(
+                    f"condition not met; transcript={bytes(self.transcript)!r}"
+                )
+            readable, _, _ = select.select([self.master], [], [], min(0.05, remaining))
+            if readable:
+                self.transcript.extend(os.read(self.master, 4096))
+            if self.process.poll() is not None:
+                raise AssertionError("session keeper exited before condition was met")
+
     def close(self) -> None:
         if not self.status_path.exists() and self.child_pid_path.exists():
             try:
@@ -129,8 +152,17 @@ def _sitecustomize(tmp_path: Path) -> Path:
     python_dir.mkdir()
     (python_dir / "sitecustomize.py").write_text(
         "import os\n"
+        "from pathlib import Path\n"
+        "import signal\n"
         "import time\n"
         "time.time = lambda: 59\n"
+        "prior = os.environ.get('TWOFA_PRIOR_SIGNAL')\n"
+        "if prior == 'ignore':\n"
+        "    signal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
+        "elif prior == 'callable':\n"
+        "    def prior_handler(signum, frame):\n"
+        "        Path(os.environ['TWOFA_SIGNAL_MARKER']).write_text(str(signum))\n"
+        "    signal.signal(signal.SIGHUP, prior_handler)\n"
         "if os.environ.get('TWOFA_UNEXPECTED') == '1':\n"
         "    import pyotp\n"
         "    def fail(*args, **kwargs):\n"
@@ -176,6 +208,7 @@ def _start_twofa(
     *,
     clipboard_exit: int = 0,
     unexpected: bool = False,
+    prior_signal: str | None = None,
 ) -> tuple[PtyProcess, list[object], Path]:
     bin_dir, capture = _fake_pbcopy(tmp_path)
     python_dir = _sitecustomize(tmp_path)
@@ -195,6 +228,9 @@ def _start_twofa(
     )
     if unexpected:
         env["TWOFA_UNEXPECTED"] = "1"
+    if prior_signal is not None:
+        env["TWOFA_PRIOR_SIGNAL"] = prior_signal
+        env["TWOFA_SIGNAL_MARKER"] = str(tmp_path / "signal.marker")
 
     process = subprocess.Popen(
         [
@@ -284,21 +320,69 @@ def test_ctrl_c_restores_tty(tmp_path: Path) -> None:
         returncode, transcript = session.finish()
 
         assert returncode == 130
+        assert transcript == CTRL_C_GOLDEN
         assert SECRET.encode() not in transcript
         _assert_restored(session, original)
     finally:
         session.close()
 
 
-def test_sigterm_restores_tty_before_process_terminates(tmp_path: Path) -> None:
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGHUP])
+def test_termination_signal_restores_tty_before_process_terminates(
+    tmp_path: Path, signum: int
+) -> None:
     session, original, _capture = _start_twofa(tmp_path)
     try:
         session.read_until(PROMPT)
-        os.kill(session.child_pid, signal.SIGTERM)
+        os.kill(session.child_pid, signum)
         returncode, transcript = session.finish()
 
-        assert returncode == -signal.SIGTERM
+        assert returncode == -signum
         assert SECRET.encode() not in transcript
+        _assert_restored(session, original)
+    finally:
+        session.close()
+
+
+def test_ignored_prior_sighup_handler_keeps_reading_hidden_input(
+    tmp_path: Path,
+) -> None:
+    session, original, capture = _start_twofa(tmp_path, prior_signal="ignore")
+    try:
+        session.read_until(PROMPT)
+        os.kill(session.child_pid, signal.SIGHUP)
+        os.write(session.master, f"{SECRET}\n".encode())
+        returncode, transcript = session.finish()
+
+        assert returncode == 0
+        assert transcript.count(PROMPT) == 1
+        assert SECRET.encode() not in transcript
+        assert capture.read_text(encoding="utf-8") == "287082"
+        _assert_restored(session, original)
+    finally:
+        session.close()
+
+
+def test_callable_prior_sighup_handler_runs_after_cleanup_then_read_resumes(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "signal.marker"
+    session, original, capture = _start_twofa(tmp_path, prior_signal="callable")
+    try:
+        session.read_until(PROMPT)
+        os.kill(session.child_pid, signal.SIGHUP)
+        session.wait_until(marker.exists)
+        assert marker.read_text(encoding="utf-8") == str(signal.SIGHUP)
+        session.wait_until(
+            lambda: not (termios.tcgetattr(session.slave)[3] & termios.ECHO)
+        )
+        os.write(session.master, f"{SECRET}\n".encode())
+        returncode, transcript = session.finish()
+
+        assert returncode == 0
+        assert transcript.count(PROMPT) == 1
+        assert SECRET.encode() not in transcript
+        assert capture.read_text(encoding="utf-8") == "287082"
         _assert_restored(session, original)
     finally:
         session.close()
