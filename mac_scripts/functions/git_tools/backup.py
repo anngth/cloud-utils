@@ -14,36 +14,14 @@ from typing import Literal, TextIO
 
 import click
 
-from .backup_list import (
-    add_backup_repos,
-    record_last_backup_at,
-    record_last_checked_at,
-    remove_backup_repo,
-    set_selected_last,
-)
-from .config import (
-    BackupRepoV4,
-    BackupsDocumentV4,
-    GtPaths,
-    format_display_path,
-    migrate_backups_document,
-    read_backups_document,
-    write_backups_document,
-)
+from .backup_list import add_backup_repos, record_last_backup_at, record_last_checked_at
+from .backup_list import remove_backup_repo, set_selected_last
+from .config import BackupRepoV4, BackupsDocumentV4, GtPaths, format_display_path
+from .config import migrate_backups_document, read_backups_document, write_backups_document
 from .git import run_git
-from .gitlab import (
-    BACKUP_GROUP,
-    assert_glab_ready,
-    create_private_project,
-    ensure_backup_group,
-    group_exists,
-    pick_preferred_default_branch,
-    project_exists,
-    project_ssh_url,
-    project_web_url,
-    protect_branch,
-    set_default_branch,
-)
+from .gitlab import BACKUP_GROUP, assert_glab_ready, create_private_project, ensure_backup_group
+from .gitlab import group_exists, pick_preferred_default_branch, project_exists
+from .gitlab import project_ssh_url, project_web_url, protect_branch, set_default_branch
 from .refs_fingerprint import fingerprints_equal, parse_ls_remote_fingerprint
 from .selector import SelectorItem, SelectorResult, SelectorState, run_selector
 from .ssh_url import parse_ssh_git_url
@@ -52,17 +30,12 @@ from .ui import GitToolsUi
 
 ADD_HINT = "Use `gt backup add <ssh-url>` to add a repo first."
 FORCE_ONLY_HINT = (
-    "The --force flag is only valid for interactive backup, "
-    "gt backup --all, and gt backup stale"
+    "The --force flag is only valid for interactive backup, gt backup --all, and gt backup stale"
 )
 DRY_RUN_ONLY_HINT = (
-    "The --dry-run flag is only valid for interactive backup, "
-    "gt backup --all, and gt backup stale"
+    "The --dry-run flag is only valid for interactive backup, gt backup --all, and gt backup stale"
 )
-STALE_USAGE = (
-    "Usage: gt backup stale [--days <n>] [--all] "
-    "[-f|--force] [--dry-run]"
-)
+STALE_USAGE = "Usage: gt backup stale [--days <n>] [--all] [-f|--force] [--dry-run]"
 
 def _make_temp_dir(prefix: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=prefix))
@@ -90,9 +63,7 @@ class BackupContext:
     group_exists: Callable[..., object] = group_exists
     project_exists: Callable[..., object] = project_exists
     create_private_project: Callable[..., object] = create_private_project
-    pick_preferred_default_branch: Callable[..., object] = (
-        pick_preferred_default_branch
-    )
+    pick_preferred_default_branch: Callable[..., object] = pick_preferred_default_branch
     set_default_branch: Callable[..., object] = set_default_branch
     protect_branch: Callable[..., object] = protect_branch
     run_git: Callable[..., object] = run_git
@@ -133,6 +104,20 @@ def _failed(source_url: str, error: str | None, fallback: str) -> BackupResult:
 def _git_error(result, fallback: str) -> str:
     return result.stderr.strip() or result.stdout.strip() or fallback
 
+def _compare_remote_refs(
+    source_url: str, destination: str, context: BackupContext,
+) -> tuple[bool | None, str | None]:
+    fingerprints = []
+    for url, fallback in (
+        (source_url, "git ls-remote source failed"),
+        (destination, "git ls-remote destination failed"),
+    ):
+        result = context.run_git(["ls-remote", url], cwd=context.cwd, env=context.env)
+        if result.returncode != 0:
+            return None, _git_error(result, fallback)
+        fingerprints.append(parse_ls_remote_fingerprint(result.stdout))
+    return fingerprints_equal(*fingerprints), None
+
 def backup_one_repo(
     source_url: str,
     *,
@@ -146,13 +131,8 @@ def backup_one_repo(
         return BackupResult("fail", source_url, error=str(error))
 
     if not context.has_command("git"):
-        return _failed(
-            source_url, None, "git is not installed or not available on PATH"
-        )
-    ready = context.assert_glab_ready(
-        has_command=context.has_command,
-        env=context.env,
-    )
+        return _failed(source_url, None, "git is not installed or not available on PATH")
+    ready = context.assert_glab_ready(has_command=context.has_command, env=context.env)
     if not ready.ok:
         return _failed(source_url, ready.error, "glab is not ready")
 
@@ -165,49 +145,23 @@ def backup_one_repo(
     if dry_run:
         group = context.group_exists(BACKUP_GROUP)
         if not group.ok:
-            return _failed(
-                source_url, group.error, "could not check GitLab group"
-            )
+            return _failed(source_url, group.error, "could not check GitLab group")
         existing = context.project_exists(BACKUP_GROUP, name)
         if not existing.ok:
-            return _failed(
-                source_url, existing.error, "could not check GitLab project"
-            )
+            return _failed(source_url, existing.error, "could not check GitLab project")
         if not existing.exists:
             if existing.inactive:
-                context.ui.status(
-                    f"Would recreate inactive backup {project_path}"
-                )
+                context.ui.status(f"Would recreate inactive backup {project_path}")
             else:
                 context.ui.status(f"Would create {project_path}")
             context.ui.status("Would mirror")
             return BackupResult("ok", source_url, web_url)
 
         context.ui.status(f"Would update existing backup {project_path}")
-        source_refs = context.run_git(
-            ["ls-remote", source_url], cwd=context.cwd, env=context.env
-        )
-        if source_refs.returncode != 0:
-            return _failed(
-                source_url,
-                _git_error(source_refs, "git ls-remote source failed"),
-                "git ls-remote source failed",
-            )
-        destination_refs = context.run_git(
-            ["ls-remote", destination], cwd=context.cwd, env=context.env
-        )
-        if destination_refs.returncode != 0:
-            return _failed(
-                source_url,
-                _git_error(
-                    destination_refs, "git ls-remote destination failed"
-                ),
-                "git ls-remote destination failed",
-            )
-        if fingerprints_equal(
-            parse_ls_remote_fingerprint(source_refs.stdout),
-            parse_ls_remote_fingerprint(destination_refs.stdout),
-        ):
+        unchanged, error = _compare_remote_refs(source_url, destination, context)
+        if error:
+            return _failed(source_url, error, error)
+        if unchanged:
             context.ui.status("Would skip (unchanged)", tone="muted")
             return BackupResult("skip", source_url, web_url)
         context.ui.status("Would mirror")
@@ -215,19 +169,13 @@ def backup_one_repo(
 
     group = context.ensure_backup_group(BACKUP_GROUP)
     if not group.ok:
-        return _failed(
-            source_url,
-            group.error,
-            "could not ensure GitLab backup group",
-        )
+        return _failed(source_url, group.error, "could not ensure GitLab backup group")
     if group.created:
         context.ui.status(f"Created group {BACKUP_GROUP}")
 
     existing = context.project_exists(BACKUP_GROUP, name)
     if not existing.ok:
-        return _failed(
-            source_url, existing.error, "could not check GitLab project"
-        )
+        return _failed(source_url, existing.error, "could not check GitLab project")
     if existing.exists:
         context.ui.status(f"Updating existing backup {project_path}")
     else:
@@ -238,45 +186,21 @@ def backup_one_repo(
             )
         created = context.create_private_project(BACKUP_GROUP, name)
         if not created.ok:
-            return _failed(
-                source_url, created.error, "failed to create GitLab project"
-            )
+            return _failed(source_url, created.error, "failed to create GitLab project")
         context.ui.status(f"Created {project_path}")
 
     if existing.exists and not force:
-        source_refs = context.run_git(
-            ["ls-remote", source_url], cwd=context.cwd, env=context.env
-        )
-        if source_refs.returncode != 0:
-            return _failed(
-                source_url,
-                _git_error(source_refs, "git ls-remote source failed"),
-                "git ls-remote source failed",
-            )
-        destination_refs = context.run_git(
-            ["ls-remote", destination], cwd=context.cwd, env=context.env
-        )
-        if destination_refs.returncode != 0:
-            return _failed(
-                source_url,
-                _git_error(
-                    destination_refs, "git ls-remote destination failed"
-                ),
-                "git ls-remote destination failed",
-            )
-        if fingerprints_equal(
-            parse_ls_remote_fingerprint(source_refs.stdout),
-            parse_ls_remote_fingerprint(destination_refs.stdout),
-        ):
+        unchanged, error = _compare_remote_refs(source_url, destination, context)
+        if error:
+            return _failed(source_url, error, error)
+        if unchanged:
             context.ui.status("Unchanged; skipping mirror", tone="muted")
             return BackupResult("skip", source_url, web_url)
 
     temp_root = Path(context.make_temp_dir("gt-backup-"))
     mirror_dir = temp_root / "mirror.git"
     try:
-        context.ui.status(
-            f"Cloning source to {temp_root.name}/mirror.git"
-        )
+        context.ui.status(f"Cloning source to {temp_root.name}/mirror.git")
         cloned = context.run_git(
             ["clone", "--mirror", source_url, str(mirror_dir)],
             cwd=context.cwd,
@@ -310,13 +234,9 @@ def backup_one_repo(
             )
         context.ui.status("Pushed all branches + tags")
 
-        preferred = context.pick_preferred_default_branch(
-            mirror_dir, run_git_fn=context.run_git
-        )
+        preferred = context.pick_preferred_default_branch(mirror_dir, run_git_fn=context.run_git)
         if preferred:
-            updated = context.set_default_branch(
-                BACKUP_GROUP, name, preferred
-            )
+            updated = context.set_default_branch(BACKUP_GROUP, name, preferred)
             if updated.ok:
                 context.ui.status(f"Default branch {preferred}")
             else:
@@ -328,23 +248,17 @@ def backup_one_repo(
 
         for branch in ("main", "develop"):
             present = context.run_git(
-                [
-                    "show-ref",
-                    "--verify",
-                    "--quiet",
-                    f"refs/heads/{branch}",
-                ],
+                ["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
                 cwd=mirror_dir,
             )
             if present.returncode != 0:
                 continue
             protected = context.protect_branch(BACKUP_GROUP, name, branch)
             if protected.ok:
-                context.ui.status(
-                    f"{branch} already protected"
-                    if protected.already_protected
-                    else f"Protected {branch}"
+                message = (
+                    f"{branch} already protected" if protected.already_protected else f"Protected {branch}"
                 )
+                context.ui.status(message)
             else:
                 context.ui.status(
                     f"Could not protect {branch}: "
@@ -357,70 +271,39 @@ def backup_one_repo(
     return BackupResult("ok", source_url, web_url)
 
 def run_backup_batch(
-    urls: Sequence[str],
-    *,
-    context: BackupContext,
-    force: bool = False,
-    dry_run: bool = False,
+    urls: Sequence[str], *, context: BackupContext,
+    force: bool = False, dry_run: bool = False,
 ) -> int:
     results: list[BackupResult] = []
     if dry_run:
         context.ui.status("Dry run (no changes)")
 
     for url in urls:
-        result = backup_one_repo(
-            url, force=force, dry_run=dry_run, context=context
-        )
+        result = backup_one_repo(url, force=force, dry_run=dry_run, context=context)
         if result.status == "fail" or dry_run:
             results.append(result)
             continue
 
         if result.status == "skip":
-            recorded = context.record_last_checked_at(
-                context.paths, url, now=context.now()
-            )
-            if not recorded.ok:
-                results.append(
-                    BackupResult(
-                        "fail",
-                        url,
-                        error=(
-                            "Backup skipped but failed to save lastCheckedAt: "
-                            f"{recorded.error}"
-                        ),
-                    )
-                )
-                continue
+            record = context.record_last_checked_at
+            failure = "Backup skipped but failed to save lastCheckedAt"
         else:
-            recorded = context.record_last_backup_at(
-                context.paths, url, now=context.now()
-            )
-            if not recorded.ok:
-                results.append(
-                    BackupResult(
-                        "fail",
-                        url,
-                        error=(
-                            "Backup succeeded but failed to save lastBackupAt: "
-                            f"{recorded.error}"
-                        ),
-                    )
-                )
-                continue
+            record = context.record_last_backup_at
+            failure = "Backup succeeded but failed to save lastBackupAt"
+        recorded = record(context.paths, url, now=context.now())
+        if not recorded.ok:
+            results.append(BackupResult("fail", url, error=f"{failure}: {recorded.error}"))
+            continue
         results.append(result)
 
     context.ui.section("Backup summary")
     for result in results:
         if result.status == "ok":
             context.ui.item(f"ok  {result.source_url}")
-            context.ui.detail(
-                "→ would mirror" if dry_run else f"→ {result.destination_url}"
-            )
+            context.ui.detail("→ would mirror" if dry_run else f"→ {result.destination_url}")
         elif result.status == "skip":
             context.ui.item(f"skip  {result.source_url}", tone="muted")
-            context.ui.detail(
-                "→ would skip (unchanged)" if dry_run else "→ unchanged"
-            )
+            context.ui.detail("→ would skip (unchanged)" if dry_run else "→ unchanged")
         else:
             context.ui.item(f"fail  {result.source_url}", tone="failure")
             context.ui.detail(f"— {result.error}", tone="failure")
@@ -429,16 +312,9 @@ def run_backup_batch(
 
 _TOKENIZER = click.Command(
     "backup",
-    params=[
-        click.Argument(
-            ["tokens"], nargs=-1, type=click.UNPROCESSED, required=False
-        )
-    ],
+    params=[click.Argument(["tokens"], nargs=-1, type=click.UNPROCESSED, required=False)],
     add_help_option=False,
-    context_settings={
-        "ignore_unknown_options": True,
-        "allow_extra_args": True,
-    },
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
 )
 
 def _tokens(args: Sequence[str]) -> tuple[str, ...]:
@@ -454,15 +330,9 @@ def _tokens(args: Sequence[str]) -> tuple[str, ...]:
     finally:
         context.close()
 
-def _start_backup_frame(
-    context: BackupContext, list_path: str, *, dry_run: bool
-) -> None:
+def _start_backup_frame(context: BackupContext, list_path: str, *, dry_run: bool) -> None:
     context.ui.title("REPO BACKUP")
-    context.ui.step(
-        "Dry run: backup repositories"
-        if dry_run
-        else "Backup repositories"
-    )
+    context.ui.step("Dry run: backup repositories" if dry_run else "Backup repositories")
     context.ui.detail(list_path)
 
 def _load_repos(context: BackupContext) -> _LoadedRepos | None:
@@ -480,20 +350,12 @@ def _load_repos(context: BackupContext) -> _LoadedRepos | None:
     if not migrated.document.repos:
         context.ui.error(f"Backups list is empty. {ADD_HINT}")
         return None
-    return _LoadedRepos(
-        repos=tuple(migrated.document.repos),
-        document=migrated.document,
-        migrated=migrated.migrated,
-    )
+    return _LoadedRepos(tuple(migrated.document.repos), migrated.document, migrated.migrated)
 
-def _persist_migration(
-    loaded: _LoadedRepos, context: BackupContext
-) -> bool:
+def _persist_migration(loaded: _LoadedRepos, context: BackupContext) -> bool:
     if not loaded.migrated:
         return True
-    written = context.write_backups_document(
-        context.paths.backups_file, loaded.document
-    )
+    written = context.write_backups_document(context.paths.backups_file, loaded.document)
     if not written.ok:
         context.ui.error(written.error)
         return False
@@ -508,10 +370,7 @@ def _is_tty(stream: object) -> bool:
 def _selector_items(repos: Sequence[BackupRepoV4]) -> tuple[_BackupSelectorItem, ...]:
     return tuple(
         _BackupSelectorItem(
-            label=repo.url,
-            value=repo.url,
-            last_backup_at=repo.last_backup_at,
-            last_checked_at=repo.last_checked_at,
+            repo.url, repo.url, last_backup_at=repo.last_backup_at, last_checked_at=repo.last_checked_at,
         )
         for repo in repos
     )
@@ -538,14 +397,10 @@ def _select_and_backup(
         multiple=True,
         input=context.stdin,
         output=context.stdout,
-        render=lambda state: context.ui.render_backup_selector(
-            heading, state, list_path=list_path
-        ),
+        render=lambda state: context.ui.render_backup_selector(heading, state, list_path=list_path),
     )
     if selection.kind == "cancel":
-        context.ui.cancelled_backup_selector(
-            heading, selection.state, list_path=list_path
-        )
+        context.ui.cancelled_backup_selector(heading, selection.state, list_path=list_path)
         return 1
     if not selection.selected:
         context.ui.error("No repos selected")
@@ -557,19 +412,22 @@ def _select_and_backup(
             context.ui.error(f"Failed to save selection: {saved.error}")
             return 1
     _start_backup_frame(context, list_path, dry_run=dry_run)
-    return run_backup_batch(
-        selected,
-        context=context,
-        force=force,
-        dry_run=dry_run,
-    )
+    return run_backup_batch(selected, context=context, force=force, dry_run=dry_run)
 
-def _run_add(args: tuple[str, ...], context: BackupContext) -> int:
+def _reject_mutation_flags(args: tuple[str, ...], context: BackupContext) -> bool:
     if any(arg in ("-f", "--force") for arg in args):
         context.ui.error(FORCE_ONLY_HINT)
-        return 1
+        return True
     if "--dry-run" in args:
         context.ui.error(DRY_RUN_ONLY_HINT)
+        return True
+    return False
+
+def _list_path(context: BackupContext) -> str:
+    return format_display_path(context.paths.backups_file, home=context.env.get("HOME"))
+
+def _run_add(args: tuple[str, ...], context: BackupContext) -> int:
+    if _reject_mutation_flags(args, context):
         return 1
     urls = list(args)
     if not urls:
@@ -589,21 +447,12 @@ def _run_add(args: tuple[str, ...], context: BackupContext) -> int:
     for failure in result.failures:
         context.ui.error(f"{failure.url}: {failure.error}")
     if result.added:
-        context.ui.item(
-            format_display_path(
-                context.paths.backups_file,
-                home=context.env.get("HOME"),
-            )
-        )
+        context.ui.item(_list_path(context))
         context.ui.list_end()
     return 0 if result.ok else 1
 
 def _run_remove(args: tuple[str, ...], context: BackupContext) -> int:
-    if any(arg in ("-f", "--force") for arg in args):
-        context.ui.error(FORCE_ONLY_HINT)
-        return 1
-    if "--dry-run" in args:
-        context.ui.error(DRY_RUN_ONLY_HINT)
+    if _reject_mutation_flags(args, context):
         return 1
     if len(args) != 1 or not args[0]:
         context.ui.error("Usage: gt backup remove <index|ssh-url>")
@@ -615,12 +464,7 @@ def _run_remove(args: tuple[str, ...], context: BackupContext) -> int:
     context.ui.title("REPO BACKUP")
     context.ui.step("Remove repository")
     context.ui.success(f"Removed {result.removed}")
-    context.ui.item(
-        format_display_path(
-            context.paths.backups_file,
-            home=context.env.get("HOME"),
-        )
-    )
+    context.ui.item(_list_path(context))
     context.ui.list_end()
     return 0
 
