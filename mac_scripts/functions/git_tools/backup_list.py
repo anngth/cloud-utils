@@ -4,14 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
 
-from .config import (
-    BackupsDocumentV4,
-    BackupRepoV4,
-    GtPaths,
-    migrate_backups_document,
-    read_backups_document,
-    write_backups_document,
-)
+from .config import BackupsDocumentV4, BackupRepoV4, GtPaths
+from .config import migrate_backups_document, read_backups_document, write_backups_document
 from .ssh_url import ParsedSshUrl, canonicalize_ssh_git_url
 
 ADD_HINT = "Use `gt backup add <ssh-url>` to add a repo first."
@@ -88,12 +82,7 @@ def _empty_document() -> BackupsDocumentV4:
     return BackupsDocumentV4(version=4, repos=[])
 
 def _repo(url: str) -> BackupRepoV4:
-    return BackupRepoV4(
-        url=url,
-        last_backup_at=None,
-        last_checked_at=None,
-        selected_last=False,
-    )
+    return BackupRepoV4(url=url, last_backup_at=None, last_checked_at=None, selected_last=False)
 
 def _write(paths: GtPaths, document: BackupsDocumentV4) -> str | None:
     written = write_backups_document(paths.backups_file, document)
@@ -104,18 +93,12 @@ def _missing_list_error() -> str:
 
 def _find_repo(document: BackupsDocumentV4, canonical: str) -> int:
     return next(
-        (
-            index
-            for index, repo in enumerate(document.repos)
-            if _canonical_key(repo.url) == canonical
-        ),
+        (index for index, repo in enumerate(document.repos) if _canonical_key(repo.url) == canonical),
         -1,
     )
 
 def _format_timestamp(now: datetime) -> str:
-    return now.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace(
-        "+00:00", "Z"
-    )
+    return now.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 def _parse_index(token: str, maximum: int) -> int | None:
     significant = token.lstrip("0") or "0"
@@ -126,48 +109,44 @@ def _parse_index(token: str, maximum: int) -> int | None:
         return None
     return int(significant)
 
+def _load_for_add(paths: GtPaths) -> tuple[BackupsDocumentV4 | None, bool, str | None]:
+    loaded = _load_for_mutation(paths)
+    if loaded.document is not None:
+        return loaded.document, False, None
+    if loaded.missing:
+        return _empty_document(), True, None
+    return None, False, loaded.error
+
+def _load_required(paths: GtPaths) -> tuple[BackupsDocumentV4 | None, str | None]:
+    loaded = _load_for_mutation(paths)
+    if loaded.document is not None:
+        return loaded.document, None
+    return None, _missing_list_error() if loaded.missing else loaded.error
+
 def add_backup_repo(paths: GtPaths, ssh_url: str) -> AddBackupRepoResult:
     parsed, error = _canonicalize(ssh_url)
     if error is not None:
         return AddBackupRepoResult(ok=False, error=error)
 
-    loaded = _load_for_mutation(paths)
-    if loaded.document is None:
-        if not loaded.missing:
-            return AddBackupRepoResult(ok=False, error=loaded.error)
-        document = _empty_document()
-        created_file = True
-    else:
-        document = loaded.document
-        created_file = False
+    document, created_file, load_error = _load_for_add(paths)
+    if document is None:
+        return AddBackupRepoResult(ok=False, error=load_error)
 
     if _find_repo(document, parsed.canonical) != -1:
-        return AddBackupRepoResult(
-            ok=False,
-            error=f"Duplicate repo (already listed): {parsed.ssh_url}",
-        )
+        return AddBackupRepoResult(ok=False, error=f"Duplicate repo (already listed): {parsed.ssh_url}")
 
     document.repos.append(_repo(parsed.ssh_url))
     error = _write(paths, document)
     if error is not None:
         return AddBackupRepoResult(ok=False, error=error)
     return AddBackupRepoResult(
-        ok=True,
-        index=len(document.repos),
-        document=document,
-        created_file=created_file,
+        ok=True, index=len(document.repos), document=document, created_file=created_file
     )
 
 def add_backup_repos(paths: GtPaths, urls: list[str]) -> AddBackupReposResult:
-    loaded = _load_for_mutation(paths)
-    if loaded.document is None:
-        if not loaded.missing:
-            return AddBackupReposResult(ok=False, error=loaded.error)
-        document = _empty_document()
-        created_file = True
-    else:
-        document = loaded.document
-        created_file = False
+    document, created_file, load_error = _load_for_add(paths)
+    if document is None:
+        return AddBackupReposResult(ok=False, error=load_error)
 
     added: list[AddedRepo] = []
     failures: list[FailedRepo] = []
@@ -177,31 +156,19 @@ def add_backup_repos(paths: GtPaths, urls: list[str]) -> AddBackupReposResult:
             failures.append(FailedRepo(url=raw_url, error=error))
             continue
         if _find_repo(document, parsed.canonical) != -1:
-            failures.append(
-                FailedRepo(
-                    url=raw_url,
-                    error=f"Duplicate repo (already listed): {parsed.ssh_url}",
-                )
-            )
+            failures.append(FailedRepo(
+                url=raw_url, error=f"Duplicate repo (already listed): {parsed.ssh_url}"
+            ))
             continue
         document.repos.append(_repo(parsed.ssh_url))
         added.append(AddedRepo(url=parsed.ssh_url, index=len(document.repos)))
 
     if not added:
-        return AddBackupReposResult(
-            ok=not failures,
-            added=tuple(added),
-            failures=tuple(failures),
-        )
+        return AddBackupReposResult(ok=not failures, added=tuple(added), failures=tuple(failures))
 
     error = _write(paths, document)
     if error is not None:
-        return AddBackupReposResult(
-            ok=False,
-            added=tuple(added),
-            failures=tuple(failures),
-            error=error,
-        )
+        return AddBackupReposResult(ok=False, added=tuple(added), failures=tuple(failures), error=error)
     return AddBackupReposResult(
         ok=not failures and len(added) == len(urls),
         added=tuple(added),
@@ -211,27 +178,17 @@ def add_backup_repos(paths: GtPaths, urls: list[str]) -> AddBackupReposResult:
     )
 
 def remove_backup_repo(paths: GtPaths, token: str) -> RemoveBackupRepoResult:
-    loaded = _load_for_mutation(paths)
-    if loaded.document is None:
-        if loaded.missing:
-            return RemoveBackupRepoResult(ok=False, error=_missing_list_error())
-        return RemoveBackupRepoResult(ok=False, error=loaded.error)
-    document = loaded.document
+    document, load_error = _load_required(paths)
+    if document is None:
+        return RemoveBackupRepoResult(ok=False, error=load_error)
     if not document.repos:
-        return RemoveBackupRepoResult(
-            ok=False,
-            error=f"Backups list is empty. {ADD_HINT}",
-    )
+        return RemoveBackupRepoResult(ok=False, error=f"Backups list is empty. {ADD_HINT}")
 
     if _INDEX_RE.fullmatch(token):
         index = _parse_index(token, len(document.repos))
         if index is None or index < 1:
             return RemoveBackupRepoResult(
-                ok=False,
-                error=(
-                    f"Index out of range: {token} "
-                    f"(valid 1–{len(document.repos)})"
-                ),
+                ok=False, error=f"Index out of range: {token} (valid 1–{len(document.repos)})"
             )
         remove_index = index - 1
     else:
@@ -240,10 +197,7 @@ def remove_backup_repo(paths: GtPaths, token: str) -> RemoveBackupRepoResult:
             return RemoveBackupRepoResult(ok=False, error=error)
         remove_index = _find_repo(document, parsed.canonical)
         if remove_index == -1:
-            return RemoveBackupRepoResult(
-                ok=False,
-                error=f"Repo not found in backups list: {token}",
-            )
+            return RemoveBackupRepoResult(ok=False, error=f"Repo not found in backups list: {token}")
 
     removed = document.repos.pop(remove_index).url
     error = _write(paths, document)
@@ -261,12 +215,9 @@ def _update_timestamp(
     parsed, error = _canonicalize(ssh_url)
     if error is not None:
         return BackupListUpdateResult(ok=False, error=error)
-    loaded = _load_for_mutation(paths)
-    if loaded.document is None:
-        if loaded.missing:
-            return BackupListUpdateResult(ok=False, error=_missing_list_error())
-        return BackupListUpdateResult(ok=False, error=loaded.error)
-    document = loaded.document
+    document, load_error = _load_required(paths)
+    if document is None:
+        return BackupListUpdateResult(ok=False, error=load_error)
     index = _find_repo(document, parsed.canonical)
     if index == -1:
         return BackupListUpdateResult(
@@ -296,15 +247,10 @@ def record_last_checked_at(
 ) -> BackupListUpdateResult:
     return _update_timestamp(paths, ssh_url, now=now, include_backup=False)
 
-def set_selected_last(
-    paths: GtPaths, selected_urls: list[str]
-) -> BackupListUpdateResult:
-    loaded = _load_for_mutation(paths)
-    if loaded.document is None:
-        if loaded.missing:
-            return BackupListUpdateResult(ok=False, error=_missing_list_error())
-        return BackupListUpdateResult(ok=False, error=loaded.error)
-    document = loaded.document
+def set_selected_last(paths: GtPaths, selected_urls: list[str]) -> BackupListUpdateResult:
+    document, load_error = _load_required(paths)
+    if document is None:
+        return BackupListUpdateResult(ok=False, error=load_error)
     selected = {
         canonical
         for url in selected_urls

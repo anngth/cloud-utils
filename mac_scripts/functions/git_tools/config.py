@@ -9,14 +9,7 @@ import re
 import tempfile
 from typing import Annotated, Literal, TypeAlias
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    InstanceOf,
-    TypeAdapter,
-    ValidationError,
-)
+from pydantic import BaseModel, ConfigDict, Field, InstanceOf, TypeAdapter, ValidationError
 from pydantic import field_validator, model_validator
 
 _ISO_UTC_TIMESTAMP_RE = re.compile(
@@ -35,14 +28,8 @@ def is_iso_utc_timestamp(value: object) -> bool:
     if match is None:
         return False
 
-    _, month_text, day_text, hour_text, minute_text, second_text, millis = (
-        match.groups()
-    )
-    month = int(month_text)
-    day = int(day_text)
-    hour = int(hour_text)
-    minute = int(minute_text)
-    second = int(second_text)
+    _, month, day, hour, minute, second, millis = match.groups()
+    month, day, hour, minute, second = map(int, (month, day, hour, minute, second))
 
     if not 1 <= month <= 12 or not 1 <= day <= 31:
         return False
@@ -87,9 +74,7 @@ class BackupRepoV3(BackupRepoV2):
     @field_validator("last_checked_at")
     @classmethod
     def _validate_last_checked_at(cls, value: str | None) -> str | None:
-        if value is not None and not is_iso_utc_timestamp(value):
-            raise ValueError("invalid UTC timestamp")
-        return value
+        return cls._validate_last_backup_at(value)
 
 class BackupRepoV4(BackupRepoV3):
     selected_last: bool = Field(alias="selectedLast")
@@ -134,13 +119,7 @@ class GtPaths:
 @dataclass(frozen=True, slots=True)
 class ReadBackupsResult:
     ok: bool
-    document: (
-        BackupsDocumentV1
-        | BackupsDocumentV2
-        | BackupsDocumentV3
-        | BackupsDocumentV4
-        | None
-    ) = None
+    document: BackupsDocumentV1 | BackupsDocumentV2 | BackupsDocumentV3 | BackupsDocumentV4 | None = None
     error: str | None = None
     missing: bool = False
 
@@ -166,19 +145,13 @@ class LoadBackupsResult:
 
 def default_config_dir(env: Mapping[str, str] = os.environ) -> Path:
     home = env.get("HOME") or ""
-    return Path(
-        f"{home}/Library/Mobile Documents/com~apple~CloudDocs/Backups/cloud-utils"
-    )
+    return Path(f"{home}/Library/Mobile Documents/com~apple~CloudDocs/Backups/cloud-utils")
 
 def resolve_gt_paths(env: Mapping[str, str] = os.environ) -> GtPaths:
     configured = env.get("CLOUD_UTILS_CONFIG_DIR")
     config_dir = Path(configured) if configured else default_config_dir(env)
     gt_dir = config_dir / "gt"
-    return GtPaths(
-        config_dir=config_dir,
-        gt_dir=gt_dir,
-        backups_file=gt_dir / "backups.json",
-    )
+    return GtPaths(config_dir=config_dir, gt_dir=gt_dir, backups_file=gt_dir / "backups.json")
 
 def format_display_path(
     path: str | os.PathLike[str],
@@ -266,10 +239,7 @@ def _js_json_stringify(value: object) -> str:
     if isinstance(value, list | tuple):
         return f"[{','.join(_js_json_stringify(item) for item in value)}]"
     if isinstance(value, Mapping):
-        entries = (
-            f"{_js_quote_string(str(key))}:{_js_json_stringify(item)}"
-            for key, item in value.items()
-        )
+        entries = (f"{_js_quote_string(str(key))}:{_js_json_stringify(item)}" for key, item in value.items())
         return f"{{{','.join(entries)}}}"
     return "undefined"
 
@@ -304,9 +274,7 @@ def _find_repo_timestamp_error(document: object) -> str | None:
             )
     return None
 
-def _parse_document(
-    document: object,
-) -> BackupsDocumentV1 | BackupsDocumentV2 | BackupsDocumentV3 | BackupsDocumentV4:
+def _parse_document(document: object) -> BackupsDocument:
     return _DOCUMENT_ADAPTER.validate_python(document, by_alias=True, by_name=False)
 
 def _as_raw_document(document: object) -> object:
@@ -323,10 +291,7 @@ def _normalize_json_strings(value: object) -> object:
     if isinstance(value, list):
         return [_normalize_json_strings(item) for item in value]
     if isinstance(value, dict):
-        return {
-            _normalize_surrogate_pairs(key): _normalize_json_strings(item)
-            for key, item in value.items()
-        }
+        return {_normalize_surrogate_pairs(key): _normalize_json_strings(item) for key, item in value.items()}
     return value
 
 def read_backups_document(path: str | os.PathLike[str]) -> ReadBackupsResult:
@@ -334,34 +299,32 @@ def read_backups_document(path: str | os.PathLike[str]) -> ReadBackupsResult:
     try:
         raw = backups_file.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return ReadBackupsResult(
-            ok=False,
-            missing=True,
-            error=f"Backups file not found: {backups_file}",
-        )
+        return ReadBackupsResult(ok=False, missing=True, error=f"Backups file not found: {backups_file}")
     except (OSError, UnicodeError):
-        return ReadBackupsResult(
-            ok=False,
-            error=f"Could not read backups file: {backups_file}",
-        )
+        return ReadBackupsResult(ok=False, error=f"Could not read backups file: {backups_file}")
 
     try:
         document = json.loads(raw, parse_constant=_reject_json_constant)
     except (json.JSONDecodeError, ValueError):
-        return ReadBackupsResult(
-            ok=False,
-            error=f"Invalid JSON in backups file: {backups_file}",
-        )
+        return ReadBackupsResult(ok=False, error=f"Invalid JSON in backups file: {backups_file}")
 
     try:
         parsed = _parse_document(document)
     except ValidationError:
         timestamp_error = _find_repo_timestamp_error(document)
-        return ReadBackupsResult(
-            ok=False,
-            error=timestamp_error or f"Invalid backups document: {backups_file}",
-        )
+        error = timestamp_error or f"Invalid backups document: {backups_file}"
+        return ReadBackupsResult(ok=False, error=error)
     return ReadBackupsResult(ok=True, document=parsed)
+
+def _upgrade_repo(repo: str | BackupRepoV2 | BackupRepoV3) -> BackupRepoV4:
+    if isinstance(repo, str):
+        return BackupRepoV4(url=repo, last_backup_at=None, last_checked_at=None, selected_last=False)
+    return BackupRepoV4(
+        url=repo.url,
+        last_backup_at=repo.last_backup_at,
+        last_checked_at=getattr(repo, "last_checked_at", None),
+        selected_last=False,
+    )
 
 def migrate_backups_document(document: object) -> MigrateBackupsResult:
     if isinstance(document, BackupsDocumentV4):
@@ -380,41 +343,9 @@ def migrate_backups_document(document: object) -> MigrateBackupsResult:
     if isinstance(parsed, BackupsDocumentV4):
         return MigrateBackupsResult(ok=True, document=parsed, migrated=False)
 
-    if isinstance(parsed, BackupsDocumentV1):
-        repos = [
-            BackupRepoV4(
-                url=url,
-                last_backup_at=None,
-                last_checked_at=None,
-                selected_last=False,
-            )
-            for url in parsed.repos
-        ]
-    elif isinstance(parsed, BackupsDocumentV2):
-        repos = [
-            BackupRepoV4(
-                url=repo.url,
-                last_backup_at=repo.last_backup_at,
-                last_checked_at=None,
-                selected_last=False,
-            )
-            for repo in parsed.repos
-        ]
-    else:
-        repos = [
-            BackupRepoV4(
-                url=repo.url,
-                last_backup_at=repo.last_backup_at,
-                last_checked_at=repo.last_checked_at,
-                selected_last=False,
-            )
-            for repo in parsed.repos
-        ]
-
+    repos = [_upgrade_repo(repo) for repo in parsed.repos]
     return MigrateBackupsResult(
-        ok=True,
-        document=BackupsDocumentV4(version=4, repos=repos),
-        migrated=True,
+        ok=True, document=BackupsDocumentV4(version=4, repos=repos), migrated=True
     )
 
 def write_backups_document(
@@ -432,15 +363,10 @@ def write_backups_document(
     temp_file = Path(f"{backups_file}.tmp")
 
     try:
-        encoded = (
-            json.dumps(
-                _normalize_json_strings(parsed.model_dump(by_alias=True)),
-                ensure_ascii=False,
-                allow_nan=False,
-                indent=2,
-            )
-            + "\n"
-        ).encode("utf-8", errors="backslashreplace")
+        encoded = (json.dumps(
+            _normalize_json_strings(parsed.model_dump(by_alias=True)),
+            ensure_ascii=False, allow_nan=False, indent=2,
+        ) + "\n").encode("utf-8", errors="backslashreplace")
         backups_file.parent.mkdir(parents=True, exist_ok=True)
         temp_file.write_bytes(encoded)
         os.replace(temp_file, backups_file)
@@ -449,20 +375,14 @@ def write_backups_document(
             temp_file.unlink(missing_ok=True)
         except Exception:
             pass
-        return WriteBackupsResult(
-            ok=False,
-            error=str(error) or f"Could not write backups file: {backups_file}",
-        )
+        message = str(error) or f"Could not write backups file: {backups_file}"
+        return WriteBackupsResult(ok=False, error=message)
     return WriteBackupsResult(ok=True)
 
 def load_backups_document(path: str | os.PathLike[str]) -> LoadBackupsResult:
     read_result = read_backups_document(path)
     if not read_result.ok:
-        return LoadBackupsResult(
-            ok=False,
-            error=read_result.error,
-            missing=read_result.missing,
-        )
+        return LoadBackupsResult(ok=False, error=read_result.error, missing=read_result.missing)
 
     migrate_result = migrate_backups_document(read_result.document)
     if not migrate_result.ok:
@@ -473,8 +393,4 @@ def load_backups_document(path: str | os.PathLike[str]) -> LoadBackupsResult:
         if not write_result.ok:
             return LoadBackupsResult(ok=False, error=write_result.error)
 
-    return LoadBackupsResult(
-        ok=True,
-        document=migrate_result.document,
-        migrated=migrate_result.migrated,
-    )
+    return LoadBackupsResult(ok=True, document=migrate_result.document, migrated=migrate_result.migrated)
