@@ -56,6 +56,17 @@ def test_run_glab_prepends_executable_and_forwards_process_options() -> None:
     ]
 
 
+def test_run_glab_normalizes_process_launch_oserror() -> None:
+    error = FileNotFoundError(2, "No such file or directory", "glab")
+
+    def runner(_argv: list[str], **_kwargs: object) -> CommandResult:
+        raise error
+
+    result = run_glab(["auth", "status"], runner=runner)
+
+    assert result == CommandResult(1, stderr=str(error))
+
+
 def test_assert_glab_ready_fails_when_glab_is_missing() -> None:
     result = assert_glab_ready(has_command=lambda _name: False)
 
@@ -191,6 +202,18 @@ def test_project_exists_rejects_invalid_json() -> None:
     assert result.error == "could not parse GitLab project response"
 
 
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_project_exists_rejects_nonstandard_json_constants(constant: str) -> None:
+    result = project_exists(
+        GROUP,
+        "nonstandard-json",
+        run_glab_fn=GlabStub(CommandResult(0, stdout=constant)),
+    )
+
+    assert result.ok is False
+    assert result.error == "could not parse GitLab project response"
+
+
 def test_group_exists_uses_encoded_nested_group_path() -> None:
     glab = GlabStub(CommandResult(0, stdout="{}"))
 
@@ -271,6 +294,19 @@ def test_create_private_group_maps_parent_lookup_and_json_errors() -> None:
     assert invalid.error == "could not parse parent group id for anngth-dev"
     assert missing_id.ok is False
     assert missing_id.error == "parent group anngth-dev has no id"
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_create_private_group_rejects_nonstandard_parent_json_constants(
+    constant: str,
+) -> None:
+    result = create_private_group(
+        "parent/leaf",
+        run_glab_fn=GlabStub(CommandResult(0, stdout=constant)),
+    )
+
+    assert result.ok is False
+    assert result.error == "could not parse parent group id for parent"
 
 
 def test_ensure_backup_group_queries_before_creating_nested_group() -> None:

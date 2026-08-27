@@ -77,11 +77,21 @@ def run_glab(
 ) -> CommandResult:
     """Run ``glab`` with captured streams and no shell."""
 
-    return runner(["glab", *args], cwd=cwd, env=env, capture=True)
+    try:
+        return runner(["glab", *args], cwd=cwd, env=env, capture=True)
+    except OSError as error:
+        return CommandResult(1, stderr=str(error))
 
 
 def _result_error(result: CommandResult, fallback: str) -> str:
     return result.stderr.strip() or result.stdout.strip() or fallback
+
+
+def _parse_strict_json(value: str) -> Any:
+    def reject_constant(_constant: str) -> None:
+        raise ValueError("nonstandard JSON constant")
+
+    return json.loads(value, parse_constant=reject_constant)
 
 
 def assert_glab_ready(
@@ -124,8 +134,8 @@ def project_exists(
     result = run_glab_fn(["api", path])
     if result.returncode == 0:
         try:
-            parsed: Any = json.loads(result.stdout or "{}")
-        except (json.JSONDecodeError, TypeError):
+            parsed = _parse_strict_json(result.stdout or "{}")
+        except (ValueError, TypeError):
             return ExistsResult(False, error="could not parse GitLab project response")
         project = parsed if isinstance(parsed, Mapping) else None
         if _inactive_project(parsed, name):
@@ -183,8 +193,8 @@ def create_private_group(
             error=_result_error(parent_result, f"parent group {parent_path} not found"),
         )
     try:
-        parent = json.loads(parent_result.stdout)
-    except (json.JSONDecodeError, TypeError):
+        parent = _parse_strict_json(parent_result.stdout)
+    except (ValueError, TypeError):
         return ActionResult(
             False,
             error=f"could not parse parent group id for {parent_path}",
