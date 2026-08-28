@@ -24,6 +24,7 @@ packages = [
   "mac_scripts/functions/shared",
   "mac_scripts/functions/twofa",
   "mac_scripts/functions/git_tools",
+  "mac_scripts/functions/skills_manager",
 ]
 
 [tool.pytest.ini_options]
