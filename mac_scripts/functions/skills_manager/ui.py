@@ -130,6 +130,9 @@ class SkmUi:
             f"{_fg(BRIGHT_GREEN, name)}{detail}"
         )
 
+    def _raw_item(self, text: object, color: str = GREEN) -> None:
+        self._out(f"{self.frame.pipe}  {_fg(color, '■')} {text}")
+
     def _skill_list(
         self,
         values: Sequence[_Row],
@@ -314,11 +317,7 @@ class SkmUi:
                     for source in getattr(conflict, "sources")
                 )
                 profiles = tuple(getattr(conflict, "profiles", ()))
-                required = (
-                    f" — required by {', '.join(profiles)}"
-                    if profiles
-                    else ""
-                )
+                required = f" — required by {', '.join(profiles)}"
                 self._skill_item(
                     getattr(conflict, "skill"),
                     suffix=f"— {sources}{required}",
@@ -401,7 +400,7 @@ class SkmUi:
         if not keep_link and plan.unlink_profiles:
             self.frame.active("Unlink")
             for name in plan.unlink_profiles:
-                self.frame.item(name, tone="warning")
+                self._raw_item(name, YELLOW)
             self._out(self.frame.pipe)
         self.frame.end()
 
@@ -474,7 +473,7 @@ class SkmUi:
         if retry_commands:
             self.frame.active("Retry commands")
             for command in retry_commands:
-                self.frame.item(command, tone="failure")
+                self._raw_item(command, RED)
         self.frame.end()
 
     def apply_preview(

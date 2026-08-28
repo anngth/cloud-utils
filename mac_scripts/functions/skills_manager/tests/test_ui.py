@@ -13,6 +13,8 @@ from skills_manager.planner import (
     Requirement,
     StatusResult,
     UninstallPlan,
+    catalog_requirements,
+    classify_status,
     requirement_key,
 )
 from skills_manager.state import InstalledSkill
@@ -348,6 +350,42 @@ def test_status_omits_every_empty_section_exactly() -> None:
     assert stderr.getvalue() == ""
 
 
+def test_status_empty_conflict_profiles_keep_oracle_required_by_suffix() -> None:
+    stdout, stderr, ui = _ui()
+    catalog = Catalog(
+        version=1,
+        sources=(
+            CatalogSource(source="a/repo", skills=("shared",)),
+            CatalogSource(source="b/repo", skills=("shared",)),
+        ),
+    )
+    result = classify_status(catalog_requirements(catalog), {})
+
+    ui.status(
+        project_root="/repo/app",
+        profile_names=(),
+        catalog=catalog,
+        status=result,
+    )
+
+    assert stdout.getvalue() == (
+        HEADER
+        + f"{GREEN}◇{FG_RESET}  Status: /repo/app\n{PIPE}\n"
+        + f"{PIPE}  1  {GRAY}a/repo{FG_RESET}\n"
+        + f"{PIPE}      {GRAY}□{FG_RESET} {BRIGHT_GREEN}shared{FG_RESET}\n"
+        + f"{PIPE}\n"
+        + f"{PIPE}  2  {GRAY}b/repo{FG_RESET}\n"
+        + f"{PIPE}      {GRAY}□{FG_RESET} {BRIGHT_GREEN}shared{FG_RESET}\n"
+        + f"{PIPE}\n"
+        + f"{CYAN}◆{FG_RESET}  Desired-source conflict\n"
+        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}shared{FG_RESET} "
+        + f"{RED}— a/repo vs b/repo — required by {FG_RESET}\n"
+        + f"{PIPE}\n{CORNER}\n"
+    )
+    assert result.desired_conflicts[0].profiles == ()
+    assert stderr.getvalue() == ""
+
+
 def test_install_plan_renders_dry_run_and_all_sections_exactly() -> None:
     stdout, stderr, ui = _ui()
     plan = InstallPlan(
@@ -508,6 +546,34 @@ def test_uninstall_plan_keep_link_omits_unlink_exactly() -> None:
         + f"{PIPE}\n{CORNER}\n"
     )
     assert stderr.getvalue() == ""
+
+
+def test_uninstall_plan_writes_newline_in_unlink_name_as_one_raw_item() -> None:
+    stdout, stderr, ui = _ui()
+    plan = UninstallPlan(
+        remove=(),
+        retain=(),
+        absent=(),
+        conflicts=(),
+        unlink_profiles=("safe\nnext",),
+        desired_conflicts=(),
+    )
+
+    ui.uninstall_plan(
+        project_root="/repo/app",
+        profile_names=(),
+        plan=plan,
+    )
+
+    assert stdout.getvalue() == (
+        HEADER
+        + f"{GREEN}◇{FG_RESET}  Uninstall plan: /repo/app\n{PIPE}\n"
+        + f"{CYAN}◆{FG_RESET}  Unlink\n"
+        + f"{PIPE}  {YELLOW}■{FG_RESET} safe\nnext\n"
+        + f"{PIPE}\n{CORNER}\n"
+    )
+    assert stderr.getvalue() == ""
+    assert stdout.flush_count == 9
 
 
 def test_group_requirements_uses_catalog_indexes_and_does_not_mutate() -> None:
@@ -708,6 +774,64 @@ def test_execution_summary_renders_combined_success_exactly() -> None:
         + f"{PIPE}\n{CORNER}\n"
     )
     assert stderr.getvalue() == ""
+
+
+def test_uninstall_retry_with_newline_is_one_raw_copyable_command() -> None:
+    stdout, stderr, ui = _ui()
+    result = ExecutionResult(
+        ok=False,
+        succeeded=(),
+        failed=(MutationRecord("uninstall", None, ("safe\nnext",), 4),),
+    )
+
+    ui.execution_summary(result, operation="uninstall")
+
+    assert stdout.getvalue() == (
+        HEADER
+        + f"{GREEN}◇{FG_RESET}  Uninstall incomplete\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  0 succeeded; 1 failed\n{PIPE}\n"
+        + f"{CYAN}◆{FG_RESET}  Failed\n"
+        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}safe\nnext{FG_RESET} "
+        + f"{RED}— uninstall failed (status 4){FG_RESET}\n"
+        + f"{PIPE}\n"
+        + f"{CYAN}◆{FG_RESET}  Retry commands\n"
+        + f"{PIPE}  {RED}■{FG_RESET} npx skills remove 'safe\nnext'\n"
+        + f"{CORNER}\n"
+    )
+    assert stderr.getvalue() == ""
+    assert stdout.flush_count == 13
+
+
+def test_install_retry_quotes_raw_newlines_and_shell_metacharacters() -> None:
+    stdout, stderr, ui = _ui()
+    source = "owner/repo\n;$(printf source-owned)"
+    skill = "safe\nnext;$(printf skill-owned)"
+    result = ExecutionResult(
+        ok=False,
+        succeeded=(),
+        failed=(MutationRecord("install", source, (skill,), 9),),
+    )
+
+    ui.execution_summary(result, operation="install")
+
+    assert stdout.getvalue() == (
+        HEADER
+        + f"{GREEN}◇{FG_RESET}  Install incomplete\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  0 succeeded; 1 failed\n{PIPE}\n"
+        + f"{CYAN}◆{FG_RESET}  Failed\n"
+        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}safe\n"
+        + f"next;$(printf skill-owned){FG_RESET} "
+        + f"{RED}— install failed (status 9){FG_RESET}\n"
+        + f"{PIPE}\n"
+        + f"{CYAN}◆{FG_RESET}  Retry commands\n"
+        + f"{PIPE}  {RED}■{FG_RESET} npx skills add "
+        + "'[unsafe source redacted]' --skill 'safe\n"
+        + "next;$(printf skill-owned)'\n"
+        + f"{CORNER}\n"
+    )
+    assert stderr.getvalue() == ""
+    assert stdout.flush_count == 13
+    assert "source-owned" not in stdout.getvalue()
 
 
 @pytest.mark.parametrize(
