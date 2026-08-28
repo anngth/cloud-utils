@@ -1,10 +1,35 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from skills_manager.source import SourceError, canonicalize_source, redact_source
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def _node_source_identity(value: str) -> tuple[str, str]:
+    script = """
+import { canonicalizeSource, redactSource } from
+  './mac_scripts/functions/skills-manager/source-id.mjs';
+console.log(JSON.stringify([
+  canonicalizeSource(process.argv[1]),
+  redactSource(process.argv[1]),
+]));
+"""
+    completed = subprocess.run(
+        ["node", "--input-type=module", "-e", script, value],
+        cwd=_REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    canonical, redacted = json.loads(completed.stdout)
+    return canonical, redacted
 
 
 @pytest.mark.parametrize(
@@ -105,6 +130,32 @@ def test_backslash_https_url_credentials_are_normalized_and_removed() -> None:
 
     assert canonicalize_source(raw) == "https://example.com/acme/repo"
     assert redact_source(raw) == "https://example.com/acme/repo.git"
+
+
+@pytest.mark.parametrize(
+    ("raw", "scheme"),
+    [
+        ("https:user:secret@example.com/acme/repo.git", "https"),
+        ("https:/user:secret@example.com/acme/repo.git", "https"),
+        ("https:////user:secret@example.com/acme/repo.git", "https"),
+        (r"https:/\\user:secret@example.com/acme/repo.git", "https"),
+        ("http:user:secret@example.com/acme/repo.git", "http"),
+        ("http:/user:secret@example.com/acme/repo.git", "http"),
+        ("http:////user:secret@example.com/acme/repo.git", "http"),
+    ],
+)
+def test_http_slash_variants_match_live_node_without_credentials(
+    raw: str, scheme: str
+) -> None:
+    expected = _node_source_identity(raw)
+
+    assert expected == (
+        f"{scheme}://example.com/acme/repo",
+        f"{scheme}://example.com/acme/repo.git",
+    )
+    assert (canonicalize_source(raw), redact_source(raw)) == expected
+    assert "user" not in canonicalize_source(raw)
+    assert "secret" not in redact_source(raw)
 
 
 def test_generic_url_query_and_fragment_are_stripped_case_insensitively() -> None:

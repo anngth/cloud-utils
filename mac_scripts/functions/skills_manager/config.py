@@ -5,10 +5,10 @@ import json
 import math
 import os
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr, ValidationError
@@ -31,10 +31,73 @@ class ConfigError(ValueError):
 ConfigFileError = ConfigError
 
 
+_COLLATION_PUNCTUATION = {" ": 0, "_": 1, "-": 2, ".": 3, "@": 4, "/": 5}
+_COLLATION_SPECIALS = {
+    "ø": ("o", (0x400,)),
+    "Ø": ("o", (0x400,)),
+    "ß": ("ss", (0x500,)),
+}
+
+
+def _collation_primary_weight(character: str) -> int:
+    if character in _COLLATION_PUNCTUATION:
+        return _COLLATION_PUNCTUATION[character]
+    if character.isdigit():
+        return 10 + ord(character) - ord("0")
+    return 100 + ord(character)
+
+
+def _javascript_locale_key(
+    value: str,
+) -> tuple[tuple[int, ...], tuple[tuple[int, ...], ...], tuple[int, ...]]:
+    primary: list[int] = []
+    secondary: list[tuple[int, ...]] = []
+    tertiary: list[int] = []
+    for character in value:
+        special = _COLLATION_SPECIALS.get(character)
+        if special is None:
+            decomposed = unicodedata.normalize("NFD", character)
+            bases = "".join(
+                item for item in decomposed if not unicodedata.combining(item)
+            ).casefold()
+            accents = tuple(
+                ord(item) for item in decomposed if unicodedata.combining(item)
+            )
+        else:
+            bases, accents = special
+        if not bases and accents and secondary:
+            secondary[-1] += accents
+            continue
+        case_weight = 1 if character.isupper() else 0
+        for index, base in enumerate(bases):
+            primary.append(_collation_primary_weight(base))
+            secondary.append(accents if index == 0 else ())
+            tertiary.append(case_weight)
+    return tuple(primary), tuple(secondary), tuple(tertiary)
+
+
+class _FrozenDict(dict[Any, Any]):
+    @staticmethod
+    def _immutable(*_args: object, **_kwargs: object) -> None:
+        raise TypeError("Frozen JSON mapping cannot be mutated")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+    __ior__ = _immutable
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> _FrozenDict:
+        return self
+
+
 def _deep_freeze_extra(value: object) -> object:
     if isinstance(value, Mapping):
-        return MappingProxyType(
-            {key: _deep_freeze_extra(item) for key, item in value.items()}
+        return _FrozenDict(
+            (key, _deep_freeze_extra(item)) for key, item in value.items()
         )
     if isinstance(value, (list, tuple)):
         return tuple(_deep_freeze_extra(item) for item in value)
@@ -54,10 +117,10 @@ class _OrderedFrozenModel(BaseModel):
             object.__setattr__(
                 self,
                 "__pydantic_extra__",
-                {
-                    key: _deep_freeze_extra(value)
+                _FrozenDict(
+                    (key, _deep_freeze_extra(value))
                     for key, value in self.__pydantic_extra__.items()
-                },
+                ),
             )
 
 
@@ -409,9 +472,11 @@ def _validate_profiles(value: object) -> dict[str, object]:
     validated = copy.deepcopy(dict(value))
     validated_profiles = validated["profiles"]
     assert isinstance(validated_profiles, list)
-    validated_profiles.sort(key=lambda profile: profile["name"])
+    validated_profiles.sort(key=lambda profile: _javascript_locale_key(profile["name"]))
     for profile in validated_profiles:
-        profile["sources"].sort(key=lambda entry: entry["source"])
+        profile["sources"].sort(
+            key=lambda entry: _javascript_locale_key(entry["source"])
+        )
     return validated
 
 

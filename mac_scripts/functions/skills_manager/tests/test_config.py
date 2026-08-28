@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from skills_manager.config import (
     Catalog,
@@ -22,6 +24,58 @@ from skills_manager.config import (
     validate_catalog,
     write_catalog,
 )
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_UNICODE_COLLATION_CORPUS = (
+    "z",
+    "ä",
+    "a",
+    "A",
+    "á",
+    "aa",
+    "a2",
+    "a10",
+    "Z",
+    "é",
+    "e",
+    "É",
+    "ø",
+    "o",
+    "ß",
+    "ss",
+    "10",
+    "2",
+    "_x",
+    "-x",
+    ".x",
+    "@x",
+    "0x",
+    "a b",
+    "a_b",
+    "a-b",
+    "a.b",
+    "a@b",
+    "a\N{COMBINING ACUTE ACCENT}",
+    "a\N{COMBINING DIAERESIS}",
+    "e\N{COMBINING ACUTE ACCENT}",
+    "E\N{COMBINING ACUTE ACCENT}",
+)
+
+
+def _node_locale_sort(values: tuple[str, ...]) -> list[str]:
+    script = """
+const values = JSON.parse(process.argv[1]);
+console.log(JSON.stringify(values.sort((a, b) => a.localeCompare(b))));
+"""
+    completed = subprocess.run(
+        ["node", "-e", script, json.dumps(values, ensure_ascii=False)],
+        cwd=_REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
 
 
 @pytest.mark.parametrize("version", [None, 0, 2, "1", True, 1.0])
@@ -111,6 +165,34 @@ def test_duplicate_source_error_redacts_unsafe_source() -> None:
     assert "secret" not in str(caught.value)
 
 
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "https:user:secret@example.com/acme/repo.git",
+        "https:/user:secret@example.com/acme/repo.git",
+        "https:////user:secret@example.com/acme/repo.git",
+    ],
+)
+def test_duplicate_source_slash_variants_never_expose_credentials(
+    unsafe: str,
+) -> None:
+    raw = {
+        "version": 1,
+        "sources": [
+            {"source": unsafe, "skills": []},
+            {"source": unsafe, "skills": []},
+        ],
+    }
+
+    with pytest.raises(CatalogError) as caught:
+        validate_catalog(raw)
+
+    message = str(caught.value)
+    assert "Duplicate source: https://example.com/acme/repo.git" == message
+    assert "user" not in message
+    assert "secret" not in message
+
+
 @pytest.mark.parametrize("skill", [None, 3, "", "   "])
 def test_validate_catalog_rejects_invalid_skill_names(skill: object) -> None:
     raw = {"version": 1, "sources": [{"source": "a/one", "skills": [skill]}]}
@@ -176,6 +258,66 @@ def test_catalog_and_source_extras_are_deeply_frozen_and_serialize_normally(
     assert paths.sources_file.read_text().index('"z"') < (
         paths.sources_file.read_text().index('"a"')
     )
+
+
+def test_frozen_extras_support_pydantic_json_dump_and_deep_copy() -> None:
+    raw = {
+        "meta": {"z": [1, {"nested": [2]}], "a": "last"},
+        "version": 1,
+        "sources": [
+            {
+                "source": "a/repo",
+                "skills": ["review"],
+                "extra": ["first", {"inner": [3]}],
+            }
+        ],
+    }
+    catalog = validate_catalog(raw)
+    expected = {
+        "version": 1,
+        "sources": [
+            {
+                "source": "a/repo",
+                "skills": ["review"],
+                "extra": ["first", {"inner": [3]}],
+            }
+        ],
+        "meta": {"z": [1, {"nested": [2]}], "a": "last"},
+    }
+
+    assert catalog.model_dump(mode="json") == expected
+    assert json.loads(catalog.model_dump_json()) == expected
+    copied = catalog.model_copy(deep=True)
+    assert copied.model_dump(mode="json") == expected
+    with pytest.raises(AttributeError):
+        copied.meta["z"].append(4)
+    with pytest.raises(AttributeError):
+        copied.sources[0].extra.append("second")
+
+
+def test_model_extra_and_extra_attributes_cannot_be_mutated_or_replaced() -> None:
+    catalog = validate_catalog(
+        {
+            "meta": {"nested": [1]},
+            "version": 1,
+            "sources": [
+                {"source": "a/repo", "skills": [], "extra": [2]}
+            ],
+        }
+    )
+
+    with pytest.raises(TypeError):
+        catalog.model_extra["injected"] = []
+    with pytest.raises(TypeError):
+        catalog.sources[0].model_extra.update({"injected": []})
+    with pytest.raises(ValidationError):
+        catalog.model_extra = {}
+    with pytest.raises(ValidationError):
+        catalog.meta = {"mutable": []}
+    with pytest.raises(ValidationError):
+        catalog.injected = []
+    with pytest.raises(ValidationError):
+        catalog.sources[0].extra = []
 
 
 def test_resolve_source_token_uses_one_based_index_or_canonical_identity() -> None:
@@ -409,6 +551,61 @@ def test_profiles_bootstrap_sorts_profiles_and_sources_before_migration(
         "z/repo",
     ]
     assert paths.profiles_file.read_bytes() == contents
+
+
+def test_profile_name_sort_matches_live_node_unicode_collation(tmp_path: Path) -> None:
+    expected_names = _node_locale_sort(_UNICODE_COLLATION_CORPUS)
+    source_by_name = {
+        name: f"profile-source-{index}"
+        for index, name in enumerate(_UNICODE_COLLATION_CORPUS)
+    }
+    profiles = {
+        "version": 1,
+        "profiles": [
+            {
+                "name": name,
+                "sources": [{"source": source_by_name[name], "skills": []}],
+            }
+            for name in _UNICODE_COLLATION_CORPUS
+        ],
+    }
+    paths = ConfigPaths.for_config_dir(tmp_path)
+    paths.skm_dir.mkdir(parents=True)
+    paths.profiles_file.write_text(json.dumps(profiles, ensure_ascii=False))
+
+    initialize_config(env={"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)}, pid=18)
+
+    catalog = read_config(paths)
+    assert [entry.source for entry in catalog.sources] == [
+        source_by_name[name] for name in expected_names
+    ]
+
+
+def test_profile_source_sort_and_one_based_index_match_live_node_unicode(
+    tmp_path: Path,
+) -> None:
+    expected_sources = _node_locale_sort(_UNICODE_COLLATION_CORPUS)
+    profiles = {
+        "version": 1,
+        "profiles": [
+            {
+                "name": "default",
+                "sources": [
+                    {"source": source, "skills": []}
+                    for source in _UNICODE_COLLATION_CORPUS
+                ],
+            }
+        ],
+    }
+    paths = ConfigPaths.for_config_dir(tmp_path)
+    paths.skm_dir.mkdir(parents=True)
+    paths.profiles_file.write_text(json.dumps(profiles, ensure_ascii=False))
+
+    initialize_config(env={"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)}, pid=19)
+
+    catalog = read_config(paths)
+    assert [entry.source for entry in catalog.sources] == expected_sources
+    assert resolve_source_token(catalog, "2")[1].source == expected_sources[1]
 
 
 @pytest.mark.parametrize(
