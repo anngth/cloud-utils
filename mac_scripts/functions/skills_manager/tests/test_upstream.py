@@ -195,6 +195,17 @@ def test_discovery_wraps_real_embedded_nul_argv_as_stable_upstream_error(
     assert isinstance(caught.value.__cause__, ValueError)
 
 
+def test_discovery_propagates_injected_runner_value_error(tmp_path: Path) -> None:
+    programmer_bug = ValueError("programmer bug")
+
+    def bug(*_args, **_kwargs):
+        raise programmer_bug
+
+    with pytest.raises(ValueError) as caught:
+        discover_available_skills("owner/repo", cwd=tmp_path, runner=bug)
+    assert caught.value is programmer_bug
+
+
 def test_list_installed_uses_captured_npx_and_returns_frozen_records(
     tmp_path: Path,
 ) -> None:
@@ -285,6 +296,19 @@ def test_list_installed_wraps_real_embedded_nul_cwd_as_stable_upstream_error(
     assert isinstance(caught.value.__cause__, ValueError)
 
 
+def test_list_installed_propagates_injected_runner_value_error(
+    tmp_path: Path,
+) -> None:
+    programmer_bug = ValueError("programmer bug")
+
+    def bug(*_args, **_kwargs):
+        raise programmer_bug
+
+    with pytest.raises(ValueError) as caught:
+        list_installed_skills(cwd=tmp_path, runner=bug)
+    assert caught.value is programmer_bug
+
+
 def test_mutation_inherits_stdio_and_returns_signal_failure_as_one(
     tmp_path: Path,
 ) -> None:
@@ -339,6 +363,21 @@ def test_mutation_maps_real_embedded_nul_argv_to_one(tmp_path: Path) -> None:
         )
         == 1
     )
+
+
+def test_mutation_propagates_injected_runner_value_error(tmp_path: Path) -> None:
+    programmer_bug = ValueError("programmer bug")
+
+    def bug(*_args, **_kwargs):
+        raise programmer_bug
+
+    with pytest.raises(ValueError) as caught:
+        run_skills_mutation(
+            ["skills", "remove", "demo"],
+            cwd=tmp_path,
+            runner=bug,
+        )
+    assert caught.value is programmer_bug
 
 
 def test_mutation_explicitly_forwards_default_inherited_environment(

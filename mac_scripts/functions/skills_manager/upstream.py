@@ -39,6 +39,25 @@ _DESCRIPTION = re.compile(r"^│\s{6}(\S.*)$")
 _BLANK = re.compile(r"^│\s*$")
 
 
+class _DefaultProcessValueError(Exception):
+    def __init__(self, cause: ValueError) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
+
+
+def _default_process_runner(
+    argv: Sequence[str],
+    *,
+    cwd: str | Path,
+    capture: bool,
+    env: Mapping[str, str] | None = None,
+) -> CommandResult:
+    try:
+        return run_process(argv, cwd=cwd, capture=capture, env=env)
+    except ValueError as error:
+        raise _DefaultProcessValueError(error) from error
+
+
 def _reject_json_constant(value: str) -> None:
     raise ValueError(f"Invalid JSON constant: {value}")
 
@@ -101,7 +120,7 @@ def discover_available_skills(
     source: str,
     *,
     cwd: str | Path,
-    runner: Runner = run_process,
+    runner: Runner = _default_process_runner,
 ) -> tuple[AvailableSkill, ...]:
     try:
         result = runner(
@@ -109,7 +128,9 @@ def discover_available_skills(
             cwd=cwd,
             capture=True,
         )
-    except (OSError, ValueError) as error:
+    except _DefaultProcessValueError as error:
+        raise UpstreamError("Could not discover available skills") from error.cause
+    except OSError as error:
         raise UpstreamError("Could not discover available skills") from error
     if result.returncode != 0:
         raise UpstreamError("Could not discover available skills")
@@ -137,7 +158,7 @@ def _installed_record(value: object) -> InstalledRecord | None:
 def list_installed_skills(
     *,
     cwd: str | Path,
-    runner: Runner = run_process,
+    runner: Runner = _default_process_runner,
 ) -> tuple[InstalledRecord, ...]:
     try:
         result = runner(
@@ -145,7 +166,9 @@ def list_installed_skills(
             cwd=cwd,
             capture=True,
         )
-    except (OSError, ValueError) as error:
+    except _DefaultProcessValueError as error:
+        raise UpstreamError("Could not list installed skills") from error.cause
+    except OSError as error:
         raise UpstreamError("Could not list installed skills") from error
     if result.returncode != 0:
         raise UpstreamError("Could not list installed skills")
@@ -169,7 +192,7 @@ def run_skills_mutation(
     *,
     cwd: str | Path,
     env: Mapping[str, str] | None = None,
-    runner: Runner = run_process,
+    runner: Runner = _default_process_runner,
 ) -> int:
     try:
         result = runner(
@@ -178,6 +201,6 @@ def run_skills_mutation(
             env=env,
             capture=False,
         )
-    except (OSError, ValueError):
+    except (OSError, _DefaultProcessValueError):
         return 1
     return result.returncode if result.returncode >= 0 else 1
