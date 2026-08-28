@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import unicodedata
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
@@ -62,8 +61,57 @@ def _collation_key(value: str) -> str:
     return unicodedata.normalize("NFC", value)
 
 
+def _utf16_sort_key(value: str) -> bytes:
+    return value.encode("utf-16-be", errors="surrogatepass")
+
+
+def _json_string(value: str) -> str:
+    escapes = {
+        '"': '\\"',
+        "\\": "\\\\",
+        "\b": "\\b",
+        "\t": "\\t",
+        "\n": "\\n",
+        "\f": "\\f",
+        "\r": "\\r",
+    }
+    encoded = ['"']
+    index = 0
+    while index < len(value):
+        character = value[index]
+        code_point = ord(character)
+        if character in escapes:
+            encoded.append(escapes[character])
+        elif code_point < 0x20:
+            encoded.append(f"\\u{code_point:04x}")
+        elif 0xD800 <= code_point <= 0xDBFF:
+            if index + 1 < len(value):
+                low = ord(value[index + 1])
+                if 0xDC00 <= low <= 0xDFFF:
+                    encoded.append(
+                        chr(
+                            0x10000
+                            + ((code_point - 0xD800) << 10)
+                            + low
+                            - 0xDC00
+                        )
+                    )
+                    index += 1
+                else:
+                    encoded.append(f"\\u{code_point:04x}")
+            else:
+                encoded.append(f"\\u{code_point:04x}")
+        elif 0xDC00 <= code_point <= 0xDFFF:
+            encoded.append(f"\\u{code_point:04x}")
+        else:
+            encoded.append(character)
+        index += 1
+    encoded.append('"')
+    return "".join(encoded)
+
+
 def requirement_key(source: str, skill: str) -> str:
-    return json.dumps([source, skill], separators=(",", ":"))
+    return f"[{_json_string(source)},{_json_string(skill)}]"
 
 
 def catalog_requirements(document: Catalog) -> MergedRequirements:
@@ -81,7 +129,10 @@ def catalog_requirements(document: Catalog) -> MergedRequirements:
     desired_conflicts = tuple(
         sorted(
             (
-                DesiredConflict(skill, tuple(sorted(sources)))
+                DesiredConflict(
+                    skill,
+                    tuple(sorted(sources, key=_utf16_sort_key)),
+                )
                 for skill, sources in by_skill.items()
                 if len(sources) > 1
             ),

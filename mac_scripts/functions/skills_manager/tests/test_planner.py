@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -50,10 +52,66 @@ def _actual(
     )
 
 
-def test_requirement_key_matches_compact_json_array_identity() -> None:
-    assert requirement_key('owner/"repo"', "skill\\name") == (
-        '["owner/\\\"repo\\\"","skill\\\\name"]'
+def _node_json(script: str) -> object:
+    result = subprocess.run(
+        ("node", "-e", script),
+        check=True,
+        capture_output=True,
+        text=True,
     )
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize(
+    ("source", "skill", "expected"),
+    [
+        ('owner/"repo"', "skill\\name", r'["owner/\"repo\"","skill\\name"]'),
+        ("owner/é", "skill/é", '["owner/é","skill/é"]'),
+        ("owner/😀", "skill/😀", '["owner/😀","skill/😀"]'),
+        ("owner/\u2028", "skill/\u2029", '["owner/\u2028","skill/\u2029"]'),
+        (
+            'owner/"\\\n',
+            "skill/\x00\x01\b\f\n\r\t",
+            r'["owner/\"\\\n","skill/\u0000\u0001\b\f\n\r\t"]',
+        ),
+        ("owner/\ud800", "skill/\udc00", r'["owner/\ud800","skill/\udc00"]'),
+        ("owner/\ud83d\ude00", "skill/paired", '["owner/😀","skill/paired"]'),
+    ],
+)
+def test_requirement_key_matches_literal_node_json_identity(
+    source: str,
+    skill: str,
+    expected: str,
+) -> None:
+    assert requirement_key(source, skill) == expected
+
+
+def test_requirement_key_matches_live_node_json_stringify() -> None:
+    pairs = (
+        ("owner/é", "skill/é"),
+        ("owner/😀", "skill/😀"),
+        ("owner/\u2028", "skill/\u2029"),
+        ('owner/"\\\n', "skill/\x00\x01\b\f\n\r\t"),
+        ("owner/\ud800", "skill/\udc00"),
+        ("owner/\ud83d\ude00", "skill/paired"),
+    )
+    node_keys = _node_json(
+        """
+const pairs = [
+  ["owner/é", "skill/é"],
+  ["owner/😀", "skill/😀"],
+  ["owner/\\u2028", "skill/\\u2029"],
+  ["owner/\\\"\\\\\\n", "skill/\\u0000\\u0001\\b\\f\\n\\r\\t"],
+  ["owner/\\ud800", "skill/\\udc00"],
+  ["owner/\\ud83d\\ude00", "skill/paired"],
+];
+process.stdout.write(JSON.stringify(
+  pairs.map(([source, skill]) => JSON.stringify([source, skill])),
+));
+"""
+    )
+
+    assert tuple(requirement_key(*pair) for pair in pairs) == tuple(node_keys)
 
 
 def test_plan_values_are_frozen_and_ordered_collections_are_tuples() -> None:
@@ -160,6 +218,62 @@ def test_catalog_requirements_sorts_conflicts_with_the_same_collation_rule() -> 
     )
     assert merged.desired_conflicts[1].skill == "éclair"
     assert merged.desired_conflicts[2].skill == "e\u0301clair"
+
+
+def test_conflict_sources_use_literal_javascript_array_sort_order() -> None:
+    merged = catalog_requirements(
+        _catalog(
+            ("\ue000/repo", ("review",)),
+            ("😀/repo", ("review",)),
+            ("a/repo", ("review",)),
+            ("\ud7ff/repo", ("review",)),
+            ("\ud800/repo", ("review",)),
+            ("\udc00/repo", ("review",)),
+        )
+    )
+
+    assert merged.desired_conflicts == (
+        DesiredConflict(
+            "review",
+            (
+                "a/repo",
+                "\ud7ff/repo",
+                "\ud800/repo",
+                "😀/repo",
+                "\udc00/repo",
+                "\ue000/repo",
+            ),
+        ),
+    )
+
+
+def test_conflict_source_order_matches_live_node_array_sort() -> None:
+    sources = (
+        "\ue000/repo",
+        "😀/repo",
+        "a/repo",
+        "\ud7ff/repo",
+        "\ud800/repo",
+        "\udc00/repo",
+    )
+    node_sources = _node_json(
+        """
+const sources = [
+  "\\ue000/repo",
+  "😀/repo",
+  "a/repo",
+  "\\ud7ff/repo",
+  "\\ud800/repo",
+  "\\udc00/repo",
+];
+process.stdout.write(JSON.stringify(sources.sort()));
+"""
+    )
+    merged = catalog_requirements(
+        _catalog(*tuple((source, ("review",)) for source in sources))
+    )
+
+    assert merged.desired_conflicts[0].sources == tuple(node_sources)
 
 
 def test_classify_status_keeps_requirement_and_extra_order() -> None:
@@ -283,6 +397,26 @@ def test_install_plan_selects_missing_and_blocks_mismatch_and_untracked() -> Non
     assert tuple(item.skill for item in plan.conflicts) == ("wrong", "unknown")
     assert tuple(item.name for item in plan.extras) == ("extra",)
     assert status.missing == (requirements[1], requirements[2])
+
+
+def test_unicode_node_identity_key_selects_only_the_requested_install() -> None:
+    status = classify_status(
+        catalog_requirements(
+            _catalog(("owner/😀", ("é", "😀")))
+        ),
+        {},
+    )
+
+    plan = create_install_plan(
+        status,
+        selected_keys=frozenset(('["owner/😀","😀"]',)),
+    )
+
+    assert tuple(item.skill for item in plan.install) == ("😀",)
+    assert tuple(item.key for item in status.missing) == (
+        '["owner/😀","é"]',
+        '["owner/😀","😀"]',
+    )
 
 
 def test_desired_conflicts_do_not_block_independent_safe_install_work() -> None:
