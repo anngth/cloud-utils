@@ -1,0 +1,11 @@
+◇  Available Skills
+
+React
+│    react-best-practices
+│      Review React code for performance.
+
+General
+│    docs
+│      Create concise documentation.
+
+└  Use --skill <name> to install specific skills
