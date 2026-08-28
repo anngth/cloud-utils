@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
-import os
-import subprocess
-import sys
+import locale
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -28,118 +26,6 @@ from skills_manager.config import (
     write_catalog,
 )
 
-
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_UNICODE_COLLATION_CORPUS = (
-    "z",
-    "ä",
-    "a",
-    "A",
-    "á",
-    "aa",
-    "a2",
-    "a10",
-    "Z",
-    "é",
-    "e",
-    "É",
-    "ø",
-    "o",
-    "ß",
-    "ss",
-    "10",
-    "2",
-    "_x",
-    "-x",
-    ",",
-    ".",
-    ".x",
-    "@x",
-    "0x",
-    "a b",
-    "a_b",
-    "a-b",
-    "a.b",
-    "a@b",
-    "a\N{COMBINING ACUTE ACCENT}",
-    "a\N{COMBINING DIAERESIS}",
-    "e\N{COMBINING ACUTE ACCENT}",
-    "E\N{COMBINING ACUTE ACCENT}",
-)
-
-
-def _node_locale_sort(values: tuple[str, ...]) -> list[str]:
-    script = """
-const values = JSON.parse(process.argv[1]);
-console.log(JSON.stringify(values.sort((a, b) => a.localeCompare(b))));
-"""
-    completed = subprocess.run(
-        ["node", "-e", script, json.dumps(values, ensure_ascii=False)],
-        cwd=_REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return json.loads(completed.stdout)
-
-
-def _fresh_profile_orders(
-    document: dict[str, object],
-    *,
-    locale_name: str | None,
-    runtime: str,
-) -> tuple[list[str], list[str]]:
-    environment = os.environ.copy()
-    if locale_name is not None:
-        environment.update(
-            LANG=locale_name,
-            LC_ALL=locale_name,
-            LC_COLLATE=locale_name,
-        )
-    argument = json.dumps(document, ensure_ascii=False)
-    if runtime == "python":
-        script = """
-import json
-import sys
-from skills_manager.config import _validate_profiles
-
-validated = _validate_profiles(json.loads(sys.argv[1]))
-print(json.dumps([
-    [profile["name"] for profile in validated["profiles"]],
-    [entry["source"] for entry in validated["profiles"][0]["sources"]],
-], ensure_ascii=False))
-"""
-        command = [sys.executable, "-c", script, argument]
-        cwd = _REPO_ROOT / "mac_scripts" / "functions"
-    else:
-        script = """
-import { validateProfilesDocument } from './profiles.mjs';
-
-const validated = validateProfilesDocument(JSON.parse(process.argv[1]));
-console.log(JSON.stringify([
-  validated.profiles.map((profile) => profile.name),
-  validated.profiles[0].sources.map((entry) => entry.source),
-]));
-"""
-        command = ["node", "--input-type=module", "-e", script, argument]
-        cwd = _REPO_ROOT / "mac_scripts" / "functions" / "skills-manager"
-    completed = subprocess.run(
-        command,
-        cwd=cwd,
-        env=environment,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
-        if locale_name is not None and "unsupported locale setting" in (
-            completed.stderr
-        ):
-            pytest.skip(f"{locale_name} is unavailable: {completed.stderr.strip()}")
-        pytest.fail(
-            f"fresh {runtime} collation subprocess failed: {completed.stderr}"
-        )
-    profile_names, sources = json.loads(completed.stdout)
-    return profile_names, sources
 
 
 @pytest.mark.parametrize("version", [None, 0, 2, "1", True, 1.0])
@@ -692,46 +578,74 @@ def test_profiles_bootstrap_sorts_profiles_and_sources_before_migration(
     assert paths.profiles_file.read_bytes() == contents
 
 
-def test_profile_name_sort_matches_live_node_unicode_collation(tmp_path: Path) -> None:
-    expected_names = _node_locale_sort(_UNICODE_COLLATION_CORPUS)
-    source_by_name = {
-        name: f"profile-source-{index}"
-        for index, name in enumerate(_UNICODE_COLLATION_CORPUS)
-    }
+def test_profiles_bootstrap_sorts_profile_names_by_literal_nfc_code_points(
+    tmp_path: Path,
+) -> None:
     profiles = {
         "version": 1,
         "profiles": [
-            {
-                "name": name,
-                "sources": [{"source": source_by_name[name], "skills": []}],
-            }
-            for name in _UNICODE_COLLATION_CORPUS
+            {"name": "z", "sources": [{"source": "https://profiles.test/z", "skills": []}]},
+            {"name": "ä", "sources": [{"source": "https://profiles.test/a-umlaut-composed", "skills": []}]},
+            {"name": "a", "sources": [{"source": "https://profiles.test/a", "skills": []}]},
+            {"name": "A", "sources": [{"source": "https://profiles.test/A", "skills": []}]},
+            {"name": "á", "sources": [{"source": "https://profiles.test/a-acute-composed", "skills": []}]},
+            {"name": "aa", "sources": [{"source": "https://profiles.test/aa", "skills": []}]},
+            {"name": "a2", "sources": [{"source": "https://profiles.test/a2", "skills": []}]},
+            {"name": "a10", "sources": [{"source": "https://profiles.test/a10", "skills": []}]},
+            {"name": ",", "sources": [{"source": "https://profiles.test/comma", "skills": []}]},
+            {"name": ".", "sources": [{"source": "https://profiles.test/period", "skills": []}]},
+            {"name": "a\N{COMBINING ACUTE ACCENT}", "sources": [{"source": "https://profiles.test/a-acute-decomposed", "skills": []}]},
+            {"name": "a\N{COMBINING DIAERESIS}", "sources": [{"source": "https://profiles.test/a-umlaut-decomposed", "skills": []}]},
+            {"name": "Å", "sources": [{"source": "https://profiles.test/aring", "skills": []}]},
+            {"name": "×", "sources": [{"source": "https://profiles.test/multiply", "skills": []}]},
+            {"name": "÷", "sources": [{"source": "https://profiles.test/divide", "skills": []}]},
         ],
     }
     paths = ConfigPaths.for_config_dir(tmp_path)
     paths.skm_dir.mkdir(parents=True)
-    paths.profiles_file.write_text(json.dumps(profiles, ensure_ascii=False))
+    contents = (json.dumps(profiles, ensure_ascii=False, indent=2) + "\n").encode()
+    paths.profiles_file.write_bytes(contents)
 
     initialize_config(env={"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)}, pid=18)
 
-    catalog = read_config(paths)
-    assert [entry.source for entry in catalog.sources] == [
-        source_by_name[name] for name in expected_names
+    assert [entry.source for entry in read_config(paths).sources] == [
+        "https://profiles.test/comma",
+        "https://profiles.test/period",
+        "https://profiles.test/A",
+        "https://profiles.test/a",
+        "https://profiles.test/a10",
+        "https://profiles.test/a2",
+        "https://profiles.test/aa",
+        "https://profiles.test/z",
+        "https://profiles.test/aring",
+        "https://profiles.test/multiply",
+        "https://profiles.test/a-acute-composed",
+        "https://profiles.test/a-acute-decomposed",
+        "https://profiles.test/a-umlaut-composed",
+        "https://profiles.test/a-umlaut-decomposed",
+        "https://profiles.test/divide",
     ]
+    assert paths.profiles_file.read_bytes() == contents
 
 
-def test_profile_source_sort_and_one_based_index_match_live_node_unicode(
+def test_profiles_bootstrap_sorts_source_ids_by_literal_nfc_code_points(
     tmp_path: Path,
 ) -> None:
-    expected_sources = _node_locale_sort(_UNICODE_COLLATION_CORPUS)
+    prefix = "https://sources.test/"
     profiles = {
         "version": 1,
         "profiles": [
             {
                 "name": "default",
                 "sources": [
-                    {"source": source, "skills": []}
-                    for source in _UNICODE_COLLATION_CORPUS
+                    {"source": prefix + value, "skills": []}
+                    for value in (
+                        "z", "ä", "a", "A", "á", "aa", "a2", "a10", "Z", "é",
+                        "e", "É", "ø", "o", "ß", "ss", "10", "2", "_x", "-x",
+                        ",", ".", ".x", "@x", "0x", "a b", "a_b", "a-b", "a.b",
+                        "a@b", "a\N{COMBINING ACUTE ACCENT}", "a\N{COMBINING DIAERESIS}",
+                        "e\N{COMBINING ACUTE ACCENT}", "E\N{COMBINING ACUTE ACCENT}", "Å", "×", "÷",
+                    )
                 ],
             }
         ],
@@ -743,42 +657,117 @@ def test_profile_source_sort_and_one_based_index_match_live_node_unicode(
     initialize_config(env={"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)}, pid=19)
 
     catalog = read_config(paths)
-    assert [entry.source for entry in catalog.sources] == expected_sources
-    assert resolve_source_token(catalog, "2")[1].source == expected_sources[1]
+    assert [entry.source for entry in catalog.sources] == [
+        "https://sources.test/,",
+        "https://sources.test/-x",
+        "https://sources.test/.",
+        "https://sources.test/.x",
+        "https://sources.test/0x",
+        "https://sources.test/10",
+        "https://sources.test/2",
+        "https://sources.test/@x",
+        "https://sources.test/A",
+        "https://sources.test/Z",
+        "https://sources.test/_x",
+        "https://sources.test/a",
+        "https://sources.test/a b",
+        "https://sources.test/a-b",
+        "https://sources.test/a.b",
+        "https://sources.test/a10",
+        "https://sources.test/a2",
+        "https://sources.test/a@b",
+        "https://sources.test/a_b",
+        "https://sources.test/aa",
+        "https://sources.test/e",
+        "https://sources.test/o",
+        "https://sources.test/ss",
+        "https://sources.test/z",
+        "https://sources.test/Å",
+        "https://sources.test/É",
+        "https://sources.test/E\N{COMBINING ACUTE ACCENT}",
+        "https://sources.test/×",
+        "https://sources.test/ß",
+        "https://sources.test/á",
+        "https://sources.test/a\N{COMBINING ACUTE ACCENT}",
+        "https://sources.test/ä",
+        "https://sources.test/a\N{COMBINING DIAERESIS}",
+        "https://sources.test/é",
+        "https://sources.test/e\N{COMBINING ACUTE ACCENT}",
+        "https://sources.test/÷",
+        "https://sources.test/ø",
+    ]
+    assert resolve_source_token(catalog, "2")[1].source == "https://sources.test/-x"
 
 
-@pytest.mark.parametrize(
-    "locale_name",
-    [None, "en_US.UTF-8", "sv_SE.UTF-8"],
-    ids=["process-default", "en-US", "sv-SE"],
-)
-def test_profile_and_source_sort_match_fresh_node_in_host_locale(
-    locale_name: str | None,
+def test_profiles_bootstrap_keeps_equal_nfc_source_values_byte_for_byte(
+    tmp_path: Path,
 ) -> None:
-    document = {
+    first = "https://sources.test/a\N{COMBINING ACUTE ACCENT}"
+    second = "https://sources.test/á"
+    profiles = {
         "version": 1,
         "profiles": [
             {
-                "name": name,
+                "name": "default",
                 "sources": [
-                    {"source": source, "skills": []}
-                    for source in reversed(_UNICODE_COLLATION_CORPUS)
+                    {"source": first, "skills": ["first"]},
+                    {"source": second, "skills": ["second"]},
                 ],
             }
-            for name in reversed(_UNICODE_COLLATION_CORPUS)
         ],
     }
+    paths = ConfigPaths.for_config_dir(tmp_path)
+    paths.skm_dir.mkdir(parents=True)
+    contents = (json.dumps(profiles, ensure_ascii=False) + "\n").encode()
+    paths.profiles_file.write_bytes(contents)
 
-    python_orders = _fresh_profile_orders(
-        document, locale_name=locale_name, runtime="python"
-    )
-    node_orders = _fresh_profile_orders(
-        document, locale_name=locale_name, runtime="node"
+    initialize_config(env={"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)}, pid=20)
+
+    assert [(entry.source, entry.skills) for entry in read_config(paths).sources] == [
+        (first, ("first",)),
+        (second, ("second",)),
+    ]
+    assert paths.profiles_file.read_bytes() == contents
+
+
+def test_profiles_bootstrap_never_calls_locale_setup_for_valid_unicode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_locale_setup(*_args: object) -> str:
+        raise OSError("locale setup must not run")
+
+    monkeypatch.setattr(locale, "setlocale", fail_locale_setup)
+    paths = ConfigPaths.for_config_dir(tmp_path)
+    paths.skm_dir.mkdir(parents=True)
+    paths.profiles_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "profiles": [
+                    {
+                        "name": "Å",
+                        "sources": [
+                            {"source": "https://sources.test/×", "skills": []},
+                            {"source": "https://sources.test/÷", "skills": []},
+                            {
+                                "source": "https://sources.test/a\N{COMBINING ACUTE ACCENT}",
+                                "skills": [],
+                            },
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
     )
 
-    assert python_orders == node_orders
-    comma_index = python_orders[0].index(",")
-    assert python_orders[0][comma_index + 1] == "."
+    initialize_config(env={"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)}, pid=21)
+
+    assert [entry.source for entry in read_config(paths).sources] == [
+        "https://sources.test/×",
+        "https://sources.test/a\N{COMBINING ACUTE ACCENT}",
+        "https://sources.test/÷",
+    ]
 
 
 @pytest.mark.parametrize(

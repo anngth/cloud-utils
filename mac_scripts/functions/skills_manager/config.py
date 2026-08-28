@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import json
-import locale
 import math
 import os
 import re
@@ -36,25 +35,6 @@ class ConfigError(ValueError):
 
 
 ConfigFileError = ConfigError
-
-
-def _initialize_collation() -> str:
-    configured = locale.setlocale(locale.LC_COLLATE, "")
-    if configured.upper() not in {"C", "POSIX", "C.UTF-8", "C.UTF8"}:
-        return configured
-    for fallback in ("en_US.UTF-8", "en_US.UTF8", "en_US"):
-        try:
-            return locale.setlocale(locale.LC_COLLATE, fallback)
-        except locale.Error:
-            continue
-    return configured
-
-
-_COLLATION_LOCALE = _initialize_collation()
-
-
-def _javascript_locale_key(value: str) -> str:
-    return locale.strxfrm(unicodedata.normalize("NFC", value))
 
 
 class _FrozenMapping(Mapping[Any, Any]):
@@ -499,10 +479,12 @@ def _validate_profiles(value: object) -> dict[str, object]:
     validated = copy.deepcopy(dict(value))
     validated_profiles = validated["profiles"]
     assert isinstance(validated_profiles, list)
-    validated_profiles.sort(key=lambda profile: _javascript_locale_key(profile["name"]))
+    validated_profiles.sort(
+        key=lambda profile: unicodedata.normalize("NFC", profile["name"])
+    )
     for profile in validated_profiles:
         profile["sources"].sort(
-            key=lambda entry: _javascript_locale_key(entry["source"])
+            key=lambda entry: unicodedata.normalize("NFC", entry["source"])
         )
     return validated
 
