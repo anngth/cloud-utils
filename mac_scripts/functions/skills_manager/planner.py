@@ -155,6 +155,15 @@ def _is_untracked(actual: InstalledSkill) -> bool:
     return actual.source is None or actual.provenance == "untracked"
 
 
+def _installed_by_identity(
+    installed_state: Mapping[str, InstalledSkill],
+) -> dict[bytes, InstalledSkill]:
+    installed: dict[bytes, InstalledSkill] = {}
+    for name, actual in installed_state.items():
+        installed[_utf16_key(name)] = actual
+    return installed
+
+
 def classify_status(
     merge_result: MergedRequirements,
     installed_state: InstalledState,
@@ -163,18 +172,26 @@ def classify_status(
     missing: list[Requirement] = []
     mismatches: list[Requirement] = []
     untracked: list[Requirement] = []
-    ambiguous = {item.skill for item in merge_result.desired_conflicts}
-    desired_names = {item.skill for item in merge_result.requirements}
+    actual_by_name = _installed_by_identity(installed_state)
+    ambiguous = {
+        _utf16_key(item.skill) for item in merge_result.desired_conflicts
+    }
+    desired_names = {
+        _utf16_key(item.skill) for item in merge_result.requirements
+    }
 
     for requirement in merge_result.requirements:
-        if requirement.skill in ambiguous:
+        skill_identity = _utf16_key(requirement.skill)
+        if skill_identity in ambiguous:
             continue
-        actual = installed_state.get(requirement.skill)
+        actual = actual_by_name.get(skill_identity)
         if actual is None:
             missing.append(requirement)
         elif _is_untracked(actual):
             untracked.append(requirement)
-        elif actual.source != requirement.source:
+        elif actual.source is None or (
+            _utf16_key(actual.source) != _utf16_key(requirement.source)
+        ):
             mismatches.append(requirement)
         else:
             installed.append(requirement)
@@ -183,8 +200,8 @@ def classify_status(
         sorted(
             (
                 actual
-                for actual in installed_state.values()
-                if actual.name not in desired_names
+                for actual in actual_by_name.values()
+                if _utf16_key(actual.name) not in desired_names
             ),
             key=lambda item: _collation_key(item.name),
         )
@@ -249,15 +266,17 @@ def create_uninstall_plan(
     retain: list[Requirement] = []
     absent: list[Requirement] = []
     desired_conflicts = _combine_desired_conflicts(selected, remaining)
-    ambiguous = {item.skill for item in desired_conflicts}
+    actual_by_name = _installed_by_identity(installed_state)
+    ambiguous = {_utf16_key(item.skill) for item in desired_conflicts}
     remaining_keys = {item.key for item in remaining.requirements}
 
     for requirement in selected.requirements:
-        if requirement.skill in ambiguous:
+        skill_identity = _utf16_key(requirement.skill)
+        if skill_identity in ambiguous:
             continue
         if requirement.key in remaining_keys:
             retain.append(requirement)
-        elif requirement.skill in installed_state:
+        elif skill_identity in actual_by_name:
             remove.append(requirement)
         else:
             absent.append(requirement)

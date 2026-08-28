@@ -501,6 +501,323 @@ def test_status_preserves_conflicts_and_suppresses_their_ambiguous_names() -> No
     assert result.desired_conflicts is merged.desired_conflicts
 
 
+def test_equivalent_conflict_spellings_suppress_mutation_but_keep_safe_work() -> None:
+    paired = "\ud83d\ude00"
+    ambiguous_pair = Requirement(
+        requirement_key("a/repo", paired), "a/repo", paired
+    )
+    ambiguous_scalar = Requirement(
+        requirement_key("b/repo", "😀"), "b/repo", "😀"
+    )
+    safe = Requirement(requirement_key("c/repo", "safe"), "c/repo", "safe")
+    merged = MergedRequirements(
+        (ambiguous_pair, ambiguous_scalar, safe),
+        (DesiredConflict(paired, ("a/repo", "b/repo")),),
+    )
+
+    status = classify_status(
+        merged,
+        {"😀": _actual("😀", "a/repo")},
+    )
+    install = create_install_plan(status)
+    uninstall = create_uninstall_plan(
+        selected=merged,
+        remaining=MergedRequirements((), ()),
+        installed_state={
+            "😀": _actual("😀", "a/repo"),
+            "safe": _actual("safe", "c/repo"),
+        },
+        linked_selected=(),
+    )
+
+    assert status.installed == ()
+    assert status.missing == (safe,)
+    assert status.mismatches == ()
+    assert status.untracked == ()
+    assert status.extras == ()
+    assert install.install == (safe,)
+    assert install.skip == ()
+    assert uninstall.remove == (safe,)
+    assert uninstall.retain == ()
+    assert uninstall.absent == ()
+
+
+@pytest.mark.parametrize(
+    ("requirement_skill", "state_key", "required_source", "actual_source"),
+    [
+        ("\ud83d\ude00", "😀", "\ud83d\ude00/repo", "😀/repo"),
+        ("😀", "\ud83d\ude00", "😀/repo", "\ud83d\ude00/repo"),
+    ],
+)
+def test_equivalent_installed_name_and_source_spellings_are_installed(
+    requirement_skill: str,
+    state_key: str,
+    required_source: str,
+    actual_source: str,
+) -> None:
+    requirement = Requirement(
+        requirement_key(required_source, requirement_skill),
+        required_source,
+        requirement_skill,
+    )
+
+    status = classify_status(
+        MergedRequirements((requirement,), ()),
+        {state_key: _actual(state_key, actual_source)},
+    )
+
+    assert status.installed == (requirement,)
+    assert status.missing == ()
+    assert status.mismatches == ()
+    assert status.untracked == ()
+    assert status.extras == ()
+
+
+@pytest.mark.parametrize(
+    ("actual_source", "provenance"),
+    [(None, None), ("😀/repo", "untracked")],
+)
+def test_equivalent_name_lookup_keeps_untracked_rules(
+    actual_source: str | None,
+    provenance: str | None,
+) -> None:
+    paired = "\ud83d\ude00"
+    requirement = Requirement(
+        requirement_key(f"{paired}/repo", paired),
+        f"{paired}/repo",
+        paired,
+    )
+
+    status = classify_status(
+        MergedRequirements((requirement,), ()),
+        {
+            "😀": _actual(
+                "😀",
+                actual_source,
+                provenance=provenance,
+            )
+        },
+    )
+
+    assert status.installed == ()
+    assert status.missing == ()
+    assert status.mismatches == ()
+    assert status.untracked == (requirement,)
+    assert status.extras == ()
+
+
+def test_equivalent_installed_collisions_keep_last_then_sort_extras() -> None:
+    paired = "\ud83d\ude00"
+    b_first = InstalledSkill(
+        f"b{paired}", "/b-first", (), "b/repo", "tracked"
+    )
+    a_first = InstalledSkill(
+        f"a{paired}", "/a-first", (), "a/repo", "tracked"
+    )
+    b_last = InstalledSkill("b😀", "/b-last", (), "b/repo", "tracked")
+    a_last = InstalledSkill("a😀", "/a-last", (), "a/repo", "tracked")
+    state = {
+        f"b{paired}": b_first,
+        f"a{paired}": a_first,
+        "b😀": b_last,
+        "a😀": a_last,
+    }
+
+    status = classify_status(MergedRequirements((), ()), state)
+
+    assert status.extras == (a_last, b_last)
+
+
+def test_equivalent_installed_key_collision_uses_last_record_for_lookup() -> None:
+    paired = "\ud83d\ude00"
+    requirement = Requirement(
+        requirement_key(f"{paired}/repo", paired),
+        f"{paired}/repo",
+        paired,
+    )
+    first = _actual(paired, "wrong/repo")
+    last = _actual("😀", "😀/repo")
+
+    status = classify_status(
+        MergedRequirements((requirement,), ()),
+        {paired: first, "😀": last},
+    )
+
+    assert status.installed == (requirement,)
+    assert status.missing == ()
+    assert status.mismatches == ()
+    assert status.extras == ()
+
+
+def test_downstream_utf16_identity_matches_live_node_planner() -> None:
+    paired = "\ud83d\ude00"
+    lookup_requirement = Requirement(
+        requirement_key(f"{paired}/repo", paired),
+        f"{paired}/repo",
+        paired,
+    )
+    lookup_status = classify_status(
+        MergedRequirements((lookup_requirement,), ()),
+        {
+            paired: _actual(paired, "wrong/repo"),
+            "😀": _actual("😀", "😀/repo"),
+        },
+    )
+
+    collision_state = {
+        f"b{paired}": InstalledSkill(
+            f"b{paired}", "/b-first", (), "b/repo", "tracked"
+        ),
+        f"a{paired}": InstalledSkill(
+            f"a{paired}", "/a-first", (), "a/repo", "tracked"
+        ),
+        "b😀": InstalledSkill("b😀", "/b-last", (), "b/repo", "tracked"),
+        "a😀": InstalledSkill("a😀", "/a-last", (), "a/repo", "tracked"),
+    }
+    collision_status = classify_status(
+        MergedRequirements((), ()), collision_state
+    )
+
+    pair_requirement = Requirement(
+        requirement_key("a/repo", paired), "a/repo", paired
+    )
+    scalar_requirement = Requirement(
+        requirement_key("b/repo", "😀"), "b/repo", "😀"
+    )
+    safe = Requirement(requirement_key("c/repo", "safe"), "c/repo", "safe")
+    conflict_merged = MergedRequirements(
+        (pair_requirement, scalar_requirement, safe),
+        (DesiredConflict(paired, ("a/repo", "b/repo")),),
+    )
+    conflict_status = classify_status(conflict_merged, {})
+    install = create_install_plan(conflict_status)
+    uninstall = create_uninstall_plan(
+        selected=conflict_merged,
+        remaining=MergedRequirements((), ()),
+        installed_state={
+            "😀": _actual("😀", "a/repo"),
+            "safe": _actual("safe", "c/repo"),
+        },
+        linked_selected=(),
+    )
+
+    python_summary = {
+        "lookup": {
+            "installed": [item.key for item in lookup_status.installed],
+            "missing": [item.key for item in lookup_status.missing],
+            "mismatches": [item.key for item in lookup_status.mismatches],
+            "extras": [item.path for item in lookup_status.extras],
+        },
+        "collision": {
+            "rawPaths": ["/b-last", "/a-last"],
+            "extras": [
+                [item.name, item.path] for item in collision_status.extras
+            ],
+        },
+        "conflict": {
+            "missing": [item.key for item in conflict_status.missing],
+            "extras": [item.path for item in conflict_status.extras],
+            "install": [item.key for item in install.install],
+            "skip": [item.key for item in install.skip],
+            "remove": [item.key for item in uninstall.remove],
+            "absent": [item.key for item in uninstall.absent],
+        },
+    }
+    node_summary = _node_json(
+        """
+import("./mac_scripts/functions/skills-manager/planner.mjs").then((planner) => {
+  const paired = "\\ud83d\\ude00";
+  const scalar = "😀";
+  const actual = (name, path, source) => ({
+    name,
+    path,
+    agents: [],
+    source,
+    provenance: "tracked",
+  });
+  const requirement = (source, skill) => ({
+    key: planner.requirementKey(source, skill),
+    source,
+    skill,
+  });
+
+  const lookupRequirement = requirement(`${paired}/repo`, paired);
+  const lookupState = new Map([
+    [paired, actual(paired, "/first", "wrong/repo")],
+    [scalar, actual(scalar, "/last", `${scalar}/repo`)],
+  ]);
+  const lookupStatus = planner.classifyStatus({
+    requirements: [lookupRequirement],
+    desiredConflicts: [],
+  }, lookupState);
+
+  const collisionState = new Map([
+    [`b${paired}`, actual(`b${paired}`, "/b-first", "b/repo")],
+    [`a${paired}`, actual(`a${paired}`, "/a-first", "a/repo")],
+    [`b${scalar}`, actual(`b${scalar}`, "/b-last", "b/repo")],
+    [`a${scalar}`, actual(`a${scalar}`, "/a-last", "a/repo")],
+  ]);
+  const collisionStatus = planner.classifyStatus({
+    requirements: [],
+    desiredConflicts: [],
+  }, collisionState);
+
+  const pairRequirement = requirement("a/repo", paired);
+  const scalarRequirement = requirement("b/repo", scalar);
+  const safe = requirement("c/repo", "safe");
+  const conflictMerged = {
+    requirements: [pairRequirement, scalarRequirement, safe],
+    desiredConflicts: [{
+      skill: paired,
+      sources: ["a/repo", "b/repo"],
+      profiles: [],
+    }],
+  };
+  const conflictStatus = planner.classifyStatus(
+    conflictMerged,
+    new Map(),
+  );
+  const install = planner.createInstallPlan(conflictStatus);
+  const uninstall = planner.createUninstallPlan({
+    selected: conflictMerged,
+    remaining: { requirements: [], desiredConflicts: [] },
+    installedState: new Map([
+      [scalar, actual(scalar, "/ambiguous", "a/repo")],
+      ["safe", actual("safe", "/safe", "c/repo")],
+    ]),
+    linkedSelected: [],
+  });
+
+  process.stdout.write(JSON.stringify({
+    lookup: {
+      installed: lookupStatus.installed.map((item) => item.key),
+      missing: lookupStatus.missing.map((item) => item.key),
+      mismatches: lookupStatus.mismatches.map((item) => item.key),
+      extras: lookupStatus.extras.map((item) => item.path),
+    },
+    collision: {
+      rawPaths: [...collisionState.values()].map((item) => item.path),
+      extras: collisionStatus.extras.map((item) => [item.name, item.path]),
+    },
+    conflict: {
+      missing: conflictStatus.missing.map((item) => item.key),
+      extras: conflictStatus.extras.map((item) => item.path),
+      install: install.install.map((item) => item.key),
+      skip: install.skip.map((item) => item.key),
+      remove: uninstall.remove.map((item) => item.key),
+      absent: uninstall.absent.map((item) => item.key),
+    },
+  }));
+}).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+"""
+    )
+
+    assert python_summary == node_summary
+
+
 def test_install_plan_selects_missing_and_blocks_mismatch_and_untracked() -> None:
     requirements = tuple(
         Requirement(requirement_key("a/repo", skill), "a/repo", skill)
@@ -620,6 +937,49 @@ def test_uninstall_classifies_absent_and_removes_mismatch_and_untracked() -> Non
     assert plan.retain == ()
     assert tuple(item.skill for item in plan.absent) == ("absent",)
     assert plan.conflicts == ()
+
+
+def test_uninstall_uses_equivalent_name_and_requirement_key_identities() -> None:
+    paired = "\ud83d\ude00"
+    selected = Requirement(
+        requirement_key(f"{paired}/repo", paired),
+        f"{paired}/repo",
+        paired,
+    )
+    equivalent_remaining = Requirement(
+        requirement_key("😀/repo", "😀"),
+        "😀/repo",
+        "😀",
+    )
+
+    remove = create_uninstall_plan(
+        selected=MergedRequirements((selected,), ()),
+        remaining=MergedRequirements((), ()),
+        installed_state={"😀": _actual("😀", "😀/repo")},
+        linked_selected=(),
+    )
+    retain = create_uninstall_plan(
+        selected=MergedRequirements((selected,), ()),
+        remaining=MergedRequirements((equivalent_remaining,), ()),
+        installed_state={},
+        linked_selected=(),
+    )
+    absent = create_uninstall_plan(
+        selected=MergedRequirements((selected,), ()),
+        remaining=MergedRequirements((), ()),
+        installed_state={"\ud800": _actual("\ud800", "other/repo")},
+        linked_selected=(),
+    )
+
+    assert remove.remove == (selected,)
+    assert remove.retain == ()
+    assert remove.absent == ()
+    assert retain.remove == ()
+    assert retain.retain == (selected,)
+    assert retain.absent == ()
+    assert absent.remove == ()
+    assert absent.retain == ()
+    assert absent.absent == (selected,)
 
 
 def test_desired_conflicts_do_not_block_independent_safe_uninstall_work() -> None:
