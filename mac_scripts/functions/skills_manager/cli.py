@@ -9,12 +9,11 @@ from typing import NoReturn, TextIO
 
 import click
 
-from shared.selector import (
-    SelectorItem,
-    SelectorResult,
-    run_selector,
-)
+from shared.selector import SelectorItem, SelectorResult, run_selector
 
+from .catalog_commands import (
+    SkmUsageError, parse_source_command, run_source_command,
+)
 from .config import (
     Catalog,
     ConfigPaths,
@@ -25,10 +24,6 @@ from .config import (
 from .state import InstalledState, load_installed_state, resolve_project_root
 from .ui import SkmUi
 from .upstream import AvailableSkill, discover_available_skills, has_command
-
-
-class SkmUsageError(ValueError):
-    """A stable user-facing command grammar error."""
 
 
 def _operation_not_available(*_args: object, **_kwargs: object) -> object:
@@ -43,9 +38,9 @@ class Services:
     write_catalog: Callable[[ConfigPaths, Catalog], None] = write_catalog
     resolve_project_root: Callable[..., Path] = resolve_project_root
     load_installed_state: Callable[..., InstalledState] = load_installed_state
-    discover_available_skills: Callable[
-        ..., tuple[AvailableSkill, ...]
-    ] = discover_available_skills
+    discover_available_skills: Callable[..., tuple[AvailableSkill, ...]] = (
+        discover_available_skills
+    )
     execute_install_plan: Callable[..., object] = _operation_not_available
     execute_uninstall_plan: Callable[..., object] = _operation_not_available
     selector_runner: Callable[..., SelectorResult] = run_selector
@@ -69,104 +64,6 @@ class CommandContext:
 
 def normalize_click_error(error: click.ClickException) -> str:
     return error.format_message()
-
-
-def _parse_source_options(args: Sequence[str]) -> dict[str, object]:
-    parsed: dict[str, object] = {
-        "positionals": [],
-        "skills": [],
-        "all": False,
-        "no_skills": False,
-        "yes": False,
-    }
-    value_flags = {"-k", "--skill"}
-    boolean_flags = {
-        "-a": "all",
-        "--all": "all",
-        "-n": "no_skills",
-        "--no-skills": "no_skills",
-        "-y": "yes",
-        "--yes": "yes",
-    }
-    index = 0
-    while index < len(args):
-        argument = args[index]
-        if argument in value_flags:
-            value = args[index + 1] if index + 1 < len(args) else None
-            if value is None or value.startswith("-"):
-                raise SkmUsageError(f"Missing value for {argument}")
-            skills = parsed["skills"]
-            assert isinstance(skills, list)
-            skills.append(value)
-            index += 2
-            continue
-        option = boolean_flags.get(argument)
-        if option is not None:
-            parsed[option] = True
-        elif argument.startswith("-"):
-            raise SkmUsageError(f"Unknown option: {argument}")
-        else:
-            positionals = parsed["positionals"]
-            assert isinstance(positionals, list)
-            positionals.append(argument)
-        index += 1
-    modes = bool(parsed["skills"]) + bool(parsed["all"]) + bool(
-        parsed["no_skills"]
-    )
-    if modes > 1:
-        raise SkmUsageError(
-            "--skill, --all, and --no-skills are mutually exclusive"
-        )
-    return parsed
-
-
-def _require_source_positionals(
-    parsed: Mapping[str, object],
-    *,
-    usage: str,
-) -> None:
-    positionals = parsed["positionals"]
-    assert isinstance(positionals, list)
-    if len(positionals) != 1:
-        raise SkmUsageError(f"Usage: {usage}")
-
-
-def _validate_source_grammar(args: Sequence[str]) -> None:
-    action = args[0] if args else None
-    rest = args[1:]
-    if action == "add":
-        parsed = _parse_source_options(rest)
-        _require_source_positionals(
-            parsed,
-            usage=(
-                "skm source add <source> [-k skill...] [-a|--all] "
-                "[-n|--no-skills] [-y]"
-            ),
-        )
-    elif action == "edit":
-        parsed = _parse_source_options(rest)
-        _require_source_positionals(
-            parsed,
-            usage=(
-                "skm source edit <source|index> [-k skill...] "
-                "[-a|--all] [-n|--no-skills] [-y]"
-            ),
-        )
-    elif action == "remove":
-        parsed = _parse_source_options(rest)
-        _require_source_positionals(
-            parsed,
-            usage="skm source remove <source|index>",
-        )
-        if parsed["skills"]:
-            raise SkmUsageError("Unexpected --skill")
-        for key, spelling in (
-            ("all", "--all"),
-            ("no_skills", "--no-skills"),
-            ("yes", "--yes"),
-        ):
-            if parsed[key]:
-                raise SkmUsageError(f"Unexpected {spelling}")
 
 
 def _parse_lifecycle_options(
@@ -199,29 +96,23 @@ def _parse_lifecycle_options(
 
 def _validate_route_grammar(action: str | None, args: Sequence[str]) -> None:
     if action == "source":
-        _validate_source_grammar(args)
+        parse_source_command(args)
     elif action == "status":
         _parse_lifecycle_options(
-            args,
-            allow_all=False,
-            allow_positionals=False,
+            args, allow_all=False, allow_positionals=False
         )
     elif action in {"add", "remove"}:
-        _parse_lifecycle_options(
-            args,
-            allow_all=True,
-            allow_positionals=True,
-        )
+        _parse_lifecycle_options(args, allow_all=True, allow_positionals=True)
 
 
 def _requires_npx(action: str | None, args: Sequence[str]) -> bool:
     if action in {"status", "add", "remove"}:
         return True
-    return (
-        action == "source"
-        and bool(args)
-        and args[0] in {"add", "edit"}
-        and not any(value in {"-n", "--no-skills"} for value in args)
+    request = parse_source_command(args) if action == "source" else None
+    return bool(
+        request
+        and request.action in {"add", "edit"}
+        and not request.no_skills
     )
 
 
@@ -234,22 +125,13 @@ class _ValidatedCommand(click.Command):
         callback: Callable[..., int],
     ) -> None:
         self._validator = validator
+        parameter = click.Argument(
+            ["tokens"], nargs=-1, type=click.UNPROCESSED, required=False
+        )
+        settings = {"ignore_unknown_options": True, "allow_extra_args": True}
         super().__init__(
-            name,
-            callback=callback,
-            params=[
-                click.Argument(
-                    ["tokens"],
-                    nargs=-1,
-                    type=click.UNPROCESSED,
-                    required=False,
-                )
-            ],
-            add_help_option=False,
-            context_settings={
-                "ignore_unknown_options": True,
-                "allow_extra_args": True,
-            },
+            name, callback=callback, params=[parameter], add_help_option=False,
+            context_settings=settings,
         )
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
@@ -265,111 +147,59 @@ def _is_tty(stream: TextIO) -> bool:
 
 
 def _wire_context(
-    *,
-    cwd: Path,
-    env: Mapping[str, str],
-    stdin: TextIO,
-    stdout: TextIO,
-    stderr: TextIO,
-    paths: ConfigPaths,
-    catalog: Catalog,
-    ui: SkmUi,
+    *, cwd: Path, env: Mapping[str, str], stdin: TextIO, stdout: TextIO,
+    stderr: TextIO, paths: ConfigPaths, catalog: Catalog, ui: SkmUi,
     services: Services,
 ) -> CommandContext:
     context: CommandContext
 
     def select_items(
-        items: Sequence[SelectorItem],
-        *,
-        initial: Sequence[str] = (),
-        multiple: bool = True,
-        title: object = "Select items",
+        items: Sequence[SelectorItem], *, initial: Sequence[str] = (),
+        multiple: bool = True, title: object = "Select items",
         render: Callable[[object], object] | None = None,
     ) -> SelectorResult:
         renderer = render or (
             lambda state: ui.selector(
-                title,
-                state,
-                mode="install" if multiple else "select",
+                title, state, mode="install" if multiple else "select"
             )
         )
         result = services.selector_runner(
-            items,
-            initial=initial,
-            multiple=multiple,
-            input=stdin,
-            output=stdout,
-            render=renderer,
+            items, initial=initial, multiple=multiple, input=stdin,
+            output=stdout, render=renderer,
         )
         if result.kind == "cancel" and render is None:
             ui.cancelled_selector(
-                title,
-                result.state,
-                mode="install" if multiple else "select",
+                title, result.state, mode="install" if multiple else "select"
             )
         return result
 
     def confirm(message: object) -> bool:
         ui.confirm(message)
         result = select_items(
-            (
-                SelectorItem("Yes", "yes"),
-                SelectorItem("No", "no"),
-            ),
-            multiple=False,
-            title=message,
+            (SelectorItem("Yes", "yes"), SelectorItem("No", "no")),
+            multiple=False, title=message,
         )
         return result.kind == "submit" and result.selected == ("yes",)
 
     def confirm_apply(
-        *,
-        install: Sequence[object],
-        remove: Sequence[object],
-        catalog: Catalog,
+        *, install: Sequence[object], remove: Sequence[object], catalog: Catalog,
     ) -> bool:
         heading = "Apply these changes?"
         result = select_items(
-            (
-                SelectorItem("Yes", "yes"),
-                SelectorItem("No", "no"),
-            ),
-            multiple=False,
-            title=heading,
+            (SelectorItem("Yes", "yes"), SelectorItem("No", "no")),
+            multiple=False, title=heading,
             render=lambda state: ui.apply_preview(
-                install=install,
-                remove=remove,
-                catalog=catalog,
-                heading=heading,
-                confirm_state=state,
+                install=install, remove=remove, catalog=catalog,
+                heading=heading, confirm_state=state,
             ),
         )
         return result.kind == "submit" and result.selected == ("yes",)
 
     context = CommandContext(
-        cwd,
-        env,
-        stdin,
-        stdout,
-        stderr,
-        paths,
-        catalog,
-        ui,
-        services,
-        select_items,
-        confirm,
-        confirm_apply,
+        cwd, env, stdin, stdout, stderr, paths, catalog, ui, services,
+        select_items, confirm, confirm_apply,
     )
     return context
-
-
-def _run_source_placeholder(
-    args: Sequence[str], context: CommandContext
-) -> int:
-    del context
-    action = args[0] if args else ""
-    if action in {"add", "edit", "remove"}:
-        raise SkmUsageError("Source commands are not available yet")
-    raise SkmUsageError(f"Unknown source command: {action}")
 
 
 def _run_lifecycle_placeholder(
@@ -395,7 +225,7 @@ def _dispatch(action: str | None, args: Sequence[str], context: CommandContext) 
     if action is None:
         return 0
     if action == "source":
-        return _run_source_placeholder(args, context)
+        return run_source_command(args, context)
     if action == "status":
         from .lifecycle import run_status
 
@@ -457,28 +287,19 @@ def run_cli(
             ui.error(str(error))
             return 1
         context = _wire_context(
-            cwd=actual_cwd,
-            env=actual_env,
-            stdin=actual_stdin,
-            stdout=actual_stdout,
-            stderr=actual_stderr,
-            paths=paths,
-            catalog=catalog,
-            ui=ui,
-            services=actual_services,
+            cwd=actual_cwd, env=actual_env, stdin=actual_stdin,
+            stdout=actual_stdout, stderr=actual_stderr, paths=paths,
+            catalog=catalog, ui=ui, services=actual_services,
         )
         return _dispatch(action, tokens, context)
 
     command = _ValidatedCommand(
-        "skm",
-        validator=lambda tokens: _validate_route_grammar(action, tokens),
+        "skm", validator=lambda value: _validate_route_grammar(action, value),
         callback=callback,
     )
     try:
         result = command.main(
-            args=list(args),
-            prog_name="skm",
-            standalone_mode=False,
+            args=list(args), prog_name="skm", standalone_mode=False,
         )
     except SkmUsageError as error:
         ui.error(str(error))
