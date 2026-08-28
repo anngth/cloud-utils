@@ -92,6 +92,25 @@ def test_catalog_ownership_error_redacts_unsafe_owner_source() -> None:
     assert "secret" not in str(caught.value)
 
 
+def test_duplicate_source_error_redacts_unsafe_source() -> None:
+    unsafe = "https://user:secret@git.example.com/acme/skills.git"
+    raw = {
+        "version": 1,
+        "sources": [
+            {"source": unsafe, "skills": []},
+            {"source": unsafe, "skills": []},
+        ],
+    }
+
+    with pytest.raises(CatalogError) as caught:
+        validate_catalog(raw)
+
+    assert "Duplicate source" in str(caught.value)
+    assert "https://git.example.com/acme/skills.git" in str(caught.value)
+    assert "user" not in str(caught.value)
+    assert "secret" not in str(caught.value)
+
+
 @pytest.mark.parametrize("skill", [None, 3, "", "   "])
 def test_validate_catalog_rejects_invalid_skill_names(skill: object) -> None:
     raw = {"version": 1, "sources": [{"source": "a/one", "skills": [skill]}]}
@@ -123,6 +142,40 @@ def test_validate_catalog_returns_immutable_copy_without_reordering_input() -> N
     assert catalog.sources[0].skills == ("second", "first")
     with pytest.raises(Exception):
         catalog.sources = ()
+
+
+def test_catalog_and_source_extras_are_deeply_frozen_and_serialize_normally(
+    tmp_path: Path,
+) -> None:
+    raw = {
+        "meta": {"z": [1, {"nested": [2]}], "a": "last"},
+        "version": 1,
+        "sources": [
+            {
+                "source": "a/repo",
+                "skills": [],
+                "extra": ["first", {"inner": [3]}],
+            }
+        ],
+    }
+    catalog = validate_catalog(raw)
+
+    with pytest.raises(AttributeError):
+        catalog.meta["z"].append(4)
+    with pytest.raises(TypeError):
+        catalog.meta["z"][1]["nested"] += (4,)
+    with pytest.raises(AttributeError):
+        catalog.sources[0].extra.append("second")
+    with pytest.raises(TypeError):
+        catalog.meta["new"] = "blocked"
+
+    paths = ConfigPaths.for_config_dir(tmp_path)
+    paths.skm_dir.mkdir(parents=True)
+    write_catalog(paths, catalog, pid=76)
+    assert json.loads(paths.sources_file.read_text()) == raw
+    assert paths.sources_file.read_text().index('"z"') < (
+        paths.sources_file.read_text().index('"a"')
+    )
 
 
 def test_resolve_source_token_uses_one_based_index_or_canonical_identity() -> None:
@@ -317,11 +370,45 @@ def test_profiles_bootstrap_has_precedence_and_preserves_legacy_bytes(
     initialize_config(env={"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)}, pid=12)
 
     assert [entry.source for entry in read_config(paths).sources] == [
-        "z/repo",
         "a/repo",
+        "z/repo",
     ]
     assert paths.profiles_file.read_bytes() == profiles_bytes
     assert paths.legacy_file.read_bytes() == legacy_bytes
+
+
+def test_profiles_bootstrap_sorts_profiles_and_sources_before_migration(
+    tmp_path: Path,
+) -> None:
+    paths = ConfigPaths.for_config_dir(tmp_path)
+    paths.skm_dir.mkdir(parents=True)
+    profiles = {
+        "version": 1,
+        "profiles": [
+            {
+                "name": "z-profile",
+                "sources": [
+                    {"source": "z/repo", "skills": []},
+                    {"source": "b/repo", "skills": []},
+                ],
+            },
+            {
+                "name": "a-profile",
+                "sources": [{"source": "a/repo", "skills": []}],
+            },
+        ],
+    }
+    contents = (json.dumps(profiles, indent=3) + "\n").encode()
+    paths.profiles_file.write_bytes(contents)
+
+    initialize_config(env={"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)}, pid=17)
+
+    assert [entry.source for entry in read_config(paths).sources] == [
+        "a/repo",
+        "b/repo",
+        "z/repo",
+    ]
+    assert paths.profiles_file.read_bytes() == contents
 
 
 @pytest.mark.parametrize(
@@ -402,6 +489,26 @@ def test_profile_skill_owner_conflict_creates_no_catalog(tmp_path: Path) -> None
     assert not paths.sources_file.exists()
 
 
+def test_unsafe_profile_source_is_wrapped_as_profile_config_error(
+    tmp_path: Path,
+) -> None:
+    paths = ConfigPaths.for_config_dir(tmp_path)
+    paths.skm_dir.mkdir(parents=True)
+    contents = (
+        b'{"version":1,"profiles":[{"name":"default","sources":'
+        b'[{"source":"owner/repo?token=secret","skills":[]}]}]}\n'
+    )
+    paths.profiles_file.write_bytes(contents)
+
+    with pytest.raises(ConfigError, match="Invalid profiles file") as caught:
+        initialize_config(env={"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)}, pid=16)
+
+    assert caught.value.file_path == paths.profiles_file
+    assert "secret" not in str(caught.value)
+    assert paths.profiles_file.read_bytes() == contents
+    assert not paths.sources_file.exists()
+
+
 def test_read_invalid_catalog_is_byte_preserving_and_hides_library_errors(
     tmp_path: Path,
 ) -> None:
@@ -415,6 +522,38 @@ def test_read_invalid_catalog_is_byte_preserving_and_hides_library_errors(
 
     assert "validation error" not in str(caught.value).lower()
     assert paths.sources_file.read_bytes() == contents
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_read_rejects_non_standard_json_constants_without_modifying_bytes(
+    tmp_path: Path, constant: str
+) -> None:
+    paths = ConfigPaths.for_config_dir(tmp_path)
+    paths.skm_dir.mkdir(parents=True)
+    contents = (
+        f'{{"version":1,"sources":[],"meta":{constant}}}\n'.encode()
+    )
+    paths.sources_file.write_bytes(contents)
+
+    with pytest.raises(ConfigError, match="Could not read configuration file"):
+        read_config(paths)
+
+    assert paths.sources_file.read_bytes() == contents
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_write_rejects_non_finite_extra_values_without_touching_files(
+    tmp_path: Path, value: float
+) -> None:
+    paths = ConfigPaths.for_config_dir(tmp_path)
+    paths.skm_dir.mkdir(parents=True)
+    catalog = Catalog(version=1, sources=(), meta={"nested": [value]})
+
+    with pytest.raises(CatalogError, match="finite"):
+        write_catalog(paths, catalog, pid=75)
+
+    assert not paths.sources_file.exists()
+    assert not paths.sources_file.with_name("sources.json.75.tmp").exists()
 
 
 def test_write_preserves_all_json_key_and_value_order_and_unicode(

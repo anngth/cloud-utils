@@ -100,6 +100,13 @@ def test_generic_url_credentials_query_and_fragment_are_removed() -> None:
     assert redact_source(raw) == "https://git.example.com/acme/skills.git"
 
 
+def test_backslash_https_url_credentials_are_normalized_and_removed() -> None:
+    raw = r"https:\\user:secret@example.com/acme/repo.git"
+
+    assert canonicalize_source(raw) == "https://example.com/acme/repo"
+    assert redact_source(raw) == "https://example.com/acme/repo.git"
+
+
 def test_generic_url_query_and_fragment_are_stripped_case_insensitively() -> None:
     raw = (
         "https://git.example.com/acme/skills.git"

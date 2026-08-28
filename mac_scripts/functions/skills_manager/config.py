@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr, ValidationError
@@ -29,6 +31,18 @@ class ConfigError(ValueError):
 ConfigFileError = ConfigError
 
 
+def _deep_freeze_extra(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: _deep_freeze_extra(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze_extra(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_deep_freeze_extra(item) for item in value)
+    return copy.deepcopy(value)
+
+
 class _OrderedFrozenModel(BaseModel):
     _key_order: tuple[str, ...] = PrivateAttr(default=())
 
@@ -36,6 +50,15 @@ class _OrderedFrozenModel(BaseModel):
         key_order = tuple(data)
         super().__init__(**data)
         object.__setattr__(self, "_key_order", key_order)
+        if self.__pydantic_extra__ is not None:
+            object.__setattr__(
+                self,
+                "__pydantic_extra__",
+                {
+                    key: _deep_freeze_extra(value)
+                    for key, value in self.__pydantic_extra__.items()
+                },
+            )
 
 
 class CatalogSource(_OrderedFrozenModel):
@@ -88,6 +111,17 @@ def _sequence(value: object) -> bool:
     return isinstance(value, (list, tuple))
 
 
+def _reject_non_finite_numbers(value: object) -> None:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise CatalogError("Catalog numbers must be finite")
+    if isinstance(value, Mapping):
+        for item in value.values():
+            _reject_non_finite_numbers(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _reject_non_finite_numbers(item)
+
+
 def _ordered_model_value(value: object) -> object:
     if isinstance(value, Catalog):
         known: dict[str, object] = {
@@ -138,6 +172,7 @@ def _as_catalog_mapping(value: Catalog | Mapping[str, object]) -> dict[str, obje
 
 def validate_catalog(value: Catalog | Mapping[str, object]) -> Catalog:
     raw = _as_catalog_mapping(value)
+    _reject_non_finite_numbers(raw)
     if type(raw.get("version")) is not int or raw.get("version") != 1:
         raise CatalogError("sources.json must have version 1")
     sources = raw.get("sources")
@@ -154,7 +189,7 @@ def validate_catalog(value: Catalog | Mapping[str, object]) -> Catalog:
         if not isinstance(source, str) or not _sequence(skills):
             raise CatalogError("Invalid catalog source entry")
         if source in source_ids:
-            raise CatalogError(f"Duplicate source: {source}")
+            raise CatalogError(f"Duplicate source: {redact_source(source)}")
         source_ids.add(source)
 
         seen: set[str] = set()
@@ -371,13 +406,26 @@ def _validate_profiles(value: object) -> dict[str, object]:
                         f"{raw_skill} is selected from a different source: {owner}"
                     )
                 skill_owners[raw_skill] = source
-    return copy.deepcopy(dict(value))
+    validated = copy.deepcopy(dict(value))
+    validated_profiles = validated["profiles"]
+    assert isinstance(validated_profiles, list)
+    validated_profiles.sort(key=lambda profile: profile["name"])
+    for profile in validated_profiles:
+        profile["sources"].sort(key=lambda entry: entry["source"])
+    return validated
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"Invalid JSON constant: {value}")
 
 
 def _read_json(file_path: Path) -> object:
     try:
-        return json.loads(file_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        return json.loads(
+            file_path.read_text(encoding="utf-8"),
+            parse_constant=_reject_json_constant,
+        )
+    except (OSError, UnicodeError, ValueError) as error:
         raise ConfigError(
             f"Could not read configuration file: {file_path}",
             file_path=file_path,
@@ -409,7 +457,16 @@ def _read_legacy_sources(file_path: Path) -> tuple[str, ...]:
 
 def _json_bytes(catalog: Catalog) -> bytes:
     value = _ordered_model_value(catalog)
-    return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    try:
+        serialized = json.dumps(
+            value,
+            indent=2,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as error:
+        raise CatalogError("Catalog contains a non-JSON value") from error
+    return (serialized + "\n").encode("utf-8")
 
 
 def _write_catalog_atomic(file_path: Path, catalog: Catalog, *, pid: int) -> None:
@@ -443,6 +500,11 @@ def _bootstrap_catalog(paths: ConfigPaths, *, pid: int) -> None:
             catalog = migrate_profiles_to_catalog(profiles)
         except CatalogError as error:
             raise ConfigError(str(error), file_path=paths.sources_file) from error
+        except Exception as error:
+            raise ConfigError(
+                f"Invalid profiles file: {paths.profiles_file}",
+                file_path=paths.profiles_file,
+            ) from error
     elif paths.legacy_file.exists():
         sources = _read_legacy_sources(paths.legacy_file)
         catalog = validate_catalog(

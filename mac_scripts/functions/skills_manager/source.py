@@ -34,10 +34,18 @@ _CREDENTIAL_ASSIGNMENT = re.compile(
 )
 _URL_CREDENTIALS = re.compile(r"://[^/\s]*@")
 _ASCII_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_WEB_URL_WITH_SLASHES = re.compile(r"^(https?):[\\/]+(.*)$", re.IGNORECASE)
 
 
 def _strip_query_and_fragment(value: str) -> str:
     return re.split(r"[?#]", value, maxsplit=1)[0]
+
+
+def _normalize_web_url_slashes(value: str) -> str:
+    match = _WEB_URL_WITH_SLASHES.fullmatch(value)
+    if match is None or "\\" not in value:
+        return value
+    return f"{match[1]}://{match[2].replace('\\', '/')}"
 
 
 def _has_opaque_credential_risk(value: str) -> bool:
@@ -90,6 +98,7 @@ def redact_source(value: str) -> str:
     source = str(value)
     if _ASCII_CONTROL.search(source):
         return "[unsafe source redacted]"
+    source = _normalize_web_url_slashes(source)
 
     provider_base = _strip_query_and_fragment(source)
     if _GENERIC_SCP_PREFIX.search(source):
@@ -134,6 +143,7 @@ def canonicalize_source(
     source = raw_source.strip()
     if not source:
         raise SourceError("Source must not be empty")
+    source = _normalize_web_url_slashes(source)
 
     source_path = Path(source)
     if source.startswith(("./", "../")) or source_path.is_absolute():
