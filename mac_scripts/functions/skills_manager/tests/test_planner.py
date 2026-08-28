@@ -172,6 +172,135 @@ def test_catalog_requirements_unions_deduplicates_and_reports_conflicts() -> Non
     )
 
 
+def test_js_equivalent_source_spellings_deduplicate_without_false_conflict() -> None:
+    paired_source = "\ud83d\ude00/repo"
+
+    merged = catalog_requirements(
+        _catalog(
+            (paired_source, ("review",)),
+            ("😀/repo", ("review",)),
+        )
+    )
+
+    assert merged.requirements == (
+        Requirement('["😀/repo","review"]', paired_source, "review"),
+    )
+    assert merged.desired_conflicts == ()
+
+
+def test_js_equivalent_skill_spellings_share_one_first_seen_conflict() -> None:
+    paired_skill = "\ud83d\ude00"
+
+    merged = catalog_requirements(
+        _catalog(
+            ("a/repo", ("😀",)),
+            ("b/repo", (paired_skill,)),
+        )
+    )
+
+    assert merged.requirements == (
+        Requirement('["a/repo","😀"]', "a/repo", "😀"),
+        Requirement('["b/repo","😀"]', "b/repo", paired_skill),
+    )
+    assert merged.desired_conflicts == (
+        DesiredConflict("😀", ("a/repo", "b/repo")),
+    )
+
+
+def test_catalog_utf16_identity_matches_live_node_planner() -> None:
+    paired = "\ud83d\ude00"
+    lone = "\ud800"
+    same_source = catalog_requirements(
+        _catalog(
+            (f"{paired}/repo", ("review",)),
+            ("😀/repo", ("review",)),
+        )
+    )
+    same_skill = catalog_requirements(
+        _catalog(
+            ("a/repo", ("😀",)),
+            ("b/repo", (paired,)),
+        )
+    )
+    lone_source = catalog_requirements(
+        _catalog(
+            ("😀/repo", ("review",)),
+            (f"{lone}/repo", ("review",)),
+        )
+    )
+    python_summary = {
+        "sameSource": {
+            "keys": [item.key for item in same_source.requirements],
+            "conflicts": len(same_source.desired_conflicts),
+        },
+        "sameSkill": {
+            "keys": [item.key for item in same_skill.requirements],
+            "conflicts": [
+                {
+                    "skill": requirement_key("", item.skill),
+                    "sources": list(item.sources),
+                }
+                for item in same_skill.desired_conflicts
+            ],
+        },
+        "loneSource": {
+            "keys": [item.key for item in lone_source.requirements],
+            "conflicts": len(lone_source.desired_conflicts),
+        },
+    }
+    node_summary = _node_json(
+        """
+import("./mac_scripts/functions/skills-manager/planner.mjs").then((planner) => {
+  const paired = "\\ud83d\\ude00";
+  const lone = "\\ud800";
+  const sameSource = planner.catalogRequirements({
+    version: 1,
+    sources: [
+      { source: `${paired}/repo`, skills: ["review"] },
+      { source: "😀/repo", skills: ["review"] },
+    ],
+  });
+  const sameSkill = planner.catalogRequirements({
+    version: 1,
+    sources: [
+      { source: "a/repo", skills: ["😀"] },
+      { source: "b/repo", skills: [paired] },
+    ],
+  });
+  const loneSource = planner.catalogRequirements({
+    version: 1,
+    sources: [
+      { source: "😀/repo", skills: ["review"] },
+      { source: `${lone}/repo`, skills: ["review"] },
+    ],
+  });
+  process.stdout.write(JSON.stringify({
+    sameSource: {
+      keys: sameSource.requirements.map((item) => item.key),
+      conflicts: sameSource.desiredConflicts.length,
+    },
+    sameSkill: {
+      keys: sameSkill.requirements.map((item) => item.key),
+      conflicts: sameSkill.desiredConflicts.map((item) => ({
+        skill: planner.requirementKey("", item.skill),
+        sources: item.sources,
+      })),
+    },
+    loneSource: {
+      keys: loneSource.requirements.map((item) => item.key),
+      conflicts: loneSource.desiredConflicts.length,
+    },
+  }));
+}).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+"""
+    )
+
+    assert python_summary == node_summary
+
+
 def test_catalog_requirements_uses_stable_nfc_code_point_skill_order() -> None:
     merged = catalog_requirements(
         _catalog(
@@ -529,3 +658,18 @@ def test_uninstall_combines_conflicts_without_reordering_or_duplicates() -> None
     )
 
     assert plan.desired_conflicts == (first, second)
+
+
+def test_uninstall_conflict_identity_uses_js_units_without_merging_lone() -> None:
+    first = DesiredConflict("\ud83d\ude00", ("a/repo", "b/repo"))
+    equivalent = DesiredConflict("😀", ("a/repo", "b/repo"))
+    unrelated_lone = DesiredConflict("\ud800", ("a/repo", "b/repo"))
+
+    plan = create_uninstall_plan(
+        selected=MergedRequirements((), (first,)),
+        remaining=MergedRequirements((), (equivalent, unrelated_lone)),
+        installed_state={},
+        linked_selected=(),
+    )
+
+    assert plan.desired_conflicts == (first, unrelated_lone)

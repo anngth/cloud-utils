@@ -57,12 +57,15 @@ class UninstallPlan:
     desired_conflicts: tuple[DesiredConflict, ...]
 
 
-def _collation_key(value: str) -> str:
-    return unicodedata.normalize("NFC", value)
-
-
-def _utf16_sort_key(value: str) -> bytes:
+def _utf16_key(value: str) -> bytes:
     return value.encode("utf-16-be", errors="surrogatepass")
+
+
+def _collation_key(value: str) -> str:
+    identity_spelling = _utf16_key(value).decode(
+        "utf-16-be", errors="surrogatepass"
+    )
+    return unicodedata.normalize("NFC", identity_spelling)
 
 
 def _json_string(value: str) -> str:
@@ -116,24 +119,27 @@ def requirement_key(source: str, skill: str) -> str:
 
 def catalog_requirements(document: Catalog) -> MergedRequirements:
     by_key: dict[str, Requirement] = {}
-    by_skill: dict[str, dict[str, None]] = {}
+    skill_spellings: dict[bytes, str] = {}
+    sources_by_skill: dict[bytes, dict[bytes, str]] = {}
 
     for entry in document.sources:
         for skill in entry.skills:
             key = requirement_key(entry.source, skill)
             if key not in by_key:
                 by_key[key] = Requirement(key, entry.source, skill)
-            sources = by_skill.setdefault(skill, {})
-            sources.setdefault(entry.source, None)
+            skill_identity = _utf16_key(skill)
+            skill_spellings.setdefault(skill_identity, skill)
+            sources = sources_by_skill.setdefault(skill_identity, {})
+            sources.setdefault(_utf16_key(entry.source), entry.source)
 
     desired_conflicts = tuple(
         sorted(
             (
                 DesiredConflict(
-                    skill,
-                    tuple(sorted(sources, key=_utf16_sort_key)),
+                    skill_spellings[skill_identity],
+                    tuple(sorted(sources.values(), key=_utf16_key)),
                 )
-                for skill, sources in by_skill.items()
+                for skill_identity, sources in sources_by_skill.items()
                 if len(sources) > 1
             ),
             key=lambda item: _collation_key(item.skill),
@@ -217,10 +223,17 @@ def _combine_desired_conflicts(
     remaining: MergedRequirements,
 ) -> tuple[DesiredConflict, ...]:
     combined: list[DesiredConflict] = []
-    seen: set[DesiredConflict] = set()
+    seen: set[
+        tuple[bytes, tuple[bytes, ...], tuple[bytes, ...]]
+    ] = set()
     for conflict in selected.desired_conflicts + remaining.desired_conflicts:
-        if conflict not in seen:
-            seen.add(conflict)
+        identity = (
+            _utf16_key(conflict.skill),
+            tuple(_utf16_key(source) for source in conflict.sources),
+            tuple(_utf16_key(profile) for profile in conflict.profiles),
+        )
+        if identity not in seen:
+            seen.add(identity)
             combined.append(conflict)
     return tuple(combined)
 
