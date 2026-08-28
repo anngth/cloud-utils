@@ -98,7 +98,6 @@ def redact_source(value: str) -> str:
     source = str(value)
     if _ASCII_CONTROL.search(source):
         return "[unsafe source redacted]"
-    source = _normalize_web_url(source)
 
     provider_base = _strip_query_and_fragment(source)
     if _GENERIC_SCP_PREFIX.search(source):
@@ -114,6 +113,7 @@ def redact_source(value: str) -> str:
             else "[unsafe source redacted]"
         )
 
+    source = _normalize_web_url(source)
     try:
         parts = urlsplit(source)
         if not parts.scheme:
@@ -143,7 +143,6 @@ def canonicalize_source(
     source = raw_source.strip()
     if not source:
         raise SourceError("Source must not be empty")
-    source = _normalize_web_url(source)
 
     source_path = Path(source)
     if source.startswith(("./", "../")) or source_path.is_absolute():
@@ -177,6 +176,7 @@ def canonicalize_source(
             raise SourceError("Invalid GitHub shorthand source")
         return source.removesuffix(".git")
 
+    source = _normalize_web_url(source)
     try:
         parts = urlsplit(source)
         if not parts.scheme:

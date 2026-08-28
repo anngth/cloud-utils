@@ -32,6 +32,30 @@ console.log(JSON.stringify([
     return canonical, redacted
 
 
+def _node_source_outcome(value: str) -> tuple[str | None, str | None, str]:
+    script = """
+import { canonicalizeSource, redactSource } from
+  './mac_scripts/functions/skills-manager/source-id.mjs';
+let canonical = null;
+let error = null;
+try {
+  canonical = canonicalizeSource(process.argv[1]);
+} catch (caught) {
+  error = caught.message;
+}
+console.log(JSON.stringify([canonical, error, redactSource(process.argv[1])]));
+"""
+    completed = subprocess.run(
+        ["node", "--input-type=module", "-e", script, value],
+        cwd=_REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    canonical, error, redacted = json.loads(completed.stdout)
+    return canonical, error, redacted
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -156,6 +180,67 @@ def test_http_slash_variants_match_live_node_without_credentials(
     assert (canonicalize_source(raw), redact_source(raw)) == expected
     assert "user" not in canonicalize_source(raw)
     assert "secret" not in redact_source(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        r"https:user\name:secret@example.com/a.git",
+        r"https:user\name:password@example.com/a.git?token=query-secret",
+        r"http:user\name:password@example.com/a.git#fragment-secret",
+    ],
+)
+def test_raw_provider_candidate_fails_closed_before_url_normalization(
+    raw: str,
+) -> None:
+    canonical, node_error, node_redacted = _node_source_outcome(raw)
+
+    assert canonical is None
+    assert node_error in {
+        "Invalid GitHub shorthand source",
+        "Unsafe source credentials",
+    }
+    assert node_redacted == "[unsafe source redacted]"
+    with pytest.raises(SourceError) as caught:
+        canonicalize_source(raw)
+    assert str(caught.value) == node_error
+    assert redact_source(raw) == node_redacted
+    exposed = f"{caught.value} {redact_source(raw)}".lower()
+    assert not any(
+        credential in exposed
+        for credential in ("user", "name", "password", "secret", "token")
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        r"https:\\user:password@example.com\a\repo.git?token=query-secret",
+        r"https:/user:password@example.com/a\repo.git?token=query-secret",
+        r"https:////user:password@example.com/a\repo.git#fragment-secret",
+    ],
+)
+def test_url_branch_slashes_backslash_path_and_suffix_match_live_node(
+    raw: str,
+) -> None:
+    canonical, node_error, node_redacted = _node_source_outcome(raw)
+
+    assert node_error is None
+    assert canonical == "https://example.com/a/repo"
+    assert node_redacted == "https://example.com/a/repo.git"
+    assert canonicalize_source(raw) == canonical
+    assert redact_source(raw) == node_redacted
+    exposed = f"{canonicalize_source(raw)} {redact_source(raw)}".lower()
+    assert not any(
+        credential in exposed
+        for credential in (
+            "user",
+            "password",
+            "query-secret",
+            "fragment-secret",
+            "token",
+        )
+    )
 
 
 def test_generic_url_query_and_fragment_are_stripped_case_insensitively() -> None:

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import subprocess
+import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -48,6 +51,8 @@ _UNICODE_COLLATION_CORPUS = (
     "2",
     "_x",
     "-x",
+    ",",
+    ".",
     ".x",
     "@x",
     "0x",
@@ -76,6 +81,65 @@ console.log(JSON.stringify(values.sort((a, b) => a.localeCompare(b))));
         text=True,
     )
     return json.loads(completed.stdout)
+
+
+def _fresh_profile_orders(
+    document: dict[str, object],
+    *,
+    locale_name: str | None,
+    runtime: str,
+) -> tuple[list[str], list[str]]:
+    environment = os.environ.copy()
+    if locale_name is not None:
+        environment.update(
+            LANG=locale_name,
+            LC_ALL=locale_name,
+            LC_COLLATE=locale_name,
+        )
+    argument = json.dumps(document, ensure_ascii=False)
+    if runtime == "python":
+        script = """
+import json
+import sys
+from skills_manager.config import _validate_profiles
+
+validated = _validate_profiles(json.loads(sys.argv[1]))
+print(json.dumps([
+    [profile["name"] for profile in validated["profiles"]],
+    [entry["source"] for entry in validated["profiles"][0]["sources"]],
+], ensure_ascii=False))
+"""
+        command = [sys.executable, "-c", script, argument]
+        cwd = _REPO_ROOT / "mac_scripts" / "functions"
+    else:
+        script = """
+import { validateProfilesDocument } from './profiles.mjs';
+
+const validated = validateProfilesDocument(JSON.parse(process.argv[1]));
+console.log(JSON.stringify([
+  validated.profiles.map((profile) => profile.name),
+  validated.profiles[0].sources.map((entry) => entry.source),
+]));
+"""
+        command = ["node", "--input-type=module", "-e", script, argument]
+        cwd = _REPO_ROOT / "mac_scripts" / "functions" / "skills-manager"
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        if locale_name is not None and "unsupported locale setting" in (
+            completed.stderr
+        ):
+            pytest.skip(f"{locale_name} is unavailable: {completed.stderr.strip()}")
+        pytest.fail(
+            f"fresh {runtime} collation subprocess failed: {completed.stderr}"
+        )
+    profile_names, sources = json.loads(completed.stdout)
+    return profile_names, sources
 
 
 @pytest.mark.parametrize("version", [None, 0, 2, "1", True, 1.0])
@@ -191,6 +255,35 @@ def test_duplicate_source_slash_variants_never_expose_credentials(
     assert "Duplicate source: https://example.com/acme/repo.git" == message
     assert "user" not in message
     assert "secret" not in message
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        r"https:user\name:secret@example.com/a.git",
+        r"https:user\name:password@example.com/a.git?token=query-secret",
+    ],
+)
+def test_duplicate_raw_provider_candidate_never_exposes_credentials(
+    unsafe: str,
+) -> None:
+    raw = {
+        "version": 1,
+        "sources": [
+            {"source": unsafe, "skills": []},
+            {"source": unsafe, "skills": []},
+        ],
+    }
+
+    with pytest.raises(CatalogError) as caught:
+        validate_catalog(raw)
+
+    message = str(caught.value).lower()
+    assert message == "duplicate source: [unsafe source redacted]"
+    assert not any(
+        credential in message
+        for credential in ("user", "name", "password", "secret", "token")
+    )
 
 
 @pytest.mark.parametrize("skill", [None, 3, "", "   "])
@@ -318,6 +411,52 @@ def test_model_extra_and_extra_attributes_cannot_be_mutated_or_replaced() -> Non
         catalog.injected = []
     with pytest.raises(ValidationError):
         catalog.sources[0].extra = []
+
+
+def test_model_extra_cannot_be_mutated_through_dict_builtins_or_copy_aliases(
+) -> None:
+    catalog = validate_catalog(
+        {
+            "meta": {"nested": [{"value": [1]}]},
+            "version": 1,
+            "sources": [
+                {"source": "a/repo", "skills": [], "extra": {"items": [2]}}
+            ],
+        }
+    )
+
+    for extras in (catalog.model_extra, catalog.sources[0].model_extra):
+        assert isinstance(extras, Mapping)
+        assert not isinstance(extras, dict)
+        with pytest.raises(TypeError):
+            dict.__setitem__(extras, "injected", [])
+        with pytest.raises(TypeError):
+            dict.update(extras, {"injected": []})
+        with pytest.raises(TypeError):
+            dict.__init__(extras, {"injected": []})
+
+    copied = catalog.model_copy(deep=True)
+    assert copied.model_extra is not catalog.model_extra
+    assert copied.sources[0].model_extra is not catalog.sources[0].model_extra
+    assert copied.meta is not catalog.meta
+    assert copied.meta["nested"][0] is not catalog.meta["nested"][0]
+    assert copied.meta["nested"][0]["value"] == (1,)
+    assert copied.sources[0].extra["items"] == (2,)
+    with pytest.raises(TypeError):
+        copied.meta["nested"][0]["value"] += (3,)
+    with pytest.raises(TypeError):
+        copied.sources[0].extra["items"] += (3,)
+
+    expected = {
+        "version": 1,
+        "sources": [
+            {"source": "a/repo", "skills": [], "extra": {"items": [2]}}
+        ],
+        "meta": {"nested": [{"value": [1]}]},
+    }
+    assert catalog.model_dump(mode="json") == expected
+    assert json.loads(catalog.model_dump_json()) == expected
+    assert copied.model_dump(mode="json") == expected
 
 
 def test_resolve_source_token_uses_one_based_index_or_canonical_identity() -> None:
@@ -606,6 +745,40 @@ def test_profile_source_sort_and_one_based_index_match_live_node_unicode(
     catalog = read_config(paths)
     assert [entry.source for entry in catalog.sources] == expected_sources
     assert resolve_source_token(catalog, "2")[1].source == expected_sources[1]
+
+
+@pytest.mark.parametrize(
+    "locale_name",
+    [None, "en_US.UTF-8", "sv_SE.UTF-8"],
+    ids=["process-default", "en-US", "sv-SE"],
+)
+def test_profile_and_source_sort_match_fresh_node_in_host_locale(
+    locale_name: str | None,
+) -> None:
+    document = {
+        "version": 1,
+        "profiles": [
+            {
+                "name": name,
+                "sources": [
+                    {"source": source, "skills": []}
+                    for source in reversed(_UNICODE_COLLATION_CORPUS)
+                ],
+            }
+            for name in reversed(_UNICODE_COLLATION_CORPUS)
+        ],
+    }
+
+    python_orders = _fresh_profile_orders(
+        document, locale_name=locale_name, runtime="python"
+    )
+    node_orders = _fresh_profile_orders(
+        document, locale_name=locale_name, runtime="node"
+    )
+
+    assert python_orders == node_orders
+    comma_index = python_orders[0].index(",")
+    assert python_orders[0][comma_index + 1] == "."
 
 
 @pytest.mark.parametrize(

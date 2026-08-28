@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import locale
 import math
 import os
 import re
@@ -11,7 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, PrivateAttr, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    PrivateAttr,
+    ValidationError,
+    model_serializer,
+)
 
 from .source import canonicalize_source, redact_source
 
@@ -31,78 +38,83 @@ class ConfigError(ValueError):
 ConfigFileError = ConfigError
 
 
-_COLLATION_PUNCTUATION = {" ": 0, "_": 1, "-": 2, ".": 3, "@": 4, "/": 5}
-_COLLATION_SPECIALS = {
-    "ø": ("o", (0x400,)),
-    "Ø": ("o", (0x400,)),
-    "ß": ("ss", (0x500,)),
-}
-
-
-def _collation_primary_weight(character: str) -> int:
-    if character in _COLLATION_PUNCTUATION:
-        return _COLLATION_PUNCTUATION[character]
-    if character.isdigit():
-        return 10 + ord(character) - ord("0")
-    return 100 + ord(character)
-
-
-def _javascript_locale_key(
-    value: str,
-) -> tuple[tuple[int, ...], tuple[tuple[int, ...], ...], tuple[int, ...]]:
-    primary: list[int] = []
-    secondary: list[tuple[int, ...]] = []
-    tertiary: list[int] = []
-    for character in value:
-        special = _COLLATION_SPECIALS.get(character)
-        if special is None:
-            decomposed = unicodedata.normalize("NFD", character)
-            bases = "".join(
-                item for item in decomposed if not unicodedata.combining(item)
-            ).casefold()
-            accents = tuple(
-                ord(item) for item in decomposed if unicodedata.combining(item)
-            )
-        else:
-            bases, accents = special
-        if not bases and accents and secondary:
-            secondary[-1] += accents
+def _initialize_collation() -> str:
+    configured = locale.setlocale(locale.LC_COLLATE, "")
+    if configured.upper() not in {"C", "POSIX", "C.UTF-8", "C.UTF8"}:
+        return configured
+    for fallback in ("en_US.UTF-8", "en_US.UTF8", "en_US"):
+        try:
+            return locale.setlocale(locale.LC_COLLATE, fallback)
+        except locale.Error:
             continue
-        case_weight = 1 if character.isupper() else 0
-        for index, base in enumerate(bases):
-            primary.append(_collation_primary_weight(base))
-            secondary.append(accents if index == 0 else ())
-            tertiary.append(case_weight)
-    return tuple(primary), tuple(secondary), tuple(tertiary)
+    return configured
 
 
-class _FrozenDict(dict[Any, Any]):
-    @staticmethod
-    def _immutable(*_args: object, **_kwargs: object) -> None:
+_COLLATION_LOCALE = _initialize_collation()
+
+
+def _javascript_locale_key(value: str) -> str:
+    return locale.strxfrm(unicodedata.normalize("NFC", value))
+
+
+class _FrozenMapping(Mapping[Any, Any]):
+    __slots__ = ("_items",)
+
+    def __init__(self, items: Sequence[tuple[Any, Any]]) -> None:
+        if hasattr(self, "_items"):
+            raise TypeError("Frozen JSON mapping cannot be reinitialized")
+        object.__setattr__(self, "_items", tuple(items))
+
+    def __setattr__(self, _name: str, _value: object) -> None:
         raise TypeError("Frozen JSON mapping cannot be mutated")
 
-    __setitem__ = _immutable
-    __delitem__ = _immutable
-    clear = _immutable
-    pop = _immutable
-    popitem = _immutable
-    setdefault = _immutable
-    update = _immutable
-    __ior__ = _immutable
+    def __getitem__(self, key: Any) -> Any:
+        for item_key, value in self._items:
+            if item_key == key:
+                return value
+        raise KeyError(key)
 
-    def __deepcopy__(self, _memo: dict[int, object]) -> _FrozenDict:
-        return self
+    def __iter__(self):
+        return (key for key, _value in self._items)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def update(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("Frozen JSON mapping cannot be mutated")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> _FrozenMapping:
+        return _FrozenMapping(
+            tuple(
+                (copy.deepcopy(key, memo), copy.deepcopy(value, memo))
+                for key, value in self._items
+            )
+        )
 
 
 def _deep_freeze_extra(value: object) -> object:
     if isinstance(value, Mapping):
-        return _FrozenDict(
-            (key, _deep_freeze_extra(item)) for key, item in value.items()
+        return _FrozenMapping(
+            tuple(
+                (key, _deep_freeze_extra(item)) for key, item in value.items()
+            )
         )
     if isinstance(value, (list, tuple)):
         return tuple(_deep_freeze_extra(item) for item in value)
     if isinstance(value, (set, frozenset)):
         return frozenset(_deep_freeze_extra(item) for item in value)
+    return copy.deepcopy(value)
+
+
+def _pydantic_extra_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            key: _pydantic_extra_value(item) for key, item in value.items()
+        }
+    if isinstance(value, tuple):
+        return tuple(_pydantic_extra_value(item) for item in value)
+    if isinstance(value, frozenset):
+        return frozenset(_pydantic_extra_value(item) for item in value)
     return copy.deepcopy(value)
 
 
@@ -117,11 +129,26 @@ class _OrderedFrozenModel(BaseModel):
             object.__setattr__(
                 self,
                 "__pydantic_extra__",
-                _FrozenDict(
-                    (key, _deep_freeze_extra(value))
-                    for key, value in self.__pydantic_extra__.items()
+                _FrozenMapping(
+                    tuple(
+                        (key, _deep_freeze_extra(value))
+                        for key, value in self.__pydantic_extra__.items()
+                    )
                 ),
             )
+
+    @model_serializer(mode="plain")
+    def _serialize_model(self) -> dict[str, object]:
+        serialized = {
+            field_name: getattr(self, field_name)
+            for field_name in type(self).model_fields
+        }
+        if self.model_extra is not None:
+            serialized.update(
+                (key, _pydantic_extra_value(value))
+                for key, value in self.model_extra.items()
+            )
+        return serialized
 
 
 class CatalogSource(_OrderedFrozenModel):
