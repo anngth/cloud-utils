@@ -109,7 +109,7 @@ def discover_available_skills(
             cwd=cwd,
             capture=True,
         )
-    except OSError as error:
+    except (OSError, ValueError) as error:
         raise UpstreamError("Could not discover available skills") from error
     if result.returncode != 0:
         raise UpstreamError("Could not discover available skills")
@@ -145,7 +145,7 @@ def list_installed_skills(
             cwd=cwd,
             capture=True,
         )
-    except OSError as error:
+    except (OSError, ValueError) as error:
         raise UpstreamError("Could not list installed skills") from error
     if result.returncode != 0:
         raise UpstreamError("Could not list installed skills")
@@ -178,6 +178,6 @@ def run_skills_mutation(
             env=env,
             capture=False,
         )
-    except OSError:
+    except (OSError, ValueError):
         return 1
     return result.returncode if result.returncode >= 0 else 1

@@ -185,6 +185,16 @@ def test_discovery_wraps_process_start_failure_as_stable_upstream_error(
     assert isinstance(caught.value.__cause__, OSError)
 
 
+def test_discovery_wraps_real_embedded_nul_argv_as_stable_upstream_error(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        UpstreamError, match="^Could not discover available skills$"
+    ) as caught:
+        discover_available_skills("\0", cwd=tmp_path)
+    assert isinstance(caught.value.__cause__, ValueError)
+
+
 def test_list_installed_uses_captured_npx_and_returns_frozen_records(
     tmp_path: Path,
 ) -> None:
@@ -265,6 +275,16 @@ def test_list_installed_wraps_process_start_failure_as_stable_upstream_error(
     assert isinstance(caught.value.__cause__, OSError)
 
 
+def test_list_installed_wraps_real_embedded_nul_cwd_as_stable_upstream_error(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        UpstreamError, match="^Could not list installed skills$"
+    ) as caught:
+        list_installed_skills(cwd=f"{tmp_path}\0")
+    assert isinstance(caught.value.__cause__, ValueError)
+
+
 def test_mutation_inherits_stdio_and_returns_signal_failure_as_one(
     tmp_path: Path,
 ) -> None:
@@ -306,6 +326,16 @@ def test_mutation_maps_process_start_failure_to_one(tmp_path: Path) -> None:
     assert (
         run_skills_mutation(
             ["skills", "remove", "demo"], cwd=tmp_path, runner=runner
+        )
+        == 1
+    )
+
+
+def test_mutation_maps_real_embedded_nul_argv_to_one(tmp_path: Path) -> None:
+    assert (
+        run_skills_mutation(
+            ["skills", "remove", "\0"],
+            cwd=tmp_path,
         )
         == 1
     )
