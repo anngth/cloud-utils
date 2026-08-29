@@ -60,34 +60,33 @@ coverage_file="$(mktemp "${TMPDIR:-/tmp}/cloud-utils-verify.XXXXXX")"
 coverage_json_file="$(mktemp "${TMPDIR:-/tmp}/cloud-utils-verify.XXXXXX")"
 
 print -r -- "==> Running Python tests with coverage"
-run_pytest() {
+run_tracked_command() {
   local child_status=0
 
   child_may_be_starting=1
   unsetopt BG_NICE
   (
     trap - HUP INT TERM
-    export COVERAGE_FILE="$coverage_file"
-    exec "$PYTHON_BIN" -m pytest \
-      --cov=shared --cov=twofa --cov=git_tools --cov=skills_manager
+    exec "$@"
   ) &
   active_child_pid=$!
   child_may_be_starting=0
   wait "$active_child_pid" || child_status=$?
   active_child_pid=0
-  return "$child_status"
+  if (( child_status != 0 )); then
+    exit "$child_status"
+  fi
 }
-if run_pytest; then
-  :
-else
-  pytest_status=$?
-  exit "$pytest_status"
-fi
-COVERAGE_FILE="$coverage_file" "$PYTHON_BIN" -m coverage report \
+COVERAGE_FILE="$coverage_file" run_tracked_command "$PYTHON_BIN" -m pytest \
+  --cov=shared --cov=twofa --cov=git_tools --cov=skills_manager
+COVERAGE_FILE="$coverage_file" run_tracked_command \
+  "$PYTHON_BIN" -m coverage report \
   '--include=*/skills_manager/*.py'
-COVERAGE_FILE="$coverage_file" "$PYTHON_BIN" -m coverage json \
+COVERAGE_FILE="$coverage_file" run_tracked_command \
+  "$PYTHON_BIN" -m coverage json \
   '--include=*/skills_manager/*.py' -q -o "$coverage_json_file"
-"$PYTHON_BIN" - "$coverage_json_file" "$SKM_COVERAGE_MIN" <<'PY'
+run_tracked_command \
+  "$PYTHON_BIN" - "$coverage_json_file" "$SKM_COVERAGE_MIN" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -116,6 +115,11 @@ if covered_lines * 100 < num_statements * minimum:
     )
     raise SystemExit(1)
 PY
+
+cleanup_coverage
+coverage_file=""
+coverage_json_file=""
+trap - EXIT HUP INT TERM
 
 print -r -- "==> Checking production Python source budget"
 python_lines="$(

@@ -211,6 +211,78 @@ def test_verify_preserves_pytest_failure_status_and_output(tmp_path: Path) -> No
     assert not tuple(tmp_path.glob("cloud-utils-verify.*"))
 
 
+def test_verify_preserves_coverage_report_failure_status_and_output(
+    tmp_path: Path,
+) -> None:
+    root, log = _verification_repo(tmp_path)
+    _write_executable(
+        root / ".venv" / "bin" / "python",
+        'print -r -- "python $* coverage=${COVERAGE_FILE:-}" '
+        '>> "$VERIFY_LOG"\n'
+        'if [[ "$1" == "-m" && "$2" == "coverage" '
+        '&& "$3" == "report" ]]; then\n'
+        '  print -r -- "coverage report stdout sentinel"\n'
+        '  print -u2 -r -- "coverage report stderr sentinel"\n'
+        "  exit 8\n"
+        "fi\n",
+    )
+
+    result = _run_verify(root, log, tmp_path)
+
+    assert result.returncode == 8
+    assert "coverage report stdout sentinel" in result.stdout
+    assert "coverage report stderr sentinel" in result.stderr
+    commands = log.read_text(encoding="utf-8").splitlines()
+    assert len(commands) == 4
+    assert commands[-1].startswith("python -m coverage report")
+    assert not tuple(tmp_path.glob("cloud-utils-verify.*"))
+
+
+def test_verify_preserves_checker_argv_environment_and_stdin(tmp_path: Path) -> None:
+    root, log = _verification_repo(tmp_path)
+    _write_executable(
+        root / ".venv" / "bin" / "python",
+        'print -r -- "python $* coverage=${COVERAGE_FILE:-}" '
+        '>> "$VERIFY_LOG"\n'
+        'if [[ "$1" == "-m" && "$2" == "coverage" '
+        '&& "$3" == "json" ]]; then\n'
+        "  print -r -- '{\"totals\":{\"covered_lines\":19,"
+        "\"num_statements\":20}}' > \"${argv[-1]}\"\n"
+        'elif [[ "$1" == "-" ]]; then\n'
+        '  IFS= read -r checker_first_line\n'
+        '  print -r -- "checker stdin=$checker_first_line argv=$* '
+        'coverage=${COVERAGE_FILE:-} '
+        'sentinel=${VERIFY_CHECKER_SENTINEL:-}" >> "$VERIFY_LOG"\n'
+        '  [[ "$checker_first_line" == "import json" ]] || exit 11\n'
+        "fi\n",
+    )
+
+    env = _verify_env(root, log, tmp_path)
+    env["COVERAGE_FILE"] = "ambient-coverage"
+    env["VERIFY_CHECKER_SENTINEL"] = "checker-sentinel"
+    result = subprocess.run(
+        [root / "scripts" / "verify"],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    commands = log.read_text(encoding="utf-8").splitlines()
+    checker_command = commands[5]
+    checker_stdin = commands[6]
+    coverage_json_file = commands[4].split(" -o ", 1)[1].split()[0]
+    assert checker_command == (
+        f"python - {coverage_json_file} 95 coverage=ambient-coverage"
+    )
+    assert checker_stdin == (
+        f"checker stdin=import json argv=- {coverage_json_file} 95 "
+        "coverage=ambient-coverage sentinel=checker-sentinel"
+    )
+
+
 def test_verify_pytest_child_does_not_ignore_sigint(tmp_path: Path) -> None:
     root, log = _verification_repo(tmp_path)
     disposition_check = tmp_path / "check_signal_disposition.py"
@@ -248,10 +320,12 @@ def test_verify_pytest_child_does_not_ignore_sigint(tmp_path: Path) -> None:
         (signal.SIGTERM, 143),
     ],
 )
-def test_verify_forwards_signal_and_cleans_coverage_files(
+@pytest.mark.parametrize("blocking_stage", ["pytest", "coverage-report"])
+def test_verify_forwards_signal_from_every_blocking_stage(
     tmp_path: Path,
     signal_number: signal.Signals,
     returncode: int,
+    blocking_stage: str,
 ) -> None:
     root, log = _verification_repo(tmp_path)
     blocker = tmp_path / "blocking_child.py"
@@ -279,11 +353,18 @@ def test_verify_forwards_signal_and_cleans_coverage_files(
         "    signal.pause()\n",
         encoding="utf-8",
     )
+    if blocking_stage == "pytest":
+        blocking_condition = '[[ "$1" == "-m" && "$2" == "pytest" ]]'
+    else:
+        blocking_condition = (
+            '[[ "$1" == "-m" && "$2" == "coverage" '
+            '&& "$3" == "report" ]]'
+        )
     _write_executable(
         root / ".venv" / "bin" / "python",
         'print -r -- "python $* coverage=${COVERAGE_FILE:-}" '
         '>> "$VERIFY_LOG"\n'
-        'if [[ "$1" == "-m" && "$2" == "pytest" ]]; then\n'
+        f"if {blocking_condition}; then\n"
         f'  exec {shlex.quote(sys.executable)} {shlex.quote(str(blocker))}\n'
         "fi\n",
     )
@@ -309,7 +390,7 @@ def test_verify_forwards_signal_and_cleans_coverage_files(
         deadline = time.monotonic() + 5
         while not child_started.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert child_started.exists(), "verify did not reach pytest"
+        assert child_started.exists(), f"verify did not reach {blocking_stage}"
         child_pid = int(child_pid_file.read_text(encoding="utf-8"))
         created = tuple(tmp_path.glob("cloud-utils-verify.*"))
         os.kill(process.pid, signal_number)
