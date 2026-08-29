@@ -175,7 +175,7 @@ def test_no_arguments_without_isatty_render_noninteractive_error() -> None:
     )
 
 
-def test_no_arguments_with_ttys_bootstrap_without_operation_stubs(
+def test_no_arguments_with_ttys_dispatch_interactive_selector(
     tmp_path: Path,
 ) -> None:
     calls: list[object] = []
@@ -186,6 +186,14 @@ def test_no_arguments_with_ttys_bootstrap_without_operation_stubs(
     services.execute_uninstall_plan = lambda *_args, **_kwargs: pytest.fail(
         "uninstall stub reached"
     )
+    def cancel(items, **options):
+        assert options["reducer"].__name__ == "reduce_catalog_selector"
+        return SelectorResult(
+            "cancel",
+            create_selector_state(items, initial=options["initial"]),
+            (),
+        )
+    services.selector_runner = cancel
 
     assert run_cli(
         (),
@@ -195,10 +203,10 @@ def test_no_arguments_with_ttys_bootstrap_without_operation_stubs(
         stdout=TtyStringIO(),
         stderr=io.StringIO(),
         services=services,
-    ) == 0
+    ) == 1
     assert [call[0] for call in calls] == [
-        "initialize_config",
-        "read_config",
+        "initialize_config", "read_config", "resolve_project_root",
+        "load_installed_state",
     ]
 
 

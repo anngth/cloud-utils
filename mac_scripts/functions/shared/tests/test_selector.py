@@ -120,6 +120,29 @@ def test_run_selector_applies_prompt_toolkit_bindings_and_renders_transitions() 
     assert rendered[-1].selected == frozenset({0, 1})
 
 
+def test_run_selector_accepts_a_domain_reducer_without_changing_default_behavior(
+) -> None:
+    seen = []
+
+    def reducer(state, key):
+        seen.append(key)
+        return reduce_selector(state, key, multiple=True)
+
+    with create_pipe_input() as pipe_input:
+        pipe_input.send_text(" \r")
+        result = run_selector(
+            ITEMS,
+            multiple=True,
+            input=pipe_input,
+            output=DummyOutput(),
+            render=lambda _: None,
+            reducer=reducer,
+        )
+
+    assert seen == ["toggle", "submit"]
+    assert result.selected == (ITEMS[0].value,)
+
+
 def test_run_selector_supports_vim_select_all_clear_and_cancel_bindings() -> None:
     rendered = []
     with create_pipe_input() as pipe_input:

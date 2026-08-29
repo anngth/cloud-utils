@@ -12,6 +12,7 @@ from skills_manager.cli import CommandContext, Services
 from skills_manager.config import Catalog, CatalogSource
 import skills_manager.lifecycle as lifecycle
 from skills_manager.lifecycle import run_status
+from skills_manager.planner import requirement_key
 from skills_manager.state import InstalledSkill, InstalledStateError
 from skills_manager.upstream import ExecutionResult, MutationRecord
 import skills_manager.upstream as upstream
@@ -588,3 +589,211 @@ def test_remove_failed_execution_uses_uninstall_summary_and_exit_one(
     output = context.stdout.getvalue()
     assert "Uninstall incomplete" in output
     assert "npx skills remove demo" in output
+
+
+def configure_interactive(
+    context: CommandContext,
+    *,
+    selected: tuple[str, ...] = (),
+    installed_state: dict[str, InstalledSkill] | None = None,
+    confirmed: bool = True,
+    available: bool = True,
+    install_result: ExecutionResult | None = None,
+    uninstall_result: ExecutionResult | None = None,
+) -> list[object]:
+    calls: list[object] = []
+    root = Path("/project")
+    state = {} if installed_state is None else installed_state
+    context.services.resolve_project_root = lambda **options: calls.append(
+        ("resolve", options)
+    ) or root
+    context.services.load_installed_state = lambda **options: calls.append(
+        ("load", options)
+    ) or state
+
+    def select(items, **options):
+        calls.append(("select", items, options))
+        return SelectorResult(
+            "submit", create_selector_state(items, initial=options["initial"]), selected
+        )
+
+    context.select_items = select
+    context.confirm_apply = lambda **preview: calls.append(
+        ("confirm", preview)
+    ) or confirmed
+    context.services.has_command = lambda name, **options: calls.append(
+        ("npx", name, options)
+    ) or available
+    context.services.execute_install_plan = lambda plan, **options: calls.append(
+        ("install", plan, options)
+    ) or (install_result or ExecutionResult(True, (), ()))
+    context.services.execute_uninstall_plan = lambda plan, **options: calls.append(
+        ("uninstall", plan, options)
+    ) or (uninstall_result or ExecutionResult(True, (), ()))
+    return calls
+
+
+def test_interactive_empty_catalog_errors_without_external_calls(
+    context: CommandContext,
+) -> None:
+    context.catalog = Catalog(version=1, sources=())
+    context.services.resolve_project_root = lambda **_: pytest.fail("root resolved")
+
+    assert lifecycle.run_interactive(context) == 1
+    assert context.stdout.getvalue() == ""
+    assert "Catalog is empty" in context.stderr.getvalue()
+    assert "skm source add" in context.stderr.getvalue()
+
+
+def test_interactive_selector_receives_only_correct_installs_as_initial(
+    context: CommandContext,
+) -> None:
+    context.catalog = Catalog(
+        version=1,
+        sources=(CatalogSource(source="owner/catalog", skills=("one", "two")),),
+    )
+    calls = configure_interactive(
+        context,
+        installed_state={
+            "one": installed("one"),
+            "two": installed("two", source="wrong/catalog"),
+        },
+    )
+
+    def cancel(items, **options):
+        calls.append(("select", items, options))
+        return SelectorResult("cancel", create_selector_state(items), ())
+
+    context.select_items = cancel
+
+    assert lifecycle.run_interactive(context) == 1
+    selection = next(call for call in calls if call[0] == "select")
+    assert selection[2]["initial"] == (
+        requirement_key("owner/catalog", "one"),
+    )
+    assert "Selection cancelled" in context.stdout.getvalue()
+    assert not any(
+        call[0] in {"confirm", "npx", "install", "uninstall"} for call in calls
+    )
+
+
+def test_interactive_matching_selection_is_noop_without_confirmation(
+    context: CommandContext,
+) -> None:
+    selected = (requirement_key("owner/catalog", "demo"),)
+    calls = configure_interactive(
+        context, selected=selected, installed_state={"demo": installed("demo")}
+    )
+
+    assert lifecycle.run_interactive(context) == 0
+    assert not any(
+        call[0] in {"confirm", "npx", "install", "uninstall"} for call in calls
+    )
+
+
+def test_interactive_desired_conflict_fails_before_preview(
+    context: CommandContext,
+) -> None:
+    context.catalog = Catalog(
+        version=1,
+        sources=(
+            CatalogSource(source="owner/one", skills=("demo",)),
+            CatalogSource(source="owner/two", skills=("demo",)),
+        ),
+    )
+    calls = configure_interactive(
+        context, selected=(requirement_key("owner/one", "demo"),)
+    )
+
+    assert lifecycle.run_interactive(context) == 1
+    assert "Conflicting desired skill sources" in context.stderr.getvalue()
+    assert not any(call[0] == "confirm" for call in calls)
+
+
+def test_interactive_selected_installed_conflict_fails_before_preview(
+    context: CommandContext,
+) -> None:
+    calls = configure_interactive(
+        context,
+        selected=(requirement_key("owner/catalog", "demo"),),
+        installed_state={"demo": installed("demo", source="wrong/catalog")},
+    )
+
+    assert lifecycle.run_interactive(context) == 1
+    assert "Blocked by installed skill conflicts: demo" in context.stderr.getvalue()
+    assert not any(call[0] == "confirm" for call in calls)
+
+
+def test_interactive_preview_decline_has_no_preflight_or_mutation(
+    context: CommandContext,
+) -> None:
+    calls = configure_interactive(
+        context,
+        selected=(requirement_key("owner/catalog", "demo"),),
+        confirmed=False,
+    )
+    context.services.write_catalog = lambda *_: pytest.fail("config written")
+
+    assert lifecycle.run_interactive(context) == 1
+    assert [call[0] for call in calls] == ["resolve", "load", "select", "confirm"]
+
+
+def test_interactive_preflights_then_installs_before_uninstalling(
+    context: CommandContext,
+) -> None:
+    context.catalog = Catalog(
+        version=1,
+        sources=(CatalogSource(source="owner/catalog", skills=("one", "two")),),
+    )
+    calls = configure_interactive(
+        context,
+        selected=(requirement_key("owner/catalog", "two"),),
+        installed_state={"one": installed("one")},
+    )
+
+    assert lifecycle.run_interactive(context) == 0
+    assert [call[0] for call in calls] == [
+        "resolve", "load", "select", "confirm", "npx", "install", "uninstall"
+    ]
+    assert tuple(item.skill for item in calls[5][1].install) == ("two",)
+    assert tuple(item.skill for item in calls[6][1].remove) == ("one",)
+    assert calls[5][2] == {"project_root": Path("/project")}
+    assert calls[6][2] == {"project_root": Path("/project")}
+    assert "Changes complete" in context.stdout.getvalue()
+
+
+def test_interactive_missing_npx_after_confirmation_prevents_mutation(
+    context: CommandContext,
+) -> None:
+    calls = configure_interactive(
+        context,
+        selected=(requirement_key("owner/catalog", "demo"),),
+        available=False,
+    )
+
+    assert lifecycle.run_interactive(context) == 1
+    assert [call[0] for call in calls][-2:] == ["confirm", "npx"]
+    assert "npx is required" in context.stderr.getvalue()
+
+
+def test_interactive_combines_partial_results_and_returns_one(
+    context: CommandContext,
+) -> None:
+    context.catalog = Catalog(
+        version=1,
+        sources=(CatalogSource(source="owner/catalog", skills=("one", "two")),),
+    )
+    failed = MutationRecord("install", "owner/catalog", ("two",), 7)
+    removed = MutationRecord("uninstall", None, ("one",), 0)
+    configure_interactive(
+        context,
+        selected=(requirement_key("owner/catalog", "two"),),
+        installed_state={"one": installed("one")},
+        install_result=ExecutionResult(False, (), (failed,)),
+        uninstall_result=ExecutionResult(True, (removed,), ()),
+    )
+
+    assert lifecycle.run_interactive(context) == 1
+    output = context.stdout.getvalue()
+    assert "Changes incomplete" in output
+    assert "1 succeeded; 1 failed" in output

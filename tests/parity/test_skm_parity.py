@@ -40,6 +40,7 @@ def assert_parity(
 @pytest.mark.parametrize(
     "argv",
     [
+        (),
         ("help",),
         ("-h",),
         ("--help",),
