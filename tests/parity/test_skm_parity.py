@@ -365,6 +365,9 @@ def test_source_remove_installed_block_matches_javascript(
     ("shape", "source"),
     [
         ("missing", "./missing"),
+        ("missing-quote", "./missing'quote"),
+        ("missing-backslash", r"./missing\backslash"),
+        ("missing-both", r"./missing'both\tail"),
         ("alias-missing", "./alias/missing"),
         ("dangling", "./dangling"),
         ("dangling-child", "./dangling/child"),

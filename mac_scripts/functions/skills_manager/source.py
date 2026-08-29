@@ -138,7 +138,7 @@ def _strict_realpath(value: str) -> str:
         )
         operation, path = _realpath_error_site(value, error)
         code = errorcode[error.errno]
-        raise SourceError(f"{code}: {description}, {operation} {path!r}") from error
+        raise SourceError(f"{code}: {description}, {operation} '{path}'") from error
 
 
 def canonicalize_source(

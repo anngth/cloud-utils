@@ -165,6 +165,27 @@ def test_local_paths_use_injected_cwd_and_realpath() -> None:
     [
         ("./missing", "ENOENT", "no such file or directory", "lstat", "missing"),
         (
+            "./missing'quote",
+            "ENOENT",
+            "no such file or directory",
+            "lstat",
+            "missing'quote",
+        ),
+        (
+            r"./missing\backslash",
+            "ENOENT",
+            "no such file or directory",
+            "lstat",
+            r"missing\backslash",
+        ),
+        (
+            r"./missing'both\tail",
+            "ENOENT",
+            "no such file or directory",
+            "lstat",
+            r"missing'both\tail",
+        ),
+        (
             "./alias/missing",
             "ENOENT",
             "no such file or directory",
