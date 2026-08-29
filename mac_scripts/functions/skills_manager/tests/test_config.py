@@ -847,6 +847,49 @@ def test_legacy_list_forms_migrate_without_modifying_input_file(
 
 
 @pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("á", "a\N{COMBINING ACUTE ACCENT}"),
+        ("a\N{COMBINING ACUTE ACCENT}", "á"),
+    ],
+)
+def test_legacy_list_uses_stable_nfc_order_after_first_seen_deduplication(
+    tmp_path: Path, first: str, second: str
+) -> None:
+    paths = ConfigPaths.for_config_dir(tmp_path)
+    paths.skm_dir.mkdir(parents=True)
+    legacy = [
+        {"source": "https://sources.test/z"},
+        {"source": f"https://sources.test/{first}"},
+        {"source": "https://sources.test/a"},
+        {"source": f"https://sources.test/{second}"},
+        {"source": "https://sources.test/z"},
+        {"source": f"https://sources.test/{first}"},
+    ]
+    legacy_bytes = (json.dumps(legacy, ensure_ascii=False) + "\n").encode()
+    paths.legacy_file.write_bytes(legacy_bytes)
+
+    initialize_config(env={"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)}, pid=22)
+
+    expected = (
+        '{\n  "version": 1,\n  "sources": [\n'
+        '    {\n      "source": "https://sources.test/a",\n'
+        '      "skills": []\n    },\n'
+        '    {\n      "source": "https://sources.test/z",\n'
+        '      "skills": []\n    },\n'
+        f'    {{\n      "source": "https://sources.test/{first}",\n'
+        '      "skills": []\n    },\n'
+        f'    {{\n      "source": "https://sources.test/{second}",\n'
+        '      "skills": []\n    }\n  ]\n}\n'
+    ).encode()
+    catalog = read_config(paths)
+    assert paths.sources_file.read_bytes() == expected
+    assert resolve_source_token(catalog, "3")[1].source.endswith(first)
+    assert resolve_source_token(catalog, "4")[1].source.endswith(second)
+    assert paths.legacy_file.read_bytes() == legacy_bytes
+
+
+@pytest.mark.parametrize(
     ("filename", "contents"),
     [
         ("list.json", b"{broken"),

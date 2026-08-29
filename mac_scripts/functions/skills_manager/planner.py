@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import unicodedata
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from .config import Catalog
-from .source import js_string_key as _js_string_key
+from .source import js_string_key as _js_string_key, nfc_codepoint_key
 from .state import InstalledSkill, InstalledState
 
 
@@ -56,13 +55,6 @@ class UninstallPlan:
     conflicts: tuple[Requirement, ...]
     unlink_profiles: tuple[str, ...]
     desired_conflicts: tuple[DesiredConflict, ...]
-
-
-def _collation_key(value: str) -> str:
-    identity_spelling = _js_string_key(value).decode(
-        "utf-16-be", errors="surrogatepass"
-    )
-    return unicodedata.normalize("NFC", identity_spelling)
 
 
 def _json_string(value: str) -> str:
@@ -139,11 +131,11 @@ def catalog_requirements(document: Catalog) -> MergedRequirements:
                 for skill_identity, sources in sources_by_skill.items()
                 if len(sources) > 1
             ),
-            key=lambda item: _collation_key(item.skill),
+            key=lambda item: nfc_codepoint_key(item.skill),
         )
     )
     requirements = tuple(
-        sorted(by_key.values(), key=lambda item: _collation_key(item.skill))
+        sorted(by_key.values(), key=lambda item: nfc_codepoint_key(item.skill))
     )
     return MergedRequirements(requirements, desired_conflicts)
 
@@ -200,7 +192,7 @@ def classify_status(
                 for actual in actual_by_name.values()
                 if _js_string_key(actual.name) not in desired_names
             ),
-            key=lambda item: _collation_key(item.name),
+            key=lambda item: nfc_codepoint_key(item.name),
         )
     )
     return StatusResult(

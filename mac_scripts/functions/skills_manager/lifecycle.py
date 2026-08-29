@@ -22,7 +22,7 @@ def parse_lifecycle_command(action: str, args: Sequence[str]) -> LifecycleReques
     tokens, enabled = [], set()
     flags = {"-y": "yes", "--yes": "yes", "-d": "dry_run", "--dry-run": "dry_run"}
     if action != "status":
-        flags.update({"-a": "all", "--all": "all"})
+        flags.update({"--all": "all"})
     for value in args:
         if value in flags: enabled.add(flags[value])
         elif value.startswith("-"): raise SkmUsageError(f"Unknown option: {value}")

@@ -242,7 +242,41 @@ def test_grammar_errors_precede_npx_and_config(
     assert message in stderr.getvalue()
 
 
-def test_status_checks_npx_before_config() -> None:
+@pytest.mark.parametrize("argv", [("add", "-a"), ("remove", "-a", "-y")])
+def test_lifecycle_short_all_alias_is_unknown_before_any_side_effect(
+    tmp_path: Path, argv: tuple[str, ...]
+) -> None:
+    config_dir = tmp_path / "config"
+    services = Services(
+        has_command=lambda *_args, **_kwargs: pytest.fail("npx checked"),
+        initialize_config=lambda **_: pytest.fail("config touched"),
+        execute_install_plan=lambda *_args, **_kwargs: pytest.fail(
+            "install mutation reached"
+        ),
+        execute_uninstall_plan=lambda *_args, **_kwargs: pytest.fail(
+            "remove mutation reached"
+        ),
+    )
+    stdout, stderr = io.StringIO(), io.StringIO()
+
+    assert run_cli(
+        argv,
+        env={"CLOUD_UTILS_CONFIG_DIR": str(config_dir)},
+        stdout=stdout,
+        stderr=stderr,
+        services=services,
+    ) == 1
+    assert stdout.getvalue() == ""
+    assert stderr.getvalue() == "\x1b[31m❌ Unknown option: -a\x1b[39m\n"
+    assert not config_dir.exists()
+
+
+@pytest.mark.parametrize(
+    "argv", [("status",), ("add", "--all"), ("remove", "--all", "-y")]
+)
+def test_upstream_routes_accept_long_all_and_check_npx_before_config(
+    argv: tuple[str, ...],
+) -> None:
     calls: list[str] = []
     services = Services(
         has_command=lambda *_args, **_kwargs: calls.append("npx") or False,
@@ -251,7 +285,7 @@ def test_status_checks_npx_before_config() -> None:
     )
     stderr = io.StringIO()
 
-    assert run_cli(("status",), stderr=stderr, services=services) == 1
+    assert run_cli(argv, stderr=stderr, services=services) == 1
     assert calls == ["npx"]
     assert "npx is required to run skills commands" in stderr.getvalue()
 

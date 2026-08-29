@@ -17,18 +17,18 @@ from skills_manager.upstream import ExecutionResult, MutationRecord
 import skills_manager.upstream as upstream
 
 
-@pytest.mark.parametrize("all_flag", ["-a", "--all"])
-def test_lifecycle_parser_accepts_exact_all_yes_and_dry_flags(
-    all_flag: str,
+@pytest.mark.parametrize("action", ["add", "remove"])
+def test_lifecycle_parser_accepts_exact_long_all_yes_and_dry_flags(
+    action: str,
 ) -> None:
     assert lifecycle.parse_lifecycle_command(
-        "add", (all_flag, "-y", "--dry-run")
+        action, ("--all", "-y", "--dry-run")
     ) == ((), True, True, True)
 
 
 def test_lifecycle_parser_rejects_all_with_explicit_target() -> None:
     with pytest.raises(ValueError, match="Cannot combine --all"):
-        lifecycle.parse_lifecycle_command("remove", ("-a", "source"))
+        lifecycle.parse_lifecycle_command("remove", ("--all", "source"))
 
 
 def test_services_defaults_are_concrete_lifecycle_executors() -> None:

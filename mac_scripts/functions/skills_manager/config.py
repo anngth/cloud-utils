@@ -19,7 +19,7 @@ from pydantic import (
     model_serializer,
 )
 
-from .source import canonicalize_source, redact_source
+from .source import canonicalize_source, js_string_key, nfc_codepoint_key, redact_source
 
 
 class CatalogError(ValueError):
@@ -522,7 +522,11 @@ def _read_legacy_sources(file_path: Path) -> tuple[str, ...]:
             f"Invalid legacy source list: {file_path}", file_path=file_path
         )
     try:
-        return tuple(sorted({canonicalize_source(x["source"]) for x in entries}))
+        sources: dict[bytes, str] = {}
+        for entry in entries:
+            source = canonicalize_source(entry["source"])
+            sources.setdefault(js_string_key(source), source)
+        return tuple(sorted(sources.values(), key=nfc_codepoint_key))
     except Exception as error:
         raise ConfigError(
             f"Invalid legacy source list: {file_path}", file_path=file_path

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import os
-import re
+import os, re, unicodedata
 from collections.abc import Callable
 from errno import ELOOP, ENOENT, ENOTDIR, errorcode
 from pathlib import Path
@@ -14,6 +13,11 @@ class SourceError(ValueError):
 
 def js_string_key(value: str) -> bytes:
     return value.encode("utf-16-be", errors="surrogatepass")
+
+
+def nfc_codepoint_key(value: str) -> str:
+    spelling = js_string_key(value).decode("utf-16-be", errors="surrogatepass")
+    return unicodedata.normalize("NFC", spelling)
 
 
 _GITHUB_COMPONENT = r"[A-Za-z0-9._-]+"
