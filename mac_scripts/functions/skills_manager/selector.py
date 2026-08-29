@@ -22,7 +22,7 @@ def build_catalog_selector_items(
     for index, entry in enumerate(catalog.sources, start=1):
         children = tuple(requirement_key(entry.source, skill) for skill in entry.skills)
         items.append(CatalogSelectorItem(
-            redact_source(entry.source), entry.source, "source", index, children
+            redact_source(entry.source), f"\0source:{index}", "source", index, children
         ))
         for skill, value in zip(entry.skills, children, strict=True):
             actual = actual_by_name.get(js_string_key(skill))

@@ -55,6 +55,28 @@ def test_build_items_keeps_hierarchy_and_only_correct_installs_initially_selecte
     assert initial == (requirement_key("a/repo", "one"),)
 
 
+def collision_catalog() -> Catalog:
+    return Catalog(
+        version=1,
+        sources=(
+            CatalogSource(source=requirement_key("b", "x"), skills=("y",)),
+            CatalogSource(source="b", skills=("x",)),
+        ),
+    )
+
+
+def test_initial_requirement_key_does_not_select_a_colliding_source_row() -> None:
+    items, initial = build_catalog_selector_items(
+        collision_catalog(),
+        installed_state={"x": installed("x", "b")},
+    )
+
+    state = create_selector_state(items, initial=initial)
+
+    assert initial == (requirement_key("b", "x"),)
+    assert state.selected == frozenset({3})
+
+
 def _items() -> tuple[CatalogSelectorItem, ...]:
     return build_catalog_selector_items(catalog(), installed_state={})[0]
 
@@ -126,6 +148,19 @@ def test_navigation_submit_and_cancel_keep_generic_contract() -> None:
     assert submitted.selected == (requirement_key("a/repo", "one"),)
     assert cancelled.kind == "cancel"
     assert cancelled.selected == ()
+
+
+def test_submit_never_treats_a_colliding_source_row_as_a_skill() -> None:
+    items, _initial = build_catalog_selector_items(
+        collision_catalog(), installed_state={}
+    )
+    selected = reduce_catalog_selector(create_selector_state(items), "toggle").state
+
+    submitted = reduce_catalog_selector(selected, "submit")
+
+    assert submitted.selected == (
+        requirement_key(requirement_key("b", "x"), "y"),
+    )
 
 
 def test_filter_skill_keys_drops_source_rows_and_unknown_values() -> None:

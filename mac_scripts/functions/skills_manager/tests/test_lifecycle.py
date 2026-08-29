@@ -13,6 +13,7 @@ from skills_manager.config import Catalog, CatalogSource
 import skills_manager.lifecycle as lifecycle
 from skills_manager.lifecycle import run_status
 from skills_manager.planner import requirement_key
+from skills_manager.selector import reduce_catalog_selector
 from skills_manager.state import InstalledSkill, InstalledStateError
 from skills_manager.upstream import ExecutionResult, MutationRecord
 import skills_manager.upstream as upstream
@@ -736,6 +737,32 @@ def test_interactive_preview_decline_has_no_preflight_or_mutation(
 
     assert lifecycle.run_interactive(context) == 1
     assert [call[0] for call in calls] == ["resolve", "load", "select", "confirm"]
+
+
+def test_interactive_preview_excludes_a_skill_key_colliding_with_source_row(
+    context: CommandContext,
+) -> None:
+    colliding_source = requirement_key("b", "x")
+    context.catalog = Catalog(
+        version=1,
+        sources=(
+            CatalogSource(source=colliding_source, skills=("y",)),
+            CatalogSource(source="b", skills=("x",)),
+        ),
+    )
+    calls = configure_interactive(context, confirmed=False)
+
+    def select(items, **options):
+        state = create_selector_state(items, initial=options["initial"])
+        selected = reduce_catalog_selector(state, "toggle").state
+        return reduce_catalog_selector(selected, "submit")
+
+    context.select_items = select
+
+    assert lifecycle.run_interactive(context) == 1
+    preview = next(call[1] for call in calls if call[0] == "confirm")
+    assert tuple(item.skill for item in preview["install"]) == ("y",)
+    assert preview["remove"] == ()
 
 
 def test_interactive_preflights_then_installs_before_uninstalling(
