@@ -530,3 +530,235 @@ def test_source_conflict_replaces_lone_surrogate_like_javascript(
         },
         npx_responses=discovery("owner/new"),
     )
+
+
+def test_add_partial_failure_and_retry_snapshot_matches_javascript(
+    skm_runner, tmp_path: Path,
+) -> None:
+    assert_parity(
+        skm_runner,
+        tmp_path,
+        ("add", "--all", "--yes"),
+        sources={
+            "version": 1,
+            "sources": [
+                {"source": "owner/a", "skills": ["one"]},
+                {"source": "owner/b", "skills": ["two"]},
+            ],
+        },
+        npx_responses={
+            ("skills", "list", "--json"): {
+                "status": 0, "stdout": "[]\n", "stderr": "",
+            },
+            ("skills", "add", "owner/a", "--skill", "one", "--yes"): {
+                "status": 7, "stdout": "", "stderr": "first failed\n",
+            },
+            ("skills", "add", "owner/b", "--skill", "two", "--yes"): {
+                "status": 0, "stdout": "second ok\n", "stderr": "",
+            },
+        },
+    )
+
+
+def test_add_success_snapshot_matches_javascript(
+    skm_runner, tmp_path: Path,
+) -> None:
+    assert_parity(
+        skm_runner,
+        tmp_path,
+        ("add", "1", "--yes"),
+        sources={
+            "version": 1,
+            "sources": [{"source": "owner/a", "skills": ["one"]}],
+        },
+        npx_responses={
+            ("skills", "list", "--json"): {
+                "status": 0, "stdout": "[]\n", "stderr": "",
+            },
+            ("skills", "add", "owner/a", "--skill", "one", "--yes"): {
+                "status": 0, "stdout": "installed\n", "stderr": "",
+            },
+        },
+    )
+
+
+@pytest.mark.parametrize("actual_source", ["owner/a", "owner/wrong"])
+def test_add_installed_noop_and_mismatch_snapshots_match_javascript(
+    skm_runner, tmp_path: Path, actual_source: str,
+) -> None:
+    case_root = tmp_path / "case"
+    sources = {
+        "version": 1,
+        "sources": [{"source": "owner/a", "skills": ["one"]}],
+    }
+    responses = {
+        ("skills", "list", "--json"): {
+            "status": 0,
+            "stdout": (
+                '[{"name":"one","path":"/skills/one",'
+                '"scope":"project","agents":["Codex"]}]\n'
+            ),
+            "stderr": "",
+        },
+    }
+
+    def run(runtime: str):
+        project = case_root / "project"
+        project.mkdir(parents=True, exist_ok=True)
+        (project / "skills-lock.json").write_text(
+            json.dumps({"skills": {"one": {"source": actual_source}}}),
+            encoding="utf-8",
+        )
+        return skm_runner(
+            runtime,
+            case_root,
+            ["add", "1", "--yes"],
+            sources=sources,
+            npx_responses=responses,
+        )
+
+    expected = run("javascript")
+    shutil.rmtree(case_root)
+    assert run("python") == expected
+
+
+def test_add_dry_run_snapshot_has_no_mutation_like_javascript(
+    skm_runner, tmp_path: Path,
+) -> None:
+    assert_parity(
+        skm_runner,
+        tmp_path,
+        ("add", "1", "--yes", "--dry-run"),
+        sources={
+            "version": 1,
+            "sources": [{"source": "owner/a", "skills": ["one"]}],
+        },
+        npx_responses={
+            ("skills", "list", "--json"): {
+                "status": 0, "stdout": "[]\n", "stderr": "",
+            },
+        },
+    )
+
+
+def test_add_skill_selection_cancellation_matches_javascript(
+    skm_runner, tmp_path: Path,
+) -> None:
+    assert_parity(
+        skm_runner,
+        tmp_path,
+        ("add", "1"),
+        sources={
+            "version": 1,
+            "sources": [{"source": "owner/a", "skills": ["one"]}],
+        },
+        npx_responses={
+            ("skills", "list", "--json"): {
+                "status": 0, "stdout": "[]\n", "stderr": "",
+            },
+        },
+        stdin=b"q",
+    )
+
+
+def test_add_desired_conflict_matches_javascript_without_state_call(
+    skm_runner, tmp_path: Path,
+) -> None:
+    assert_parity(
+        skm_runner,
+        tmp_path,
+        ("add", "--all", "--yes"),
+        sources={
+            "version": 1,
+            "sources": [
+                {"source": "owner/a", "skills": ["same"]},
+                {"source": "owner/b", "skills": ["same"]},
+            ],
+        },
+    )
+
+
+def test_add_untracked_conflict_matches_javascript_without_mutation(
+    skm_runner, tmp_path: Path,
+) -> None:
+    assert_parity(
+        skm_runner,
+        tmp_path,
+        ("add", "1", "--yes"),
+        sources={
+            "version": 1,
+            "sources": [{"source": "owner/a", "skills": ["one"]}],
+        },
+        npx_responses={
+            ("skills", "list", "--json"): {
+                "status": 0,
+                "stdout": (
+                    '[{"name":"one","path":"/skills/one",'
+                    '"scope":"project","agents":["Codex"]}]\n'
+                ),
+                "stderr": "",
+            },
+        },
+    )
+
+
+def test_remove_failure_retry_and_untracked_eligibility_match_javascript(
+    skm_runner, tmp_path: Path,
+) -> None:
+    assert_parity(
+        skm_runner,
+        tmp_path,
+        ("remove", "1", "--yes"),
+        sources={
+            "version": 1,
+            "sources": [{"source": "owner/a", "skills": ["one", "two"]}],
+        },
+        npx_responses={
+            ("skills", "list", "--json"): {
+                "status": 0,
+                "stdout": (
+                    '[{"name":"one","path":"/skills/one",'
+                    '"scope":"project","agents":["Codex"]},'
+                    '{"name":"two","path":"/skills/two",'
+                    '"scope":"project","agents":["Codex"]}]\n'
+                ),
+                "stderr": "",
+            },
+            ("skills", "remove", "one", "two", "--yes"): {
+                "status": 4, "stdout": "", "stderr": "remove failed\n",
+            },
+        },
+    )
+
+
+def test_remove_dry_run_matches_javascript_without_mutation(
+    skm_runner, tmp_path: Path,
+) -> None:
+    assert_parity(
+        skm_runner,
+        tmp_path,
+        ("remove", "--all", "--yes", "--dry-run"),
+        sources={
+            "version": 1,
+            "sources": [{"source": "owner/a", "skills": ["one"]}],
+        },
+        npx_responses={
+            ("skills", "list", "--json"): {
+                "status": 0, "stdout": "[]\n", "stderr": "",
+            },
+        },
+    )
+
+
+def test_add_empty_source_matches_javascript_without_state_call(
+    skm_runner, tmp_path: Path,
+) -> None:
+    assert_parity(
+        skm_runner,
+        tmp_path,
+        ("add", "1", "--yes"),
+        sources={
+            "version": 1,
+            "sources": [{"source": "owner/empty", "skills": []}],
+        },
+    )
