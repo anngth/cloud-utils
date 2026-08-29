@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Literal
 
 from shared.process import CommandResult, run_process
 
-from .planner import js_string_key
+from .source import js_string_key
 
 if TYPE_CHECKING:
     from .planner import InstallPlan, UninstallPlan

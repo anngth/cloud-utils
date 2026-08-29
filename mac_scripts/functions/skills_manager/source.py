@@ -12,6 +12,10 @@ class SourceError(ValueError):
     """Raised when a source cannot be represented without credential risk."""
 
 
+def js_string_key(value: str) -> bytes:
+    return value.encode("utf-16-be", errors="surrogatepass")
+
+
 _GITHUB_COMPONENT = r"[A-Za-z0-9._-]+"
 _SHORTHAND = re.compile(
     rf"^({_GITHUB_COMPONENT})/({_GITHUB_COMPONENT})(?:\.git)?$"

@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
+from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
+from typing import get_type_hints
 
 import pytest
 
+import skills_manager.planner as planner
 from skills_manager.config import Catalog, CatalogSource
 from skills_manager.planner import (
     DesiredConflict,
@@ -20,7 +24,7 @@ from skills_manager.planner import (
     create_uninstall_plan,
     requirement_key,
 )
-from skills_manager.state import InstalledSkill
+from skills_manager.state import InstalledSkill, InstalledState
 
 
 def _catalog(*sources: tuple[str, tuple[str, ...]]) -> Catalog:
@@ -60,6 +64,59 @@ def _node_json(script: str) -> object:
         text=True,
     )
     return json.loads(result.stdout)
+
+
+def test_planner_runtime_type_hints_and_state_names_remain_available() -> None:
+    assert get_type_hints(planner.StatusResult)["extras"] == tuple[
+        InstalledSkill, ...
+    ]
+    assert get_type_hints(planner.InstallPlan)["extras"] == tuple[
+        InstalledSkill, ...
+    ]
+    assert get_type_hints(planner.classify_status)["installed_state"] == (
+        InstalledState
+    )
+    assert get_type_hints(planner.create_uninstall_plan)["installed_state"] == (
+        Mapping[str, InstalledSkill]
+    )
+    assert planner.InstalledSkill is InstalledSkill
+    assert planner.InstalledState is InstalledState
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        ("source", "config", "upstream", "state", "planner"),
+        ("planner", "state", "upstream", "config", "source"),
+        ("state", "planner", "upstream", "source", "config"),
+        ("upstream", "planner", "state", "config", "source"),
+        ("config", "source", "planner", "upstream", "state"),
+    ],
+)
+def test_skm_domain_modules_import_in_any_dependency_order(
+    order: tuple[str, ...],
+) -> None:
+    imports = "\n".join(
+        f"importlib.import_module('skills_manager.{name}')" for name in order
+    )
+    script = f"""
+import importlib
+import typing
+{imports}
+planner = importlib.import_module('skills_manager.planner')
+state = importlib.import_module('skills_manager.state')
+for target in (
+    planner.StatusResult,
+    planner.InstallPlan,
+    planner.classify_status,
+    planner.create_uninstall_plan,
+):
+    typing.get_type_hints(target)
+assert planner.InstalledSkill is state.InstalledSkill
+assert planner.InstalledState is state.InstalledState
+"""
+
+    subprocess.run((sys.executable, "-c", script), check=True)
 
 
 @pytest.mark.parametrize(
