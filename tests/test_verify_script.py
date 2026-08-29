@@ -187,20 +187,114 @@ def test_verify_requires_npx_before_running_gates(tmp_path: Path) -> None:
     assert not log.exists()
 
 
-def test_verify_cleans_all_coverage_files_on_signal(tmp_path: Path) -> None:
+def test_verify_preserves_pytest_failure_status_and_output(tmp_path: Path) -> None:
     root, log = _verification_repo(tmp_path)
-    marker = tmp_path / "pytest.started"
     _write_executable(
         root / ".venv" / "bin" / "python",
         'print -r -- "python $* coverage=${COVERAGE_FILE:-}" '
         '>> "$VERIFY_LOG"\n'
         'if [[ "$1" == "-m" && "$2" == "pytest" ]]; then\n'
-        '  : > "$VERIFY_BLOCK_MARKER"\n'
-        "  while true; do sleep 1; done\n"
-        "fi",
+        '  print -r -- "pytest stdout sentinel"\n'
+        '  print -u2 -r -- "pytest stderr sentinel"\n'
+        "  exit 7\n"
+        "fi\n",
+    )
+
+    result = _run_verify(root, log, tmp_path)
+
+    assert result.returncode == 7
+    assert "pytest stdout sentinel" in result.stdout
+    assert "pytest stderr sentinel" in result.stderr
+    commands = log.read_text(encoding="utf-8").splitlines()
+    assert len(commands) == 3
+    assert commands[-1].startswith("python -m pytest")
+    assert not tuple(tmp_path.glob("cloud-utils-verify.*"))
+
+
+def test_verify_pytest_child_does_not_ignore_sigint(tmp_path: Path) -> None:
+    root, log = _verification_repo(tmp_path)
+    disposition_check = tmp_path / "check_signal_disposition.py"
+    disposition_check.write_text(
+        "import signal\n"
+        "import sys\n"
+        "\n"
+        "if signal.getsignal(signal.SIGINT) == signal.SIG_IGN:\n"
+        "    print('pytest child inherited ignored SIGINT', file=sys.stderr)\n"
+        "    raise SystemExit(9)\n",
+        encoding="utf-8",
+    )
+    _write_executable(
+        root / ".venv" / "bin" / "python",
+        'print -r -- "python $* coverage=${COVERAGE_FILE:-}" '
+        '>> "$VERIFY_LOG"\n'
+        'if [[ "$1" == "-m" && "$2" == "pytest" ]]; then\n'
+        f'  exec {shlex.quote(sys.executable)} '
+        f'{shlex.quote(str(disposition_check))}\n'
+        "fi\n",
+    )
+
+    result = _run_verify(root, log, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "pytest child inherited ignored SIGINT" not in result.stderr
+    assert "nice(" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("signal_number", "returncode"),
+    [
+        (signal.SIGHUP, 129),
+        (signal.SIGINT, 130),
+        (signal.SIGTERM, 143),
+    ],
+)
+def test_verify_forwards_signal_and_cleans_coverage_files(
+    tmp_path: Path,
+    signal_number: signal.Signals,
+    returncode: int,
+) -> None:
+    root, log = _verification_repo(tmp_path)
+    blocker = tmp_path / "blocking_child.py"
+    child_pid_file = tmp_path / "child.pid"
+    child_started = tmp_path / "child.started"
+    child_exited = tmp_path / "child.exited"
+    blocker.write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "import signal\n"
+        "\n"
+        "pid_file = Path(os.environ['VERIFY_CHILD_PID_FILE'])\n"
+        "pid_file_tmp = pid_file.with_suffix('.tmp')\n"
+        "pid_file_tmp.write_text(str(os.getpid()), encoding='utf-8')\n"
+        "pid_file_tmp.replace(pid_file)\n"
+        "Path(os.environ['VERIFY_CHILD_STARTED']).touch()\n"
+        "\n"
+        "def stop(signal_number, _frame):\n"
+        "    Path(os.environ['VERIFY_CHILD_EXITED']).touch()\n"
+        "    raise SystemExit(128 + signal_number)\n"
+        "\n"
+        "for forwarded_signal in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):\n"
+        "    signal.signal(forwarded_signal, stop)\n"
+        "while True:\n"
+        "    signal.pause()\n",
+        encoding="utf-8",
+    )
+    _write_executable(
+        root / ".venv" / "bin" / "python",
+        'print -r -- "python $* coverage=${COVERAGE_FILE:-}" '
+        '>> "$VERIFY_LOG"\n'
+        'if [[ "$1" == "-m" && "$2" == "pytest" ]]; then\n'
+        f'  exec {shlex.quote(sys.executable)} {shlex.quote(str(blocker))}\n'
+        "fi\n",
     )
     env = _verify_env(root, log, tmp_path)
-    env["VERIFY_BLOCK_MARKER"] = str(marker)
+    env.update(
+        {
+            "VERIFY_CHILD_PID_FILE": str(child_pid_file),
+            "VERIFY_CHILD_STARTED": str(child_started),
+            "VERIFY_CHILD_EXITED": str(child_exited),
+        }
+    )
     process = subprocess.Popen(
         [root / "scripts" / "verify"],
         cwd=tmp_path,
@@ -208,23 +302,38 @@ def test_verify_cleans_all_coverage_files_on_signal(tmp_path: Path) -> None:
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        start_new_session=True,
     )
+    child_pid: int | None = None
+    terminated_promptly = True
     try:
         deadline = time.monotonic() + 5
-        while not marker.exists() and time.monotonic() < deadline:
+        while not child_started.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert marker.exists(), "verify did not reach pytest"
+        assert child_started.exists(), "verify did not reach pytest"
+        child_pid = int(child_pid_file.read_text(encoding="utf-8"))
         created = tuple(tmp_path.glob("cloud-utils-verify.*"))
-        os.killpg(process.pid, signal.SIGTERM)
-        process.communicate(timeout=5)
+        os.kill(process.pid, signal_number)
+        try:
+            process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            terminated_promptly = False
     finally:
         if process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.communicate(timeout=5)
+            process.kill()
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        process.communicate(timeout=5)
 
+    assert terminated_promptly
     assert len(created) == 2
-    assert process.returncode == 143
+    assert process.returncode == returncode
+    assert child_exited.exists()
+    assert child_pid is not None
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
     assert not tuple(tmp_path.glob("cloud-utils-verify.*"))
 
 

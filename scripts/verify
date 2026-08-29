@@ -28,21 +28,61 @@ fi
 
 coverage_file=""
 coverage_json_file=""
+active_child_pid=0
+child_may_be_starting=0
 cleanup_coverage() {
   [[ -z "$coverage_file" ]] || rm -f -- "$coverage_file"
   [[ -z "$coverage_json_file" ]] || rm -f -- "$coverage_json_file"
 }
+forward_signal() {
+  local signal_name="$1"
+  local signal_status="$2"
+  local child_pid="$active_child_pid"
+
+  trap '' HUP INT TERM
+  if (( child_pid == 0 && child_may_be_starting )); then
+    child_pid="${!:-0}"
+  fi
+  active_child_pid=0
+  child_may_be_starting=0
+  if (( child_pid > 0 )); then
+    kill -s "$signal_name" "$child_pid" 2>/dev/null || true
+    wait "$child_pid" 2>/dev/null || true
+  fi
+  exit "$signal_status"
+}
 trap cleanup_coverage EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'forward_signal HUP 129' HUP
+trap 'forward_signal INT 130' INT
+trap 'forward_signal TERM 143' TERM
 
 coverage_file="$(mktemp "${TMPDIR:-/tmp}/cloud-utils-verify.XXXXXX")"
 coverage_json_file="$(mktemp "${TMPDIR:-/tmp}/cloud-utils-verify.XXXXXX")"
 
 print -r -- "==> Running Python tests with coverage"
-COVERAGE_FILE="$coverage_file" "$PYTHON_BIN" -m pytest \
-  --cov=shared --cov=twofa --cov=git_tools --cov=skills_manager
+run_pytest() {
+  local child_status=0
+
+  child_may_be_starting=1
+  unsetopt BG_NICE
+  (
+    trap - HUP INT TERM
+    export COVERAGE_FILE="$coverage_file"
+    exec "$PYTHON_BIN" -m pytest \
+      --cov=shared --cov=twofa --cov=git_tools --cov=skills_manager
+  ) &
+  active_child_pid=$!
+  child_may_be_starting=0
+  wait "$active_child_pid" || child_status=$?
+  active_child_pid=0
+  return "$child_status"
+}
+if run_pytest; then
+  :
+else
+  pytest_status=$?
+  exit "$pytest_status"
+fi
 COVERAGE_FILE="$coverage_file" "$PYTHON_BIN" -m coverage report \
   '--include=*/skills_manager/*.py'
 COVERAGE_FILE="$coverage_file" "$PYTHON_BIN" -m coverage json \
