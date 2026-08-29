@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -10,6 +13,23 @@ from skills_manager.source import SourceError, canonicalize_source, redact_sourc
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def _make_realpath_matrix(root: Path) -> None:
+    (root / "target").mkdir()
+    (root / "level").mkdir()
+    (root / "target2").mkdir()
+    (root / "file").write_text("file", encoding="utf-8")
+    (root / "target/file").write_text("file", encoding="utf-8")
+    (root / "target2/file").write_text("file", encoding="utf-8")
+    (root / "alias").symlink_to("target")
+    (root / "dangling").symlink_to("missing-target")
+    (root / "loop-a").symlink_to("loop-b")
+    (root / "loop-b").symlink_to("loop-a")
+    (root / "outer").symlink_to("level")
+    (root / "level/inner").symlink_to("../target2")
+    (root / "level/bad").symlink_to("../absent")
+    (root / "level/cycle").symlink_to("../loop-a")
 
 
 def _node_source_identity(value: str) -> tuple[str, str]:
@@ -141,50 +161,125 @@ def test_local_paths_use_injected_cwd_and_realpath() -> None:
 
 
 @pytest.mark.parametrize(
-    ("shape", "source", "code", "description", "operation"),
+    ("source", "code", "description", "operation", "reported"),
     [
-        ("missing", "./missing", "ENOENT", "no such file or directory", "lstat"),
-        ("dangling", "./dangling", "ENOENT", "no such file or directory", "stat"),
-        ("child", "./file/child", "ENOTDIR", "not a directory", "lstat"),
+        ("./missing", "ENOENT", "no such file or directory", "lstat", "missing"),
         (
-            "loop",
+            "./alias/missing",
+            "ENOENT",
+            "no such file or directory",
+            "lstat",
+            "target/missing",
+        ),
+        ("./dangling", "ENOENT", "no such file or directory", "stat", "dangling"),
+        (
+            "./dangling/child",
+            "ENOENT",
+            "no such file or directory",
+            "stat",
+            "dangling",
+        ),
+        ("./file/child", "ENOTDIR", "not a directory", "lstat", "file/child"),
+        (
             "./loop-a",
             "ELOOP",
             "too many symbolic links encountered",
             "stat",
+            "loop-a",
+        ),
+        (
+            "./loop-a/child",
+            "ELOOP",
+            "too many symbolic links encountered",
+            "stat",
+            "loop-a",
+        ),
+        (
+            "./alias/file/child",
+            "ENOTDIR",
+            "not a directory",
+            "lstat",
+            "target/file/child",
+        ),
+        (
+            "./outer/inner/missing",
+            "ENOENT",
+            "no such file or directory",
+            "lstat",
+            "target2/missing",
+        ),
+        (
+            "./outer/inner/file/child",
+            "ENOTDIR",
+            "not a directory",
+            "lstat",
+            "target2/file/child",
+        ),
+        (
+            "./outer/bad/child",
+            "ENOENT",
+            "no such file or directory",
+            "stat",
+            "level/bad",
+        ),
+        (
+            "./outer/cycle/child",
+            "ELOOP",
+            "too many symbolic links encountered",
+            "stat",
+            "level/cycle",
         ),
     ],
 )
 def test_invalid_local_path_errors_match_node_realpath(
     tmp_path: Path,
-    shape: str,
     source: str,
     code: str,
     description: str,
     operation: str,
+    reported: str,
 ) -> None:
-    if shape == "dangling":
-        (tmp_path / "dangling").symlink_to("missing-target")
-    elif shape == "child":
-        (tmp_path / "file").write_text("file", encoding="utf-8")
-    elif shape == "loop":
-        (tmp_path / "loop-a").symlink_to("loop-b")
-        (tmp_path / "loop-b").symlink_to("loop-a")
+    _make_realpath_matrix(tmp_path)
 
     with pytest.raises(SourceError) as caught:
         canonicalize_source(source, cwd=tmp_path)
 
     assert str(caught.value) == (
-        f"{code}: {description}, {operation} '{tmp_path / source[2:]}'"
+        f"{code}: {description}, {operation} '{tmp_path / reported}'"
     )
 
 
-def test_valid_local_symlink_resolves_to_target(tmp_path: Path) -> None:
-    target = tmp_path / "target"
-    target.mkdir()
-    (tmp_path / "valid").symlink_to("target")
+@pytest.mark.parametrize(
+    ("suffix", "code", "description"),
+    [
+        ("missing", "ENOENT", "no such file or directory"),
+        ("file/child", "ENOTDIR", "not a directory"),
+    ],
+)
+def test_tmp_symlink_ancestor_uses_resolved_node_error_path(
+    suffix: str,
+    code: str,
+    description: str,
+) -> None:
+    logical = Path(tempfile.mkdtemp(prefix="skm-realpath-", dir="/tmp"))
+    try:
+        (logical / "file").write_text("file", encoding="utf-8")
+        resolved = Path(os.path.realpath(logical))
 
-    assert canonicalize_source("./valid", cwd=tmp_path) == str(target)
+        with pytest.raises(SourceError) as caught:
+            canonicalize_source(str(logical / suffix))
+
+        assert str(caught.value) == (
+            f"{code}: {description}, lstat '{resolved / suffix}'"
+        )
+    finally:
+        shutil.rmtree(logical)
+
+
+def test_valid_local_symlink_resolves_to_target(tmp_path: Path) -> None:
+    _make_realpath_matrix(tmp_path)
+
+    assert canonicalize_source("./alias", cwd=tmp_path) == str(tmp_path / "target")
 
 
 def test_injected_realpath_exception_remains_authoritative(tmp_path: Path) -> None:

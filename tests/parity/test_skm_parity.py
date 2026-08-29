@@ -365,10 +365,20 @@ def test_source_remove_installed_block_matches_javascript(
     ("shape", "source"),
     [
         ("missing", "./missing"),
+        ("alias-missing", "./alias/missing"),
         ("dangling", "./dangling"),
+        ("dangling-child", "./dangling/child"),
         ("child", "./file/child"),
         ("loop", "./loop-a"),
+        ("loop-child", "./loop-a/child"),
+        ("alias-child", "./alias/file/child"),
+        ("nested-missing", "./outer/inner/missing"),
+        ("nested-child", "./outer/inner/file/child"),
+        ("nested-dangling", "./outer/bad/child"),
+        ("nested-loop", "./outer/cycle/child"),
         ("valid", "./valid"),
+        ("tmp-missing", "missing"),
+        ("tmp-child", "file/child"),
     ],
 )
 def test_source_add_local_realpath_shapes_match_javascript(
@@ -378,30 +388,45 @@ def test_source_add_local_realpath_shapes_match_javascript(
     source: str,
 ) -> None:
     case_root = tmp_path / "case"
+    external = Path("/tmp") / f"skm-{tmp_path.parent.name}-{tmp_path.name}"
 
     def run(runtime: str):
         project = case_root / "project"
         project.mkdir(parents=True, exist_ok=True)
-        if shape == "dangling":
-            (project / "dangling").symlink_to("missing-target")
-        elif shape == "child":
-            (project / "file").write_text("file", encoding="utf-8")
-        elif shape == "loop":
-            (project / "loop-a").symlink_to("loop-b")
-            (project / "loop-b").symlink_to("loop-a")
-        elif shape == "valid":
-            (project / "target").mkdir()
-            (project / "valid").symlink_to("target")
+        (project / "target").mkdir()
+        (project / "level").mkdir()
+        (project / "target2").mkdir()
+        (project / "file").write_text("file", encoding="utf-8")
+        (project / "target/file").write_text("file", encoding="utf-8")
+        (project / "target2/file").write_text("file", encoding="utf-8")
+        (project / "alias").symlink_to("target")
+        (project / "dangling").symlink_to("missing-target")
+        (project / "loop-a").symlink_to("loop-b")
+        (project / "loop-b").symlink_to("loop-a")
+        (project / "outer").symlink_to("level")
+        (project / "level/inner").symlink_to("../target2")
+        (project / "level/bad").symlink_to("../absent")
+        (project / "level/cycle").symlink_to("../loop-a")
+        (project / "valid").symlink_to("target")
+        actual_source = source
+        if shape.startswith("tmp-"):
+            shutil.rmtree(external, ignore_errors=True)
+            external.mkdir()
+            (external / "file").write_text("file", encoding="utf-8")
+            actual_source = str(external / source)
         return skm_runner(
             runtime,
             case_root,
-            ["source", "add", source, "--no-skills"],
+            ["source", "add", actual_source, "--no-skills"],
         )
 
-    expected = run("javascript")
-    shutil.rmtree(case_root)
-    actual = run("python")
-    assert actual == expected
+    try:
+        expected = run("javascript")
+        shutil.rmtree(case_root)
+        actual = run("python")
+        assert actual == expected
+    finally:
+        shutil.rmtree(external, ignore_errors=True)
 
 
 def test_source_remove_skips_missing_local_lock_source_like_javascript(

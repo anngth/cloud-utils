@@ -38,15 +38,9 @@ _ASCII_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _WEB_URL = re.compile(r"^(https?):[\\/]*(.*)$", re.IGNORECASE)
 
 
-def _strip_query_and_fragment(value: str) -> str:
-    return re.split(r"[?#]", value, maxsplit=1)[0]
-
-
 def _normalize_web_url(value: str) -> str:
     match = _WEB_URL.fullmatch(value)
-    if match is None:
-        return value
-    return f"{match[1]}://{match[2].replace('\\', '/')}"
+    return value if match is None else f"{match[1]}://{match[2].replace('\\', '/')}"
 
 
 def _has_opaque_credential_risk(value: str) -> bool:
@@ -79,16 +73,12 @@ def _without_url_secrets(parts: SplitResult) -> SplitResult:
     return parts._replace(netloc=netloc, query="", fragment="")
 
 
-def _url_without_trailing_slash(parts: SplitResult) -> str:
-    return urlunsplit(parts).removesuffix("/")
-
-
 def redact_source(value: str) -> str:
     source = str(value)
     if _ASCII_CONTROL.search(source):
         return "[unsafe source redacted]"
 
-    provider_base = _strip_query_and_fragment(source)
+    provider_base = re.split(r"[?#]", source, maxsplit=1)[0]
     if _GENERIC_SCP_PREFIX.search(source):
         return (
             provider_base
@@ -110,15 +100,31 @@ def redact_source(value: str) -> str:
             raise ValueError("not an absolute URL")
         if parts.hostname is None and _has_opaque_credential_risk(source):
             return "[unsafe source redacted]"
-        return _url_without_trailing_slash(_without_url_secrets(parts))
+        return urlunsplit(_without_url_secrets(parts)).removesuffix("/")
     except (SourceError, ValueError):
         without_userinfo = re.sub(r"//[^/@]+@", "//", source)
-        redacted = _strip_query_and_fragment(without_userinfo)
+        redacted = re.split(r"[?#]", without_userinfo, maxsplit=1)[0]
         return (
             "[unsafe source redacted]"
             if _has_opaque_credential_risk(redacted)
             else redacted
         )
+
+
+def _realpath_error_site(value: str, expected: OSError) -> tuple[str, str]:
+    path = os.path.sep
+    for part in Path(value).parts[1:]:
+        candidate = os.path.join(path, part)
+        operation = "stat" if os.path.islink(candidate) else "lstat"
+        try:
+            if operation == "stat":
+                os.stat(candidate)
+            path = os.path.realpath(candidate, strict=True)
+        except OSError as error:
+            if error.errno == expected.errno:
+                return operation, candidate
+            raise expected
+    raise expected
 
 
 def _strict_realpath(value: str) -> str:
@@ -130,9 +136,9 @@ def _strict_realpath(value: str) -> str:
         description = {ELOOP: "too many symbolic links encountered"}.get(
             error.errno, os.strerror(error.errno).lower()
         )
-        operation = "stat" if os.path.lexists(value) else "lstat"
+        operation, path = _realpath_error_site(value, error)
         code = errorcode[error.errno]
-        raise SourceError(f"{code}: {description}, {operation} {value!r}") from error
+        raise SourceError(f"{code}: {description}, {operation} {path!r}") from error
 
 
 def canonicalize_source(
@@ -148,10 +154,9 @@ def canonicalize_source(
     if not source:
         raise SourceError("Source must not be empty")
 
-    source_path = Path(source)
-    if source.startswith(("./", "../")) or source_path.is_absolute():
+    if source.startswith(("./", "../")) or Path(source).is_absolute():
         base = Path.cwd() if cwd is None else cwd
-        return realpath(os.path.abspath(base / source_path))
+        return realpath(os.path.abspath(base / source))
 
     provider_candidate = _is_github_provider_candidate(source)
     if provider_candidate and _has_provider_credential_risk(source):
@@ -192,7 +197,7 @@ def canonicalize_source(
             if len(path) == 2:
                 return f"{path[0]}/{path[1].removesuffix('.git')}"
         path = re.sub(r"\.git/?$", "", safe_parts.path).removesuffix("/")
-        return _url_without_trailing_slash(safe_parts._replace(path=path))
+        return urlunsplit(safe_parts._replace(path=path)).removesuffix("/")
     except SourceError:
         raise
     except ValueError as error:
