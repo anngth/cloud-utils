@@ -361,15 +361,47 @@ def test_source_remove_installed_block_matches_javascript(
     assert actual == expected
 
 
-def test_source_add_missing_local_path_matches_javascript(
+@pytest.mark.parametrize(
+    ("shape", "source"),
+    [
+        ("missing", "./missing"),
+        ("dangling", "./dangling"),
+        ("child", "./file/child"),
+        ("loop", "./loop-a"),
+        ("valid", "./valid"),
+    ],
+)
+def test_source_add_local_realpath_shapes_match_javascript(
     skm_runner,
     tmp_path: Path,
+    shape: str,
+    source: str,
 ) -> None:
-    assert_parity(
-        skm_runner,
-        tmp_path,
-        ("source", "add", "./missing", "--no-skills"),
-    )
+    case_root = tmp_path / "case"
+
+    def run(runtime: str):
+        project = case_root / "project"
+        project.mkdir(parents=True, exist_ok=True)
+        if shape == "dangling":
+            (project / "dangling").symlink_to("missing-target")
+        elif shape == "child":
+            (project / "file").write_text("file", encoding="utf-8")
+        elif shape == "loop":
+            (project / "loop-a").symlink_to("loop-b")
+            (project / "loop-b").symlink_to("loop-a")
+        elif shape == "valid":
+            (project / "target").mkdir()
+            (project / "valid").symlink_to("target")
+        return skm_runner(
+            runtime,
+            case_root,
+            ["source", "add", source, "--no-skills"],
+        )
+
+    expected = run("javascript")
+    shutil.rmtree(case_root)
+    actual = run("python")
+    assert actual == expected
 
 
 def test_source_remove_skips_missing_local_lock_source_like_javascript(

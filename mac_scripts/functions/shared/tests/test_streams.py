@@ -1,17 +1,33 @@
-import io
+import pytest
 
-from shared.streams import is_tty, write_line
-
-
-def test_write_line_preserves_injected_stream() -> None:
-    stream = io.StringIO()
-
-    write_line(stream, "hello")
-
-    assert stream.getvalue() == "hello\n"
+from shared.streams import is_tty
 
 
-def test_is_tty_delegates_to_stream() -> None:
-    stream = io.StringIO()
+class TtyResult:
+    def __init__(self, value: bool) -> None:
+        self.value = value
 
-    assert is_tty(stream) is False
+    def isatty(self) -> bool:
+        return self.value
+
+
+class BrokenTty:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def isatty(self) -> bool:
+        raise self.error
+
+
+@pytest.mark.parametrize(("value", "expected"), [(True, True), (False, False)])
+def test_is_tty_returns_normal_stream_value(value: bool, expected: bool) -> None:
+    assert is_tty(TtyResult(value)) is expected
+
+
+def test_is_tty_returns_false_without_isatty() -> None:
+    assert is_tty(object()) is False
+
+
+@pytest.mark.parametrize("error", [AttributeError("gone"), OSError("closed")])
+def test_is_tty_returns_false_when_isatty_fails(error: Exception) -> None:
+    assert is_tty(BrokenTty(error)) is False

@@ -22,6 +22,11 @@ class TtyStringIO(io.StringIO):
         return True
 
 
+class BrokenTtyStringIO(io.StringIO):
+    def isatty(self) -> bool:
+        raise OSError("terminal unavailable")
+
+
 def available(*names: str) -> tuple[AvailableSkill, ...]:
     return tuple(AvailableSkill(name, name.upper()) for name in names)
 
@@ -140,6 +145,31 @@ def test_source_add_cancelled_selection_does_not_write(
         yes=False,
         context=context,
     ) == 0
+
+
+def test_source_selection_tty_failure_uses_stable_noninteractive_error(
+    context: CommandContext,
+) -> None:
+    context.catalog = Catalog(version=1, sources=())
+    context.services.discover_available_skills = lambda *_args, **_kwargs: (
+        available("one")
+    )
+    context.stdin = BrokenTtyStringIO()
+    context.stdout = TtyStringIO()
+    context.services.write_catalog = lambda *_args: pytest.fail("catalog wrote")
+
+    assert run_source_add(
+        "owner/new",
+        skills=(),
+        all_skills=False,
+        no_skills=False,
+        yes=False,
+        context=context,
+    ) == 1
+    assert context.stderr.getvalue() == (
+        "\x1b[31m❌ Select skills from owner/new requires an interactive "
+        "terminal\x1b[39m\n"
+    )
 
 
 def test_source_add_conflict_redacts_owner_and_does_not_write(

@@ -6,8 +6,8 @@ class TextWriter(Protocol):
 
     def isatty(self) -> bool: ...
 
-def write_line(stream: TextWriter, text: str = "") -> None:
-    stream.write(f"{text}\n")
-
-def is_tty(stream: TextWriter) -> bool:
-    return stream.isatty()
+def is_tty(stream: object) -> bool:
+    try:
+        return bool(stream.isatty())  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        return False

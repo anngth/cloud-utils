@@ -140,15 +140,63 @@ def test_local_paths_use_injected_cwd_and_realpath() -> None:
     ) == "/real/repo/skills"
 
 
-def test_missing_local_path_matches_strict_node_realpath(tmp_path: Path) -> None:
-    missing = tmp_path / "missing"
+@pytest.mark.parametrize(
+    ("shape", "source", "code", "description", "operation"),
+    [
+        ("missing", "./missing", "ENOENT", "no such file or directory", "lstat"),
+        ("dangling", "./dangling", "ENOENT", "no such file or directory", "stat"),
+        ("child", "./file/child", "ENOTDIR", "not a directory", "lstat"),
+        (
+            "loop",
+            "./loop-a",
+            "ELOOP",
+            "too many symbolic links encountered",
+            "stat",
+        ),
+    ],
+)
+def test_invalid_local_path_errors_match_node_realpath(
+    tmp_path: Path,
+    shape: str,
+    source: str,
+    code: str,
+    description: str,
+    operation: str,
+) -> None:
+    if shape == "dangling":
+        (tmp_path / "dangling").symlink_to("missing-target")
+    elif shape == "child":
+        (tmp_path / "file").write_text("file", encoding="utf-8")
+    elif shape == "loop":
+        (tmp_path / "loop-a").symlink_to("loop-b")
+        (tmp_path / "loop-b").symlink_to("loop-a")
 
     with pytest.raises(SourceError) as caught:
-        canonicalize_source("./missing", cwd=tmp_path)
+        canonicalize_source(source, cwd=tmp_path)
 
     assert str(caught.value) == (
-        f"ENOENT: no such file or directory, lstat '{missing}'"
+        f"{code}: {description}, {operation} '{tmp_path / source[2:]}'"
     )
+
+
+def test_valid_local_symlink_resolves_to_target(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    (tmp_path / "valid").symlink_to("target")
+
+    assert canonicalize_source("./valid", cwd=tmp_path) == str(target)
+
+
+def test_injected_realpath_exception_remains_authoritative(tmp_path: Path) -> None:
+    expected = OSError("injected realpath failure")
+
+    def fail(_value: str) -> str:
+        raise expected
+
+    with pytest.raises(OSError) as caught:
+        canonicalize_source("./missing", cwd=tmp_path, realpath=fail)
+
+    assert caught.value is expected
 
 
 def test_generic_url_credentials_query_and_fragment_are_removed() -> None:

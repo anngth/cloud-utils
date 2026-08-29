@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Callable
+from errno import ELOOP, ENOENT, ENOTDIR, errorcode
 from pathlib import Path
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
@@ -50,29 +51,17 @@ def _normalize_web_url(value: str) -> str:
 
 def _has_opaque_credential_risk(value: str) -> bool:
     return bool(
-        "?" in value
-        or "#" in value
-        or _URL_CREDENTIALS.search(value)
+        "?" in value or "#" in value or _URL_CREDENTIALS.search(value)
         or _CREDENTIAL_ASSIGNMENT.search(value)
     )
 
 
 def _has_provider_credential_risk(value: str) -> bool:
-    return bool(
-        "?" in value or "#" in value or _CREDENTIAL_ASSIGNMENT.search(value)
-    )
+    return bool("?" in value or "#" in value or _CREDENTIAL_ASSIGNMENT.search(value))
 
 
 def _is_github_provider_candidate(value: str) -> bool:
     return bool(_GITHUB_SSH_PREFIX.search(value) or _SHORTHAND_CANDIDATE.search(value))
-
-
-def _safe_github_provider_source(value: str) -> bool:
-    return bool(_GITHUB_SSH.fullmatch(value) or _SHORTHAND.fullmatch(value))
-
-
-def _safe_generic_scp_source(value: str) -> bool:
-    return bool(_GENERIC_SCP.fullmatch(value))
 
 
 def _without_url_secrets(parts: SplitResult) -> SplitResult:
@@ -103,13 +92,14 @@ def redact_source(value: str) -> str:
     if _GENERIC_SCP_PREFIX.search(source):
         return (
             provider_base
-            if _safe_generic_scp_source(provider_base)
+            if _GENERIC_SCP.fullmatch(provider_base)
             else "[unsafe source redacted]"
         )
     if _is_github_provider_candidate(source):
         return (
             provider_base
-            if _safe_github_provider_source(provider_base)
+            if _GITHUB_SSH.fullmatch(provider_base)
+            or _SHORTHAND.fullmatch(provider_base)
             else "[unsafe source redacted]"
         )
 
@@ -134,10 +124,15 @@ def redact_source(value: str) -> str:
 def _strict_realpath(value: str) -> str:
     try:
         return os.path.realpath(value, strict=True)
-    except FileNotFoundError as error:
-        missing = error.filename or value
-        message = f"ENOENT: no such file or directory, lstat {missing!r}"
-        raise SourceError(message) from error
+    except OSError as error:
+        if error.errno not in (ENOENT, ENOTDIR, ELOOP):
+            raise
+        description = {ELOOP: "too many symbolic links encountered"}.get(
+            error.errno, os.strerror(error.errno).lower()
+        )
+        operation = "stat" if os.path.lexists(value) else "lstat"
+        code = errorcode[error.errno]
+        raise SourceError(f"{code}: {description}, {operation} {value!r}") from error
 
 
 def canonicalize_source(

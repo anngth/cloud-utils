@@ -139,6 +139,27 @@ def test_no_arguments_require_both_streams_to_be_ttys(
     assert "--all" in stderr.getvalue()
 
 
+def test_no_arguments_without_isatty_render_noninteractive_error() -> None:
+    services = Services(
+        initialize_config=lambda **_: pytest.fail("config touched"),
+        has_command=lambda *_args, **_kwargs: pytest.fail("npx checked"),
+    )
+    stdout, stderr = io.StringIO(), io.StringIO()
+
+    assert run_cli(
+        (),
+        stdin=object(),  # type: ignore[arg-type]
+        stdout=stdout,
+        stderr=stderr,
+        services=services,
+    ) == 1
+    assert stdout.getvalue() == ""
+    assert stderr.getvalue() == (
+        "\x1b[31m❌ skm requires an interactive terminal; use skm add, "
+        "skm remove, or skm add --all\x1b[39m\n"
+    )
+
+
 def test_no_arguments_with_ttys_bootstrap_without_operation_stubs(
     tmp_path: Path,
 ) -> None:
