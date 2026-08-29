@@ -10,6 +10,7 @@ from typing import NoReturn, TextIO
 import click
 
 from shared.selector import SelectorItem, SelectorResult, run_selector
+from shared.streams import is_tty
 
 from .catalog_commands import (
     SkmUsageError, parse_source_command, run_source_command,
@@ -139,13 +140,6 @@ class _ValidatedCommand(click.Command):
         return super().parse_args(ctx, args)
 
 
-def _is_tty(stream: TextIO) -> bool:
-    try:
-        return stream.isatty()
-    except (AttributeError, OSError):
-        return False
-
-
 def _wire_context(
     *, cwd: Path, env: Mapping[str, str], stdin: TextIO, stdout: TextIO,
     stderr: TextIO, paths: ConfigPaths, catalog: Catalog, ui: SkmUi,
@@ -262,7 +256,7 @@ def run_cli(
         ui.usage()
         return 1
     if action is None and (
-        not _is_tty(actual_stdin) or not _is_tty(actual_stdout)
+        not is_tty(actual_stdin) or not is_tty(actual_stdout)
     ):
         ui.error(
             "skm requires an interactive terminal; use skm add, skm remove, "

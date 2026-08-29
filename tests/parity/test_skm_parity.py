@@ -359,3 +359,114 @@ def test_source_remove_installed_block_matches_javascript(
         npx_responses=responses,
     )
     assert actual == expected
+
+
+def test_source_add_missing_local_path_matches_javascript(
+    skm_runner,
+    tmp_path: Path,
+) -> None:
+    assert_parity(
+        skm_runner,
+        tmp_path,
+        ("source", "add", "./missing", "--no-skills"),
+    )
+
+
+def test_source_remove_skips_missing_local_lock_source_like_javascript(
+    skm_runner,
+    tmp_path: Path,
+) -> None:
+    case_root = tmp_path / "case"
+    responses = {
+        ("skills", "list", "--json"): {
+            "status": 0,
+            "stdout": (
+                '[{"name":"demo","path":"/skills/demo",'
+                '"scope":"project","agents":["Codex"]}]\n'
+            ),
+            "stderr": "",
+        }
+    }
+
+    def run(runtime: str):
+        project = case_root / "project"
+        project.mkdir(parents=True, exist_ok=True)
+        (project / "skills-lock.json").write_text(
+            json.dumps({"skills": {"demo": {"source": "./missing"}}}),
+            encoding="utf-8",
+        )
+        sources = {
+            "version": 1,
+            "sources": [
+                {
+                    "source": str((project / "missing").resolve()),
+                    "skills": ["demo"],
+                }
+            ],
+        }
+        return skm_runner(
+            runtime,
+            case_root,
+            ["source", "remove", "1"],
+            sources=sources,
+            npx_responses=responses,
+        )
+
+    expected = run("javascript")
+    shutil.rmtree(case_root)
+    actual = run("python")
+    assert actual == expected
+
+
+def test_source_add_preserves_well_formed_catalog_json_bytes(
+    skm_runner,
+    tmp_path: Path,
+) -> None:
+    assert_parity(
+        skm_runner,
+        tmp_path,
+        ("source", "add", "owner/new", "--no-skills"),
+        sources={
+            "meta": {
+                "high": "\ud800",
+                "nested": [
+                    {
+                        "key\ud800": "value",
+                        "low": "\udc00",
+                        "pair": "\ud83d\ude00",
+                    }
+                ],
+                "emoji": "😀",
+                "line": "left\u2028right",
+            },
+            "version": 1,
+            "sources": [
+                {
+                    "extra": {"second": 2, "first": 1},
+                    "source": "owner/old",
+                    "skills": [],
+                }
+            ],
+        },
+    )
+
+
+def test_source_conflict_replaces_lone_surrogate_like_javascript(
+    skm_runner,
+    tmp_path: Path,
+) -> None:
+    assert_parity(
+        skm_runner,
+        tmp_path,
+        ("source", "add", "owner/new", "--all"),
+        sources={
+            "version": 1,
+            "sources": [
+                {
+                    "source": "opaque-\ud800",
+                    "skills": ["frontend-design"],
+                }
+            ],
+        },
+        npx_responses=discovery("owner/new"),
+    )

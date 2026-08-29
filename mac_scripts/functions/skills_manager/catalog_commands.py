@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from shared.selector import SelectorItem
+from shared.streams import is_tty
 
 from .config import (
     cross_source_skill_conflicts,
@@ -100,13 +101,6 @@ def parse_source_command(args: Sequence[str]) -> SourceRequest | None:
     )
 
 
-def _is_tty(stream: object) -> bool:
-    try:
-        return bool(stream.isatty())  # type: ignore[attr-defined]
-    except (AttributeError, OSError):
-        return False
-
-
 def select_source_skills(
     source: str, *, requested: Sequence[str], all_skills: bool,
     no_skills: bool, initial: Sequence[str], context: CommandContext,
@@ -128,7 +122,7 @@ def select_source_skills(
             raise ValueError(f"Skills not found in source: {', '.join(missing)}")
         return SelectionOutcome("submit", selected)
     title = f"Select skills from {redact_source(source)}"
-    if not _is_tty(context.stdin) or not _is_tty(context.stdout):
+    if not is_tty(context.stdin) or not is_tty(context.stdout):
         raise ValueError(f"{title} requires an interactive terminal")
     result = context.select_items(
         tuple(
@@ -146,7 +140,8 @@ def _report(
     try:
         return operation(*args, context=context)
     except Exception as error:
-        context.ui.error(str(error))
+        message = str(error).encode("utf-16", "surrogatepass")
+        context.ui.error(message.decode("utf-16", "replace"))
         return 1
 
 

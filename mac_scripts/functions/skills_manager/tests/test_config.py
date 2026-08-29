@@ -239,6 +239,51 @@ def test_catalog_and_source_extras_are_deeply_frozen_and_serialize_normally(
     )
 
 
+def test_write_catalog_emits_well_formed_json_without_escaping_unicode(
+    tmp_path: Path,
+) -> None:
+    raw = {
+        "meta": {
+            "high": "\ud800",
+            "nested": [
+                {
+                    "key\ud800": "value",
+                    "low": "\udc00",
+                    "pair": "\ud83d\ude00",
+                }
+            ],
+            "emoji": "😀",
+            "line": "left\u2028right",
+        },
+        "version": 1,
+        "sources": [
+            {
+                "extra": {"second": 2, "first": 1},
+                "source": "owner/old",
+                "skills": [],
+            }
+        ],
+    }
+    paths = ConfigPaths.for_config_dir(tmp_path)
+    paths.skm_dir.mkdir(parents=True)
+
+    write_catalog(paths, validate_catalog(raw), pid=81)
+
+    assert paths.sources_file.read_bytes() == (
+        b'{\n  "meta": {\n    "high": "\\ud800",\n'
+        b'    "nested": [\n      {\n        "key\\ud800": "value",\n'
+        b'        "low": "\\udc00",\n'
+        b'        "pair": "\xf0\x9f\x98\x80"\n      }\n    ],\n'
+        b'    "emoji": "\xf0\x9f\x98\x80",\n'
+        b'    "line": "left\xe2\x80\xa8right"\n  },\n'
+        b'  "version": 1,\n  "sources": [\n    {\n'
+        b'      "extra": {\n        "second": 2,\n'
+        b'        "first": 1\n      },\n'
+        b'      "source": "owner/old",\n      "skills": []\n'
+        b'    }\n  ]\n}\n'
+    )
+
+
 def test_frozen_extras_support_pydantic_json_dump_and_deep_copy() -> None:
     raw = {
         "meta": {"z": [1, {"nested": [2]}], "a": "last"},

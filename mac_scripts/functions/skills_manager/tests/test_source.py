@@ -140,6 +140,17 @@ def test_local_paths_use_injected_cwd_and_realpath() -> None:
     ) == "/real/repo/skills"
 
 
+def test_missing_local_path_matches_strict_node_realpath(tmp_path: Path) -> None:
+    missing = tmp_path / "missing"
+
+    with pytest.raises(SourceError) as caught:
+        canonicalize_source("./missing", cwd=tmp_path)
+
+    assert str(caught.value) == (
+        f"ENOENT: no such file or directory, lstat '{missing}'"
+    )
+
+
 def test_generic_url_credentials_query_and_fragment_are_removed() -> None:
     raw = "https://user:secret@git.example.com/acme/skills.git?token=query-secret"
     canonical = canonicalize_source(raw)

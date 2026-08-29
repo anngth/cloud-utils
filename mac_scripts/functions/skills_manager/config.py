@@ -522,25 +522,34 @@ def _read_legacy_sources(file_path: Path) -> tuple[str, ...]:
             f"Invalid legacy source list: {file_path}", file_path=file_path
         )
     try:
-        return tuple(sorted({canonicalize_source(entry["source"]) for entry in entries}))
+        return tuple(sorted({canonicalize_source(x["source"]) for x in entries}))
     except Exception as error:
         raise ConfigError(
             f"Invalid legacy source list: {file_path}", file_path=file_path
         ) from error
 
 
+def _well_formed_json(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        points = tuple(map(ord, match.group()))
+        if len(points) == 1:
+            return f"\\u{points[0]:04x}"
+        return chr(0x10000 + (points[0] - 0xD800) * 0x400 + points[1] - 0xDC00)
+    pattern = r"[\ud800-\udbff][\udc00-\udfff]|[\ud800-\udfff]"
+    return re.sub(pattern, replace, text)
+
+
 def _json_bytes(catalog: Catalog) -> bytes:
-    value = _ordered_model_value(catalog)
     try:
         serialized = json.dumps(
-            value,
+            _ordered_model_value(catalog),
             indent=2,
             ensure_ascii=False,
             allow_nan=False,
         )
     except (TypeError, ValueError) as error:
         raise CatalogError("Catalog contains a non-JSON value") from error
-    return (serialized + "\n").encode("utf-8")
+    return (_well_formed_json(serialized) + "\n").encode("utf-8")
 
 
 def _write_catalog_atomic(file_path: Path, catalog: Catalog, *, pid: int) -> None:

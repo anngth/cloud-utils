@@ -64,7 +64,7 @@ def _has_provider_credential_risk(value: str) -> bool:
 
 
 def _is_github_provider_candidate(value: str) -> bool:
-    return bool(_GITHUB_SSH_PREFIX.search(value) or _SHORTHAND_CANDIDATE.fullmatch(value))
+    return bool(_GITHUB_SSH_PREFIX.search(value) or _SHORTHAND_CANDIDATE.search(value))
 
 
 def _safe_github_provider_source(value: str) -> bool:
@@ -131,11 +131,20 @@ def redact_source(value: str) -> str:
         )
 
 
+def _strict_realpath(value: str) -> str:
+    try:
+        return os.path.realpath(value, strict=True)
+    except FileNotFoundError as error:
+        missing = error.filename or value
+        message = f"ENOENT: no such file or directory, lstat {missing!r}"
+        raise SourceError(message) from error
+
+
 def canonicalize_source(
     value: str,
     *,
     cwd: Path | None = None,
-    realpath: Callable[[str], str] = os.path.realpath,
+    realpath: Callable[[str], str] = _strict_realpath,
 ) -> str:
     raw_source = str(value)
     if _ASCII_CONTROL.search(raw_source):
@@ -147,8 +156,7 @@ def canonicalize_source(
     source_path = Path(source)
     if source.startswith(("./", "../")) or source_path.is_absolute():
         base = Path.cwd() if cwd is None else cwd
-        resolved = (base / source_path).resolve(strict=False)
-        return realpath(str(resolved))
+        return realpath(os.path.abspath(base / source_path))
 
     provider_candidate = _is_github_provider_candidate(source)
     if provider_candidate and _has_provider_credential_risk(source):
@@ -185,9 +193,9 @@ def canonicalize_source(
             raise SourceError("Unsafe source credentials")
         safe_parts = _without_url_secrets(parts)
         if safe_parts.hostname == "github.com":
-            path_parts = [part for part in safe_parts.path.lstrip("/").split("/") if part]
-            if len(path_parts) == 2:
-                return f"{path_parts[0]}/{path_parts[1].removesuffix('.git')}"
+            path = tuple(filter(None, safe_parts.path.lstrip("/").split("/")))
+            if len(path) == 2:
+                return f"{path[0]}/{path[1].removesuffix('.git')}"
         path = re.sub(r"\.git/?$", "", safe_parts.path).removesuffix("/")
         return _url_without_trailing_slash(safe_parts._replace(path=path))
     except SourceError:
