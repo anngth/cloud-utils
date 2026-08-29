@@ -1,18 +1,13 @@
 from __future__ import annotations
 
-import json
 import os
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from skills_manager.source import SourceError, canonicalize_source, redact_source
-
-
-_REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 def _make_realpath_matrix(root: Path) -> None:
@@ -30,50 +25,6 @@ def _make_realpath_matrix(root: Path) -> None:
     (root / "level/inner").symlink_to("../target2")
     (root / "level/bad").symlink_to("../absent")
     (root / "level/cycle").symlink_to("../loop-a")
-
-
-def _node_source_identity(value: str) -> tuple[str, str]:
-    script = """
-import { canonicalizeSource, redactSource } from
-  './mac_scripts/functions/skills-manager/source-id.mjs';
-console.log(JSON.stringify([
-  canonicalizeSource(process.argv[1]),
-  redactSource(process.argv[1]),
-]));
-"""
-    completed = subprocess.run(
-        ["node", "--input-type=module", "-e", script, value],
-        cwd=_REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    canonical, redacted = json.loads(completed.stdout)
-    return canonical, redacted
-
-
-def _node_source_outcome(value: str) -> tuple[str | None, str | None, str]:
-    script = """
-import { canonicalizeSource, redactSource } from
-  './mac_scripts/functions/skills-manager/source-id.mjs';
-let canonical = null;
-let error = null;
-try {
-  canonical = canonicalizeSource(process.argv[1]);
-} catch (caught) {
-  error = caught.message;
-}
-console.log(JSON.stringify([canonical, error, redactSource(process.argv[1])]));
-"""
-    completed = subprocess.run(
-        ["node", "--input-type=module", "-e", script, value],
-        cwd=_REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    canonical, error, redacted = json.loads(completed.stdout)
-    return canonical, error, redacted
 
 
 @pytest.mark.parametrize(
@@ -343,12 +294,10 @@ def test_backslash_https_url_credentials_are_normalized_and_removed() -> None:
         ("http:////user:secret@example.com/acme/repo.git", "http"),
     ],
 )
-def test_http_slash_variants_match_live_node_without_credentials(
+def test_http_slash_variants_match_literal_oracle_without_credentials(
     raw: str, scheme: str
 ) -> None:
-    expected = _node_source_identity(raw)
-
-    assert expected == (
+    expected = (
         f"{scheme}://example.com/acme/repo",
         f"{scheme}://example.com/acme/repo.git",
     )
@@ -358,28 +307,30 @@ def test_http_slash_variants_match_live_node_without_credentials(
 
 
 @pytest.mark.parametrize(
-    "raw",
+    ("raw", "expected_error"),
     [
-        r"https:user\name:secret@example.com/a.git",
-        r"https:user\name:password@example.com/a.git?token=query-secret",
-        r"http:user\name:password@example.com/a.git#fragment-secret",
+        (
+            r"https:user\name:secret@example.com/a.git",
+            "Invalid GitHub shorthand source",
+        ),
+        (
+            r"https:user\name:password@example.com/a.git?token=query-secret",
+            "Unsafe source credentials",
+        ),
+        (
+            r"http:user\name:password@example.com/a.git#fragment-secret",
+            "Unsafe source credentials",
+        ),
     ],
 )
 def test_raw_provider_candidate_fails_closed_before_url_normalization(
     raw: str,
+    expected_error: str,
 ) -> None:
-    canonical, node_error, node_redacted = _node_source_outcome(raw)
-
-    assert canonical is None
-    assert node_error in {
-        "Invalid GitHub shorthand source",
-        "Unsafe source credentials",
-    }
-    assert node_redacted == "[unsafe source redacted]"
     with pytest.raises(SourceError) as caught:
         canonicalize_source(raw)
-    assert str(caught.value) == node_error
-    assert redact_source(raw) == node_redacted
+    assert str(caught.value) == expected_error
+    assert redact_source(raw) == "[unsafe source redacted]"
     exposed = f"{caught.value} {redact_source(raw)}".lower()
     assert not any(
         credential in exposed
@@ -395,16 +346,11 @@ def test_raw_provider_candidate_fails_closed_before_url_normalization(
         r"https:////user:password@example.com/a\repo.git#fragment-secret",
     ],
 )
-def test_url_branch_slashes_backslash_path_and_suffix_match_live_node(
+def test_url_branch_slashes_backslash_path_and_suffix_match_literal_oracle(
     raw: str,
 ) -> None:
-    canonical, node_error, node_redacted = _node_source_outcome(raw)
-
-    assert node_error is None
-    assert canonical == "https://example.com/a/repo"
-    assert node_redacted == "https://example.com/a/repo.git"
-    assert canonicalize_source(raw) == canonical
-    assert redact_source(raw) == node_redacted
+    assert canonicalize_source(raw) == "https://example.com/a/repo"
+    assert redact_source(raw) == "https://example.com/a/repo.git"
     exposed = f"{canonicalize_source(raw)} {redact_source(raw)}".lower()
     assert not any(
         credential in exposed

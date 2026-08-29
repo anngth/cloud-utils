@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import stat
 import subprocess
@@ -32,6 +33,14 @@ def _copy_gt_wrapper(tmp_path: Path) -> Path:
     return wrapper
 
 
+def _copy_skm_wrapper(tmp_path: Path) -> Path:
+    scripts_dir = tmp_path / "repo" / "mac_scripts"
+    scripts_dir.mkdir(parents=True)
+    wrapper = scripts_dir / "skm"
+    shutil.copy2(REPO_ROOT / "mac_scripts" / "skm", wrapper)
+    return wrapper
+
+
 def _recording_python(
     repo_root: Path,
     exit_code: int,
@@ -46,7 +55,9 @@ def _recording_python(
         "import os\n"
         "import sys\n"
         "from pathlib import Path\n"
-        f"Path(os.environ[{invocation_variable!r}]).write_text(json.dumps(sys.argv[1:]))\n"
+        f"Path(os.environ[{invocation_variable!r}]).write_text(\n"
+        "    json.dumps(sys.argv[1:])\n"
+        ")\n"
         f"raise SystemExit({exit_code})\n",
         encoding="utf-8",
     )
@@ -188,3 +199,51 @@ def test_gt_reports_how_to_create_missing_project_environment(
     assert "gt" in stderr_lines[0]
     assert "uv sync --locked" in stderr_lines[0]
     assert not (wrapper.parents[1] / ".venv").exists()
+
+
+def test_skm_wrapper_uses_local_python_from_foreign_cwd(tmp_path: Path) -> None:
+    wrapper = _copy_skm_wrapper(tmp_path)
+    repo_root = wrapper.parents[1]
+    _recording_python(
+        repo_root,
+        exit_code=37,
+        invocation_variable="SKM_INVOCATION",
+    )
+    invocation_path = tmp_path / "invocation.json"
+    foreign_cwd = tmp_path / "foreign"
+    foreign_cwd.mkdir()
+
+    result = subprocess.run(
+        [str(wrapper), "status"],
+        cwd=foreign_cwd,
+        env={"SKM_INVOCATION": str(invocation_path)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    invocation = json.loads(invocation_path.read_text(encoding="utf-8"))
+    assert invocation == ["-m", "skills_manager.cli", "status"]
+    assert result.returncode == 37
+
+
+def test_skm_wrapper_missing_environment_does_not_create_config(
+    tmp_path: Path,
+) -> None:
+    wrapper = _copy_skm_wrapper(tmp_path)
+    env = os.environ.copy()
+    env["CLOUD_UTILS_CONFIG_DIR"] = str(tmp_path / "config")
+
+    result = subprocess.run(
+        [str(wrapper)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "skm requires the project environment" in result.stderr
+    assert "uv sync --locked" in result.stderr
+    assert not (tmp_path / "config").exists()

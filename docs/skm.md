@@ -5,6 +5,13 @@ skills. The catalog lives in `$CLOUD_UTILS_CONFIG_DIR/skm/sources.json`; legacy
 `profiles.json`, `projects.json`, and `list.json` are migration input only and
 are retained unchanged after migration. See [setup.md — Local config](setup.md#local-config).
 
+SKM itself runs in the repository's uv-managed Python environment. Run
+`uv sync --locked` during setup and after lock changes. Node/npm remains
+required only because SKM invokes the external `npx skills` CLI for discovery
+and project-local skill operations. The public commands and catalog path are
+unchanged. A catalog example is available at
+`mac_scripts/functions/skills_manager/sources.json.example`.
+
 ```bash
 skm
 skm source add vercel-labs/agent-skills -a
@@ -27,13 +34,13 @@ Choosing Yes runs the changes and prints one combined Changes summary.
 | Family | Supported commands |
 | --- | --- |
 | Lifecycle | `add <source\|index...> [--all]`, `remove <source\|index...> [--all]`, `status` |
-| Catalog | `source add <source>`, `source remove <source\|index>` |
+| Catalog | `source add <source>`, `source edit <source\|index>`, `source remove <source\|index>` |
 
 | Flag | Meaning |
 | --- | --- |
 | `-h`, `--help` | Show top-level SKM help |
-| `-k`, `--skill` | Select explicit skills for `source add`; repeat for multiple skills |
-| `-a`, `--all` | Install/uninstall every catalog source (`add`/`remove`), or snapshot every discovered skill (`source add`) |
+| `-k`, `--skill` | Select explicit skills for `source add` or `source edit`; repeat for multiple skills |
+| `-a`, `--all` | Install/uninstall every catalog source (`add`/`remove`), or snapshot every discovered skill (`source add`/`source edit`) |
 | `-n`, `--no-skills` | Save a catalog source with an empty skill selection |
 | `-y`, `--yes` | Skip SKM and upstream confirmation prompts |
 | `-d`, `--dry-run` | Render a lifecycle plan without mutation |

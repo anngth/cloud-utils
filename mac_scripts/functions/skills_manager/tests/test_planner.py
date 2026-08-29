@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -54,16 +53,6 @@ def _actual(
         if provenance is None
         else provenance,
     )
-
-
-def _node_json(script: str) -> object:
-    result = subprocess.run(
-        ("node", "-e", script),
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return json.loads(result.stdout)
 
 
 def test_planner_runtime_type_hints_and_state_names_remain_available() -> None:
@@ -143,7 +132,7 @@ def test_requirement_key_matches_literal_node_json_identity(
     assert requirement_key(source, skill) == expected
 
 
-def test_requirement_key_matches_live_node_json_stringify() -> None:
+def test_requirement_key_matches_literal_json_stringify_matrix() -> None:
     pairs = (
         ("owner/é", "skill/é"),
         ("owner/😀", "skill/😀"),
@@ -152,23 +141,16 @@ def test_requirement_key_matches_live_node_json_stringify() -> None:
         ("owner/\ud800", "skill/\udc00"),
         ("owner/\ud83d\ude00", "skill/paired"),
     )
-    node_keys = _node_json(
-        """
-const pairs = [
-  ["owner/é", "skill/é"],
-  ["owner/😀", "skill/😀"],
-  ["owner/\\u2028", "skill/\\u2029"],
-  ["owner/\\\"\\\\\\n", "skill/\\u0000\\u0001\\b\\f\\n\\r\\t"],
-  ["owner/\\ud800", "skill/\\udc00"],
-  ["owner/\\ud83d\\ude00", "skill/paired"],
-];
-process.stdout.write(JSON.stringify(
-  pairs.map(([source, skill]) => JSON.stringify([source, skill])),
-));
-"""
+    expected = (
+        '["owner/é","skill/é"]',
+        '["owner/😀","skill/😀"]',
+        '["owner/\u2028","skill/\u2029"]',
+        r'["owner/\"\\\n","skill/\u0000\u0001\b\f\n\r\t"]',
+        r'["owner/\ud800","skill/\udc00"]',
+        '["owner/😀","skill/paired"]',
     )
 
-    assert tuple(requirement_key(*pair) for pair in pairs) == tuple(node_keys)
+    assert tuple(requirement_key(*pair) for pair in pairs) == expected
 
 
 def test_plan_values_are_frozen_and_ordered_collections_are_tuples() -> None:
@@ -264,7 +246,7 @@ def test_js_equivalent_skill_spellings_share_one_first_seen_conflict() -> None:
     )
 
 
-def test_catalog_utf16_identity_matches_live_node_planner() -> None:
+def test_catalog_utf16_identity_matches_literal_oracle() -> None:
     paired = "\ud83d\ude00"
     lone = "\ud800"
     same_source = catalog_requirements(
@@ -305,57 +287,25 @@ def test_catalog_utf16_identity_matches_live_node_planner() -> None:
             "conflicts": len(lone_source.desired_conflicts),
         },
     }
-    node_summary = _node_json(
-        """
-import("./mac_scripts/functions/skills-manager/planner.mjs").then((planner) => {
-  const paired = "\\ud83d\\ude00";
-  const lone = "\\ud800";
-  const sameSource = planner.catalogRequirements({
-    version: 1,
-    sources: [
-      { source: `${paired}/repo`, skills: ["review"] },
-      { source: "😀/repo", skills: ["review"] },
-    ],
-  });
-  const sameSkill = planner.catalogRequirements({
-    version: 1,
-    sources: [
-      { source: "a/repo", skills: ["😀"] },
-      { source: "b/repo", skills: [paired] },
-    ],
-  });
-  const loneSource = planner.catalogRequirements({
-    version: 1,
-    sources: [
-      { source: "😀/repo", skills: ["review"] },
-      { source: `${lone}/repo`, skills: ["review"] },
-    ],
-  });
-  process.stdout.write(JSON.stringify({
-    sameSource: {
-      keys: sameSource.requirements.map((item) => item.key),
-      conflicts: sameSource.desiredConflicts.length,
-    },
-    sameSkill: {
-      keys: sameSkill.requirements.map((item) => item.key),
-      conflicts: sameSkill.desiredConflicts.map((item) => ({
-        skill: planner.requirementKey("", item.skill),
-        sources: item.sources,
-      })),
-    },
-    loneSource: {
-      keys: loneSource.requirements.map((item) => item.key),
-      conflicts: loneSource.desiredConflicts.length,
-    },
-  }));
-}).catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
-"""
-    )
-
-    assert python_summary == node_summary
+    assert python_summary == {
+        "sameSource": {
+            "keys": ['["😀/repo","review"]'],
+            "conflicts": 0,
+        },
+        "sameSkill": {
+            "keys": ['["a/repo","😀"]', '["b/repo","😀"]'],
+            "conflicts": [
+                {
+                    "skill": '["","😀"]',
+                    "sources": ["a/repo", "b/repo"],
+                }
+            ],
+        },
+        "loneSource": {
+            "keys": ['["😀/repo","review"]', r'["\ud800/repo","review"]'],
+            "conflicts": 1,
+        },
+    }
 
 
 def test_catalog_requirements_uses_stable_nfc_code_point_skill_order() -> None:
@@ -433,7 +383,7 @@ def test_conflict_sources_use_literal_javascript_array_sort_order() -> None:
     )
 
 
-def test_conflict_source_order_matches_live_node_array_sort() -> None:
+def test_conflict_source_order_matches_literal_array_sort_oracle() -> None:
     sources = (
         "\ue000/repo",
         "😀/repo",
@@ -442,24 +392,18 @@ def test_conflict_source_order_matches_live_node_array_sort() -> None:
         "\ud800/repo",
         "\udc00/repo",
     )
-    node_sources = _node_json(
-        """
-const sources = [
-  "\\ue000/repo",
-  "😀/repo",
-  "a/repo",
-  "\\ud7ff/repo",
-  "\\ud800/repo",
-  "\\udc00/repo",
-];
-process.stdout.write(JSON.stringify(sources.sort()));
-"""
-    )
     merged = catalog_requirements(
         _catalog(*tuple((source, ("review",)) for source in sources))
     )
 
-    assert merged.desired_conflicts[0].sources == tuple(node_sources)
+    assert merged.desired_conflicts[0].sources == (
+        "a/repo",
+        "\ud7ff/repo",
+        "\ud800/repo",
+        "😀/repo",
+        "\udc00/repo",
+        "\ue000/repo",
+    )
 
 
 def test_classify_status_keeps_requirement_and_extra_order() -> None:
@@ -706,7 +650,7 @@ def test_equivalent_installed_key_collision_uses_last_record_for_lookup() -> Non
     assert status.extras == ()
 
 
-def test_downstream_utf16_identity_matches_live_node_planner() -> None:
+def test_downstream_utf16_identity_matches_literal_oracle() -> None:
     paired = "\ud83d\ude00"
     lookup_requirement = Requirement(
         requirement_key(f"{paired}/repo", paired),
@@ -780,99 +724,26 @@ def test_downstream_utf16_identity_matches_live_node_planner() -> None:
             "absent": [item.key for item in uninstall.absent],
         },
     }
-    node_summary = _node_json(
-        """
-import("./mac_scripts/functions/skills-manager/planner.mjs").then((planner) => {
-  const paired = "\\ud83d\\ude00";
-  const scalar = "😀";
-  const actual = (name, path, source) => ({
-    name,
-    path,
-    agents: [],
-    source,
-    provenance: "tracked",
-  });
-  const requirement = (source, skill) => ({
-    key: planner.requirementKey(source, skill),
-    source,
-    skill,
-  });
-
-  const lookupRequirement = requirement(`${paired}/repo`, paired);
-  const lookupState = new Map([
-    [paired, actual(paired, "/first", "wrong/repo")],
-    [scalar, actual(scalar, "/last", `${scalar}/repo`)],
-  ]);
-  const lookupStatus = planner.classifyStatus({
-    requirements: [lookupRequirement],
-    desiredConflicts: [],
-  }, lookupState);
-
-  const collisionState = new Map([
-    [`b${paired}`, actual(`b${paired}`, "/b-first", "b/repo")],
-    [`a${paired}`, actual(`a${paired}`, "/a-first", "a/repo")],
-    [`b${scalar}`, actual(`b${scalar}`, "/b-last", "b/repo")],
-    [`a${scalar}`, actual(`a${scalar}`, "/a-last", "a/repo")],
-  ]);
-  const collisionStatus = planner.classifyStatus({
-    requirements: [],
-    desiredConflicts: [],
-  }, collisionState);
-
-  const pairRequirement = requirement("a/repo", paired);
-  const scalarRequirement = requirement("b/repo", scalar);
-  const safe = requirement("c/repo", "safe");
-  const conflictMerged = {
-    requirements: [pairRequirement, scalarRequirement, safe],
-    desiredConflicts: [{
-      skill: paired,
-      sources: ["a/repo", "b/repo"],
-      profiles: [],
-    }],
-  };
-  const conflictStatus = planner.classifyStatus(
-    conflictMerged,
-    new Map(),
-  );
-  const install = planner.createInstallPlan(conflictStatus);
-  const uninstall = planner.createUninstallPlan({
-    selected: conflictMerged,
-    remaining: { requirements: [], desiredConflicts: [] },
-    installedState: new Map([
-      [scalar, actual(scalar, "/ambiguous", "a/repo")],
-      ["safe", actual("safe", "/safe", "c/repo")],
-    ]),
-    linkedSelected: [],
-  });
-
-  process.stdout.write(JSON.stringify({
-    lookup: {
-      installed: lookupStatus.installed.map((item) => item.key),
-      missing: lookupStatus.missing.map((item) => item.key),
-      mismatches: lookupStatus.mismatches.map((item) => item.key),
-      extras: lookupStatus.extras.map((item) => item.path),
-    },
-    collision: {
-      rawPaths: [...collisionState.values()].map((item) => item.path),
-      extras: collisionStatus.extras.map((item) => [item.name, item.path]),
-    },
-    conflict: {
-      missing: conflictStatus.missing.map((item) => item.key),
-      extras: conflictStatus.extras.map((item) => item.path),
-      install: install.install.map((item) => item.key),
-      skip: install.skip.map((item) => item.key),
-      remove: uninstall.remove.map((item) => item.key),
-      absent: uninstall.absent.map((item) => item.key),
-    },
-  }));
-}).catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
-"""
-    )
-
-    assert python_summary == node_summary
+    assert python_summary == {
+        "lookup": {
+            "installed": ['["😀/repo","😀"]'],
+            "missing": [],
+            "mismatches": [],
+            "extras": [],
+        },
+        "collision": {
+            "rawPaths": ["/b-last", "/a-last"],
+            "extras": [["a😀", "/a-last"], ["b😀", "/b-last"]],
+        },
+        "conflict": {
+            "missing": ['["c/repo","safe"]'],
+            "extras": [],
+            "install": ['["c/repo","safe"]'],
+            "skip": [],
+            "remove": ['["c/repo","safe"]'],
+            "absent": [],
+        },
+    }
 
 
 def test_install_plan_selects_missing_and_blocks_mismatch_and_untracked() -> None:

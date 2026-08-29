@@ -1,9 +1,0 @@
-◇  Available Skills
-│
-│    frontend-design
-│      Build distinctive frontend interfaces.
-│
-│    react-best-practices
-│      Review React code for performance.
-│
-└  Use --skill <name> to install specific skills

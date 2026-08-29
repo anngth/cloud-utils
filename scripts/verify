@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 ROOT_DIR="${SCRIPT_DIR:h}"
 PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
-SOURCE_LIMIT=3309
+SOURCE_LIMIT=6105
 
 cd "$ROOT_DIR"
 
@@ -12,8 +12,8 @@ if ! command -v uv >/dev/null 2>&1; then
   print -u2 -r -- "❌ Missing required command: uv"
   exit 1
 fi
-if ! command -v node >/dev/null 2>&1; then
-  print -u2 -r -- "❌ Missing required command: node"
+if ! command -v npx >/dev/null 2>&1; then
+  print -u2 -r -- "❌ Missing required command: npx"
   exit 1
 fi
 
@@ -30,15 +30,15 @@ trap 'rm -f "$coverage_file"' EXIT
 
 print -r -- "==> Running Python tests with coverage"
 COVERAGE_FILE="$coverage_file" "$PYTHON_BIN" -m pytest \
-  --cov=shared --cov=twofa --cov=git_tools
-
-print -r -- "==> Running SKM Node tests"
-node --test mac_scripts/functions/skills-manager/__tests__/*.test.mjs
+  --cov=shared --cov=twofa --cov=git_tools --cov=skills_manager
+COVERAGE_FILE="$coverage_file" "$PYTHON_BIN" -m coverage report \
+  '--include=*/skills_manager/*.py' --fail-under=95
 
 print -r -- "==> Checking production Python source budget"
 python_lines="$(
   find mac_scripts/functions/shared mac_scripts/functions/twofa \
-    mac_scripts/functions/git_tools -type f -name '*.py' \
+    mac_scripts/functions/git_tools mac_scripts/functions/skills_manager \
+    -type f -name '*.py' \
     ! -path '*/tests/*' -print0 \
     | xargs -0 wc -l \
     | tail -n 1 \

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
-import subprocess
 from typing import Literal
 
 import pytest
@@ -425,7 +423,7 @@ def test_add_failed_execution_renders_summary_and_returns_one(
     assert "npx skills add owner/catalog --skill demo" in output
 
 
-def test_add_js_equivalent_sources_match_live_node_batch_and_retry(
+def test_add_js_equivalent_sources_use_one_literal_batch_and_retry(
     context: CommandContext,
 ) -> None:
     scalar = "owner/😀"
@@ -453,47 +451,26 @@ def test_add_js_equivalent_sources_match_live_node_batch_and_retry(
         (), all_sources=True, yes=True, dry_run=False, context=context
     ) == 1
 
-    python_summary = {
-        "calls": [list(call) for call in calls],
-        "events": [
-            {
-                "action": event.action,
-                "source": event.source,
-                "skills": list(event.skills),
-                "status": event.status,
-            }
-            for event in events
-        ],
-    }
-    script = r'''
-const { executeInstallPlan } = await import(
-  "./mac_scripts/functions/skills-manager/operations.mjs"
-);
-const scalar = "owner/😀";
-const paired = "owner/\ud83d\ude00";
-const calls = [];
-const events = [];
-await executeInstallPlan({
-  install: [
-    { source: scalar, skill: "first" },
-    { source: paired, skill: "second" },
-  ],
-  conflicts: [], desiredConflicts: [],
-}, {
-  yes: true,
-  runMutation: async (args) => { calls.push(args); return 7; },
-  onEvent: (event) => events.push(event),
-});
-process.stdout.write(JSON.stringify({ calls, events }));
-'''
-    node = subprocess.run(
-        ("node", "--input-type=module", "-e", script),
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert python_summary == json.loads(node.stdout)
+    assert calls == [
+        (
+            "skills",
+            "add",
+            scalar,
+            "--skill",
+            "first",
+            "--skill",
+            "second",
+            "--yes",
+        )
+    ]
+    assert events == [
+        MutationRecord(
+            action="install",
+            source=scalar,
+            skills=("first", "second"),
+            status=7,
+        )
+    ]
     retry = (
         "npx skills add '[unsafe source redacted]' --skill first "
         "--skill second"

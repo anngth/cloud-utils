@@ -35,8 +35,10 @@ brew install mongosh mongodb-database-tools
 
 - `libpq` — PostgreSQL clients (`psql`, `pg_dump`, `pg_restore`). `dbt` can also use `postgresql@18`.
 - `mongosh` / `mongodb-database-tools` — used by `dbt sync mongodb`.
-- Node.js — required only by `skm`; install a current release with `fnm`.
-- Python 3.14 — required by `bud`, `2fa`, and `gt`; `uv` installs and manages the shared project interpreter.
+- Node.js/npm — required only because `skm` invokes the external `npx skills`
+  CLI; install a current release with `fnm`.
+- Python 3.14 — required by `bud`, `2fa`, `gt`, and `skm`; `uv` installs and
+  manages the shared project interpreter.
 - `pbcopy` — provided by macOS and used by `2fa` to copy generated codes.
 
 ## Project Python environment
@@ -55,9 +57,11 @@ For a runtime-only environment without test dependencies, use:
 uv sync --locked --no-dev
 ```
 
-The `bud`, `2fa`, and `gt` wrappers require `.venv/bin/python`. They report a setup
-error if it is missing; wrappers do not run `uv`, activate an environment, or
-create one automatically.
+The `bud`, `2fa`, `gt`, and `skm` wrappers require `.venv/bin/python`. They
+report a setup error if it is missing; wrappers do not run `uv`, activate an
+environment, or create one automatically. Run `uv sync --locked` during setup
+and after lock changes. SKM itself runs in this environment; Node/npm remains
+necessary only for its external `npx skills` operations.
 
 ## Verify
 
@@ -118,7 +122,7 @@ Layout:
 | ----- | --------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `bud` | `bud/desired.json`                                  | `mac_scripts/functions/brew-desired-update/desired.example.json`             |
 | `gt`  | `gt/backups.json`                                   | Created by `gt backup add`; older schemas migrate automatically               |
-| `skm` | `skm/sources.json`                                  | `mac_scripts/functions/skills-manager/sources.json.example` (reference only) |
+| `skm` | `skm/sources.json`                                  | `mac_scripts/functions/skills_manager/sources.json.example` (reference only) |
 | `dbt` | `dbt/secrets`                                       | `mac_scripts/functions/db-tools/secrets.example`                              |
 
 On first run, `bud` bootstraps missing `desired.json` from

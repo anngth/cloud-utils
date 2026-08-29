@@ -1,17 +1,8 @@
 #!/bin/zsh
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-
-CONFIG_DIR="${CLOUD_UTILS_CONFIG_DIR:-${HOME}/Library/Mobile Documents/com~apple~CloudDocs/Backups/cloud-utils}"
-if ! mkdir -p "$CONFIG_DIR"; then
-  print -P "%F{red}❌ Could not create config directory.%f" >&2
+PYTHON_BIN="$SCRIPT_DIR/../.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  print -P "%F{red}❌ skm requires the project environment; run 'uv sync --locked' in ${SCRIPT_DIR:h}%f" >&2
   exit 1
 fi
-
-SKM_CONFIG_DIR="$CONFIG_DIR/skm"
-if ! command -v node >/dev/null 2>&1; then
-  print -P "%F{red}❌ node is required to manage ${SKM_CONFIG_DIR}%f" >&2
-  exit 1
-fi
-
-exec node "$SCRIPT_DIR/functions/skills-manager/cli.mjs" "$@"
+exec "$PYTHON_BIN" -m skills_manager.cli "$@"

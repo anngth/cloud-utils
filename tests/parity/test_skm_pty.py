@@ -44,10 +44,9 @@ class SkmProcess:
         self,
         tmp_path: Path,
         *,
-        runtime: str = "python",
         render_error: bool = False,
     ) -> None:
-        root = tmp_path / runtime
+        root = tmp_path / "python"
         config = root / "config" / "skm"
         project = root / "project"
         bin_dir = root / "bin"
@@ -86,12 +85,7 @@ class SkmProcess:
                 "TERM": "xterm-256color",
             }
         )
-        if runtime == "javascript":
-            command = (
-                "node",
-                str(ROOT / "mac_scripts/functions/skills-manager/cli.mjs"),
-            )
-        elif render_error:
+        if render_error:
             driver = root / "driver.py"
             driver.write_text(
                 "from skills_manager.ui import SkmUi\n"
@@ -224,8 +218,8 @@ def _restored(session: SkmProcess, transcript: bytes) -> None:
     assert termios.tcgetattr(session.slave) == session.original
 
 
-def _preview(tmp_path: Path, runtime: str, keys: tuple[bytes, ...]):
-    session = SkmProcess(tmp_path, runtime=runtime)
+def _preview(tmp_path: Path, keys: tuple[bytes, ...]):
+    session = SkmProcess(tmp_path)
     try:
         session.read_until(b"Choose skills")
         for key in keys:
@@ -240,23 +234,33 @@ def _preview(tmp_path: Path, runtime: str, keys: tuple[bytes, ...]):
 
 
 @pytest.mark.parametrize(
-    "keys",
+    ("keys", "expected_frame"),
     [
-        (b"a", b"c", b"j", b" ", b"\r"),
-        (b"\x1b[", b"B", b"j", b" ", b"\r"),
-        (b"j", b"j", b"k", b" ", b"\r"),
+        (
+            (b"a", b"c", b"j", b" ", b"\r"),
+            ("◇ Apply these changes?", "◆ Install", "│ ■ alpha"),
+        ),
+        (
+            (b"\x1b[", b"B", b"j", b" ", b"\r"),
+            ("◇ Apply these changes?", "◆ Install", "│ ■ beta"),
+        ),
+        (
+            (b"j", b"j", b"k", b" ", b"\r"),
+            ("◇ Apply these changes?", "◆ Install", "│ ■ alpha"),
+        ),
     ],
 )
-def test_visible_frames_and_arrow_vim_toggle_all_clear_match_javascript(
-    tmp_path: Path, keys: tuple[bytes, ...]
+def test_visible_frames_and_arrow_vim_toggle_all_clear_match_oracle_frames(
+    tmp_path: Path,
+    keys: tuple[bytes, ...],
+    expected_frame: tuple[str, ...],
 ) -> None:
-    js_status, javascript = _preview(tmp_path, "javascript", keys)
-    py_status, python = _preview(tmp_path, "python", keys)
+    status, transcript = _preview(tmp_path, keys)
 
-    assert py_status == js_status == 1
-    assert _final_frame(python) == _final_frame(javascript)
-    assert ALT_ENTER in python
-    assert python.index(ALT_ENTER) < python.index(b"Choose skills")
+    assert status == 1
+    assert _final_frame(transcript) == expected_frame
+    assert ALT_ENTER in transcript
+    assert transcript.index(ALT_ENTER) < transcript.index(b"Choose skills")
 
 
 @pytest.mark.parametrize("key", [b"q", b"\x03", b"\x04"])
