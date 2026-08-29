@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import nullcontext, redirect_stderr
+from contextlib import redirect_stderr
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
@@ -22,6 +23,10 @@ from .ui import SkmUi
 from .upstream import (
     AvailableSkill, ExecutionResult, discover_available_skills,
     execute_install_plan, execute_uninstall_plan, has_command,
+)
+
+_SELECTOR_WARNING = re.compile(
+    r"(?m)^Warning: Input is not a terminal \(fd=-?\d+\)\.\n"
 )
 
 @dataclass(slots=True)
@@ -74,10 +79,15 @@ def _wire_context(
         render: Callable[[object], object] | None = None) -> SelectorResult:
         mode = "install" if multiple else "select"
         renderer = render or (lambda state: ui.selector(title, state, mode=mode))
-        with (nullcontext() if is_tty(stdin) else redirect_stderr(StringIO())):
-            result = services.selector_runner(
-                items, initial=initial, multiple=multiple, input=stdin,
-                output=stdout, render=renderer)
+        diagnostics = StringIO()
+        try:
+            with redirect_stderr(diagnostics):
+                result = services.selector_runner(
+                    items, initial=initial, multiple=multiple, input=stdin,
+                    output=stdout, render=renderer)
+        finally:
+            stderr.write(_SELECTOR_WARNING.sub("", diagnostics.getvalue()))
+            stderr.flush()
         if result.kind == "cancel" and render is None:
             ui.cancelled_selector(title, result.state, mode=mode)
         return result

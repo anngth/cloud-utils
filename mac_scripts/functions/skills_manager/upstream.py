@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Literal
 
 from shared.process import CommandResult, run_process
 
+from .planner import js_string_key
+
 if TYPE_CHECKING:
     from .planner import InstallPlan, UninstallPlan
 
@@ -152,11 +154,12 @@ def execute_install_plan(
     on_event: Callable[[MutationRecord], object] | None = None) -> ExecutionResult:
     if plan.desired_conflicts:
         return ExecutionResult(False, (), ())
-    groups: dict[str, list[str]] = {}
+    groups: dict[bytes, tuple[str, list[str]]] = {}
     for item in plan.install:
-        groups.setdefault(item.source, []).append(item.skill)
+        group = groups.setdefault(js_string_key(item.source), (item.source, []))
+        group[1].append(item.skill)
     records = []
-    for source, skills in groups.items():
+    for source, skills in groups.values():
         args = ["skills", "add", source]
         for skill in skills:
             args.extend(("--skill", skill))

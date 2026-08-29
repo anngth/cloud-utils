@@ -80,6 +80,62 @@ def test_install_batches_by_first_seen_source_and_continues_after_failure(
     assert tuple(record.status for record in result.succeeded) == (0,)
 
 
+def test_install_groups_js_equivalent_source_spellings_once(
+    tmp_path: Path,
+) -> None:
+    scalar = "owner/😀"
+    paired = "owner/\ud83d\ude00"
+    calls: list[tuple[str, ...]] = []
+    events: list[object] = []
+
+    result = upstream.execute_install_plan(
+        install_plan(
+            install=(
+                requirement(scalar, "first"),
+                requirement(paired, "second"),
+            )
+        ),
+        yes=True,
+        project_root=tmp_path,
+        run_mutation=lambda args, **_: calls.append(tuple(args)) or 7,
+        on_event=events.append,
+    )
+
+    assert calls == [
+        (
+            "skills", "add", scalar, "--skill", "first",
+            "--skill", "second", "--yes",
+        )
+    ]
+    assert result.ok is False
+    assert result.succeeded == ()
+    assert tuple(events) == result.failed
+    assert result.failed[0] == upstream.MutationRecord(
+        "install", scalar, ("first", "second"), 7
+    )
+
+
+def test_install_keeps_distinct_lone_surrogate_sources(
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+    sources = ("owner/\ud800", "owner/\ud801")
+
+    result = upstream.execute_install_plan(
+        install_plan(
+            install=tuple(
+                requirement(source, skill)
+                for source, skill in zip(sources, ("first", "second"))
+            )
+        ),
+        project_root=tmp_path,
+        run_mutation=lambda args, **_: calls.append(tuple(args)) or 0,
+    )
+
+    assert tuple(call[2] for call in calls) == sources
+    assert tuple(record.source for record in result.succeeded) == sources
+
+
 def test_install_appends_yes_last_and_emits_frozen_records(
     tmp_path: Path,
 ) -> None:

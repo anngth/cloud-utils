@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import io
+import os
 from pathlib import Path
+from contextlib import redirect_stderr
+import sys
 
 import pytest
 
+from shared.selector import SelectorResult, create_selector_state
+from prompt_toolkit.input.vt100 import Vt100Input
 from skills_manager.cli import Services, run_cli
 from skills_manager.config import Catalog, CatalogSource, ConfigPaths
 from skills_manager.state import InstalledSkill
@@ -13,6 +18,16 @@ from skills_manager.state import InstalledSkill
 class TtyStringIO(io.StringIO):
     def isatty(self) -> bool:
         return True
+
+
+class FlushStringIO(io.StringIO):
+    def __init__(self) -> None:
+        super().__init__()
+        self.flushes = 0
+
+    def flush(self) -> None:
+        self.flushes += 1
+        super().flush()
 
 
 def catalog() -> Catalog:
@@ -306,3 +321,82 @@ def test_run_cli_returns_an_integer_instead_of_raising_system_exit() -> None:
 
     assert result == 1
     assert type(result) is int
+
+
+def selector_services(tmp_path: Path, runner) -> Services:
+    services = configured_services(tmp_path)
+    services.load_installed_state = lambda **_: {}
+    services.selector_runner = runner
+    return services
+
+
+def test_selector_suppresses_only_prompt_toolkit_pipe_warning(
+    tmp_path: Path,
+) -> None:
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, b"q")
+    os.close(write_fd)
+    stdin = os.fdopen(read_fd, encoding="utf-8")
+    stderr = io.StringIO()
+    leaked = io.StringIO()
+    Vt100Input._fds_not_a_terminal.discard(read_fd)
+    try:
+        with redirect_stderr(leaked):
+            assert run_cli(
+                ("add", "1"), cwd=tmp_path, stdin=stdin,
+                stdout=io.StringIO(), stderr=stderr,
+                services=selector_services(tmp_path, Services().selector_runner),
+            ) == 0
+    finally:
+        stdin.close()
+        Vt100Input._fds_not_a_terminal.discard(read_fd)
+
+    assert "Warning: Input is not a terminal" not in stderr.getvalue()
+    assert leaked.getvalue() == ""
+
+
+def test_selector_forwards_unknown_stderr_around_split_warning(
+    tmp_path: Path,
+) -> None:
+    def runner(*_args, **_kwargs):
+        sys.stderr.write("before")
+        sys.stderr.flush()
+        sys.stderr.write("\nWarning: Input is not")
+        sys.stderr.flush()
+        sys.stderr.write(" a terminal (fd=42).\nafter\n")
+        return SelectorResult("cancel", create_selector_state(()), ())
+
+    stderr = FlushStringIO()
+    assert run_cli(
+        ("add", "1"), cwd=tmp_path, stdin=io.StringIO("q"),
+        stdout=io.StringIO(), stderr=stderr,
+        services=selector_services(tmp_path, runner),
+    ) == 0
+
+    assert stderr.getvalue() == "before\nafter\n"
+    assert stderr.flushes == 1
+
+
+def test_selector_exception_forwards_stderr_and_restores_nested_global(
+    tmp_path: Path,
+) -> None:
+    def runner(*_args, **_kwargs):
+        sys.stderr.write("selector diagnostic")
+        sys.stderr.flush()
+        raise ValueError("selector broke")
+
+    process_stderr = io.StringIO()
+    outer_stderr = io.StringIO()
+    original_stderr = sys.stderr
+    with redirect_stderr(outer_stderr):
+        assert run_cli(
+            ("add", "1"), cwd=tmp_path, stdin=io.StringIO("q"),
+            stdout=io.StringIO(), stderr=process_stderr,
+            services=selector_services(tmp_path, runner),
+        ) == 1
+        assert sys.stderr is outer_stderr
+
+    assert sys.stderr is original_stderr
+    assert outer_stderr.getvalue() == ""
+    assert process_stderr.getvalue().startswith("selector diagnostic")
+    assert "selector broke" in process_stderr.getvalue()

@@ -3,9 +3,12 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from .config import Catalog
-from .state import InstalledSkill, InstalledState
+
+if TYPE_CHECKING:
+    from .state import InstalledSkill, InstalledState
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,12 +60,12 @@ class UninstallPlan:
     desired_conflicts: tuple[DesiredConflict, ...]
 
 
-def _utf16_key(value: str) -> bytes:
+def js_string_key(value: str) -> bytes:
     return value.encode("utf-16-be", errors="surrogatepass")
 
 
 def _collation_key(value: str) -> str:
-    identity_spelling = _utf16_key(value).decode(
+    identity_spelling = js_string_key(value).decode(
         "utf-16-be", errors="surrogatepass"
     )
     return unicodedata.normalize("NFC", identity_spelling)
@@ -127,17 +130,17 @@ def catalog_requirements(document: Catalog) -> MergedRequirements:
             key = requirement_key(entry.source, skill)
             if key not in by_key:
                 by_key[key] = Requirement(key, entry.source, skill)
-            skill_identity = _utf16_key(skill)
+            skill_identity = js_string_key(skill)
             skill_spellings.setdefault(skill_identity, skill)
             sources = sources_by_skill.setdefault(skill_identity, {})
-            sources.setdefault(_utf16_key(entry.source), entry.source)
+            sources.setdefault(js_string_key(entry.source), entry.source)
 
     desired_conflicts = tuple(
         sorted(
             (
                 DesiredConflict(
                     skill_spellings[skill_identity],
-                    tuple(sorted(sources.values(), key=_utf16_key)),
+                    tuple(sorted(sources.values(), key=js_string_key)),
                 )
                 for skill_identity, sources in sources_by_skill.items()
                 if len(sources) > 1
@@ -160,7 +163,7 @@ def _installed_by_identity(
 ) -> dict[bytes, InstalledSkill]:
     installed: dict[bytes, InstalledSkill] = {}
     for name, actual in installed_state.items():
-        installed[_utf16_key(name)] = actual
+        installed[js_string_key(name)] = actual
     return installed
 
 
@@ -174,14 +177,14 @@ def classify_status(
     untracked: list[Requirement] = []
     actual_by_name = _installed_by_identity(installed_state)
     ambiguous = {
-        _utf16_key(item.skill) for item in merge_result.desired_conflicts
+        js_string_key(item.skill) for item in merge_result.desired_conflicts
     }
     desired_names = {
-        _utf16_key(item.skill) for item in merge_result.requirements
+        js_string_key(item.skill) for item in merge_result.requirements
     }
 
     for requirement in merge_result.requirements:
-        skill_identity = _utf16_key(requirement.skill)
+        skill_identity = js_string_key(requirement.skill)
         if skill_identity in ambiguous:
             continue
         actual = actual_by_name.get(skill_identity)
@@ -190,7 +193,7 @@ def classify_status(
         elif _is_untracked(actual):
             untracked.append(requirement)
         elif actual.source is None or (
-            _utf16_key(actual.source) != _utf16_key(requirement.source)
+            js_string_key(actual.source) != js_string_key(requirement.source)
         ):
             mismatches.append(requirement)
         else:
@@ -201,7 +204,7 @@ def classify_status(
             (
                 actual
                 for actual in actual_by_name.values()
-                if _utf16_key(actual.name) not in desired_names
+                if js_string_key(actual.name) not in desired_names
             ),
             key=lambda item: _collation_key(item.name),
         )
@@ -245,9 +248,9 @@ def _combine_desired_conflicts(
     ] = set()
     for conflict in selected.desired_conflicts + remaining.desired_conflicts:
         identity = (
-            _utf16_key(conflict.skill),
-            tuple(_utf16_key(source) for source in conflict.sources),
-            tuple(_utf16_key(profile) for profile in conflict.profiles),
+            js_string_key(conflict.skill),
+            tuple(js_string_key(source) for source in conflict.sources),
+            tuple(js_string_key(profile) for profile in conflict.profiles),
         )
         if identity not in seen:
             seen.add(identity)
@@ -267,11 +270,11 @@ def create_uninstall_plan(
     absent: list[Requirement] = []
     desired_conflicts = _combine_desired_conflicts(selected, remaining)
     actual_by_name = _installed_by_identity(installed_state)
-    ambiguous = {_utf16_key(item.skill) for item in desired_conflicts}
+    ambiguous = {js_string_key(item.skill) for item in desired_conflicts}
     remaining_keys = {item.key for item in remaining.requirements}
 
     for requirement in selected.requirements:
-        skill_identity = _utf16_key(requirement.skill)
+        skill_identity = js_string_key(requirement.skill)
         if skill_identity in ambiguous:
             continue
         if requirement.key in remaining_keys:

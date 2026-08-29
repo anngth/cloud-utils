@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import subprocess
 from typing import Literal
 
 import pytest
@@ -12,6 +14,7 @@ import skills_manager.lifecycle as lifecycle
 from skills_manager.lifecycle import run_status
 from skills_manager.state import InstalledSkill, InstalledStateError
 from skills_manager.upstream import ExecutionResult, MutationRecord
+import skills_manager.upstream as upstream
 
 
 @pytest.mark.parametrize("all_flag", ["-a", "--all"])
@@ -418,6 +421,84 @@ def test_add_failed_execution_renders_summary_and_returns_one(
     assert "Install incomplete" in output
     assert "status 7" in output
     assert "npx skills add owner/catalog --skill demo" in output
+
+
+def test_add_js_equivalent_sources_match_live_node_batch_and_retry(
+    context: CommandContext,
+) -> None:
+    scalar = "owner/😀"
+    paired = "owner/\ud83d\ude00"
+    context.catalog = Catalog(
+        version=1,
+        sources=(
+            CatalogSource(source=scalar, skills=("first",)),
+            CatalogSource(source=paired, skills=("second",)),
+        ),
+    )
+    calls: list[tuple[str, ...]] = []
+    events: list[MutationRecord] = []
+    configure_lifecycle(context)
+    context.services.execute_install_plan = lambda plan, **options: (
+        upstream.execute_install_plan(
+            plan,
+            **options,
+            run_mutation=lambda args, **_: calls.append(tuple(args)) or 7,
+            on_event=events.append,
+        )
+    )
+
+    assert lifecycle.run_add(
+        (), all_sources=True, yes=True, dry_run=False, context=context
+    ) == 1
+
+    python_summary = {
+        "calls": [list(call) for call in calls],
+        "events": [
+            {
+                "action": event.action,
+                "source": event.source,
+                "skills": list(event.skills),
+                "status": event.status,
+            }
+            for event in events
+        ],
+    }
+    script = r'''
+const { executeInstallPlan } = await import(
+  "./mac_scripts/functions/skills-manager/operations.mjs"
+);
+const scalar = "owner/😀";
+const paired = "owner/\ud83d\ude00";
+const calls = [];
+const events = [];
+await executeInstallPlan({
+  install: [
+    { source: scalar, skill: "first" },
+    { source: paired, skill: "second" },
+  ],
+  conflicts: [], desiredConflicts: [],
+}, {
+  yes: true,
+  runMutation: async (args) => { calls.push(args); return 7; },
+  onEvent: (event) => events.push(event),
+});
+process.stdout.write(JSON.stringify({ calls, events }));
+'''
+    node = subprocess.run(
+        ("node", "--input-type=module", "-e", script),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert python_summary == json.loads(node.stdout)
+    retry = (
+        "npx skills add '[unsafe source redacted]' --skill first "
+        "--skill second"
+    )
+    assert "Install incomplete" in context.stdout.getvalue()
+    assert "status 7" in context.stdout.getvalue()
+    assert context.stdout.getvalue().count(retry) == 1
 
 
 def test_remove_uses_selected_and_remaining_catalog_slices(
