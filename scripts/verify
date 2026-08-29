@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 ROOT_DIR="${SCRIPT_DIR:h}"
 PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
 SOURCE_LIMIT=6105
+SKM_COVERAGE_MIN=95
 
 cd "$ROOT_DIR"
 
@@ -25,14 +26,56 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   exit 1
 fi
 
+coverage_file=""
+coverage_json_file=""
+cleanup_coverage() {
+  [[ -z "$coverage_file" ]] || rm -f -- "$coverage_file"
+  [[ -z "$coverage_json_file" ]] || rm -f -- "$coverage_json_file"
+}
+trap cleanup_coverage EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 coverage_file="$(mktemp "${TMPDIR:-/tmp}/cloud-utils-verify.XXXXXX")"
-trap 'rm -f "$coverage_file"' EXIT
+coverage_json_file="$(mktemp "${TMPDIR:-/tmp}/cloud-utils-verify.XXXXXX")"
 
 print -r -- "==> Running Python tests with coverage"
 COVERAGE_FILE="$coverage_file" "$PYTHON_BIN" -m pytest \
   --cov=shared --cov=twofa --cov=git_tools --cov=skills_manager
 COVERAGE_FILE="$coverage_file" "$PYTHON_BIN" -m coverage report \
-  '--include=*/skills_manager/*.py' --fail-under=95
+  '--include=*/skills_manager/*.py'
+COVERAGE_FILE="$coverage_file" "$PYTHON_BIN" -m coverage json \
+  '--include=*/skills_manager/*.py' -q -o "$coverage_json_file"
+"$PYTHON_BIN" - "$coverage_json_file" "$SKM_COVERAGE_MIN" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+
+totals = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["totals"]
+covered_lines = int(totals["covered_lines"])
+num_statements = int(totals["num_statements"])
+minimum = int(sys.argv[2])
+
+if num_statements == 0:
+    print(
+        "❌ skills_manager statement coverage has no statements; "
+        f"minimum is {minimum}%",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+if covered_lines * 100 < num_statements * minimum:
+    percent = covered_lines * 100 / num_statements
+    print(
+        f"❌ skills_manager statement coverage is "
+        f"{covered_lines}/{num_statements} ({percent:.4f}%); "
+        f"minimum is {minimum}%",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+PY
 
 print -r -- "==> Checking production Python source budget"
 python_lines="$(

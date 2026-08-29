@@ -28,8 +28,9 @@ what is installed on disk in the current project. Submit opens a full-screen
 Install/Remove preview with Yes/No. Choosing No or pressing `q` prints nothing.
 Choosing Yes runs the changes and prints one combined Changes summary.
 
-`source add` and `source remove` change the global catalog only. Use `add` and
-`remove` to install or uninstall catalog skills in the current project.
+`source add`, `source edit`, and `source remove` change the global catalog only.
+Use `add` and `remove` to install or uninstall catalog skills in the current
+project.
 
 | Family | Supported commands |
 | --- | --- |
