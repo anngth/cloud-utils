@@ -3,6 +3,7 @@ import sys
 GREEN = "\033[32m"
 RED = "\033[31m"
 YELLOW = "\033[33m"
+GRAY = "\033[38;5;247m"
 GRAY_240 = "\033[38;5;240m"
 BG_GREEN = "\033[42m"
 FG_BLACK = "\033[30m"
@@ -45,7 +46,7 @@ class Ui:
         self._out(f"{_fg(YELLOW, '■')} {text}")
 
     def info(self, text: str) -> None:
-        self._out(f"{GRAY_240}{text}{FG_RESET}")
+        self._out(f"{GRAY}{text}{FG_RESET}")
 
     def command(self, line: str) -> None:
         if line.startswith("$"):

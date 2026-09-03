@@ -181,7 +181,9 @@ class CliMainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(err, "")
         self.assertIn(fmt("added.item", name="ripgrep", type="formula", n=2), out)
-        self.assertIn(fmt("changes.saved", file=self.desired), out)
+        saved = fmt("changes.saved", file=self.desired)
+        self.assertIn(saved, out)
+        self.assertNotIn(f"◆ {saved}", out)
         with open(self.desired, encoding="utf-8") as handle:
             saved = json.load(handle)
         self.assertIn("ripgrep", saved["formulas"])
@@ -191,7 +193,9 @@ class CliMainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(err, "")
         self.assertIn(fmt("removed.item", name="bat", type="formula", n=0), out)
-        self.assertIn(fmt("changes.saved", file=self.desired), out)
+        saved = fmt("changes.saved", file=self.desired)
+        self.assertIn(saved, out)
+        self.assertNotIn(f"◆ {saved}", out)
         with open(self.desired, encoding="utf-8") as handle:
             saved = json.load(handle)
         self.assertNotIn("bat", saved["formulas"])

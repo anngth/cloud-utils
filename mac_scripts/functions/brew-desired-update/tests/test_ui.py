@@ -82,12 +82,14 @@ class ChromeTests(unittest.TestCase):
         self.assertIn("\033[33m", raw)
         self.assertIn("■ already in list", strip_ansi(raw))
 
-    def test_info_uses_gray_240(self):
+    def test_info_uses_gray_247(self):
         buf = io.StringIO()
         ui = Ui(stdout=buf)
         ui.info("Excluding 1 cask(s): slack")
         raw = buf.getvalue()
-        self.assertIn("\033[38;5;240m", raw)
+        self.assertIn("\033[38;5;247m", raw)
+        self.assertNotIn("\033[90m", raw)
+        self.assertNotIn("\033[38;5;240m", raw)
         self.assertIn("Excluding 1 cask(s): slack", strip_ansi(raw))
 
     def test_command_colors_dollar_prefix_green(self):
