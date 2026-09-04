@@ -83,6 +83,20 @@ def _parse_strict_json(value: str) -> Any:
 
     return json.loads(value, parse_constant=reject_constant)
 
+def glab_reauth_instructions(hostname: str = GITLAB_HOST) -> str:
+    return (
+        "Re-authenticate with:\n"
+        f"  glab auth logout --hostname {hostname}\n"
+        f"  glab auth login --hostname {hostname}"
+    )
+
+def glab_auth_detail(error: str | None) -> str:
+    prefix = "glab authentication is required: "
+    detail = (error or "").strip()
+    if detail.startswith(prefix):
+        return detail[len(prefix):].strip()
+    return detail
+
 def assert_glab_ready(
     *, has_command: Callable[[str], object] = shutil.which,
     run_glab_fn: RunGlab | None = None, env: Mapping[str, str] | None = None,

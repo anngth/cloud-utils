@@ -234,12 +234,23 @@ def test_backup_one_repo_fails_when_git_missing(tmp_path: Path) -> None:
 
 
 def test_backup_one_repo_fails_when_glab_is_not_ready(tmp_path: Path) -> None:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    ui = GitToolsUi(stdout, stderr)
     h = make_harness(
         tmp_path,
-        assert_glab_ready=lambda **_kwargs: ReadyResult(False, "auth required"),
+        ui=ui,
+        assert_glab_ready=lambda **_kwargs: ReadyResult(
+            False, "glab authentication is required: not logged in"
+        ),
     )
-    result = backup_one_repo(SOURCE, context=h.context)
-    assert result == BackupResult("fail", SOURCE, None, "auth required")
+    assert run_backup_batch([SOURCE, SOURCE_B], context=h.context) == 1
+    assert h.created == []
+    assert "fail  " not in "\n".join(h.ui.items)
+    assert "glab authentication is required for gitlab.com" in stderr.getvalue()
+    assert "not logged in" in stderr.getvalue()
+    assert "glab auth logout --hostname gitlab.com" in stderr.getvalue()
+    assert "glab auth login --hostname gitlab.com" in stderr.getvalue()
 
 
 def test_backup_one_repo_fails_when_group_ensure_fails_before_create(
@@ -1084,7 +1095,7 @@ def test_run_backup_command_automatic_batch_writes_migration_before_external_wor
     )
 
     assert run_backup_command(args, context=h.context) == 0
-    assert events[:2] == ["write-migration", "external:git"]
+    assert events[:3] == ["write-migration", "external:glab", "external:git"]
 
 
 @pytest.mark.parametrize("args", [["--all"], ["stale", "--all"]])

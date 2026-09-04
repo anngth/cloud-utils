@@ -11,6 +11,8 @@ from git_tools.gitlab import (
     create_private_group,
     create_private_project,
     ensure_backup_group,
+    glab_auth_detail,
+    glab_reauth_instructions,
     group_exists,
     next_available_name,
     next_suffixed_name,
@@ -102,6 +104,21 @@ def test_assert_glab_ready_succeeds_when_authenticated() -> None:
 
     assert result.ok is True
     assert result.error is None
+
+
+def test_glab_reauth_instructions_use_configured_host() -> None:
+    assert glab_reauth_instructions() == (
+        "Re-authenticate with:\n"
+        "  glab auth logout --hostname gitlab.com\n"
+        "  glab auth login --hostname gitlab.com"
+    )
+    assert GITLAB_HOST == "gitlab.com"
+
+
+def test_glab_auth_detail_strips_ready_error_prefix() -> None:
+    assert glab_auth_detail("glab authentication is required: not logged in") == "not logged in"
+    assert glab_auth_detail("other error") == "other error"
+    assert glab_auth_detail(None) == ""
 
 
 def test_project_exists_returns_live_project_and_encoded_nested_path() -> None:

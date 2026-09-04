@@ -19,7 +19,8 @@ from .backup_list import remove_backup_repo, set_selected_last
 from .config import BackupRepoV4, BackupsDocumentV4, GtPaths, format_display_path
 from .config import migrate_backups_document, read_backups_document, write_backups_document
 from .git import run_git
-from .gitlab import BACKUP_GROUP, assert_glab_ready, create_private_project, ensure_backup_group
+from .gitlab import BACKUP_GROUP, GITLAB_HOST, assert_glab_ready, create_private_project
+from .gitlab import ensure_backup_group, glab_auth_detail, glab_reauth_instructions
 from .gitlab import group_exists, pick_preferred_default_branch, project_exists
 from .gitlab import project_ssh_url, project_web_url, protect_branch, set_default_branch
 from .refs_fingerprint import fingerprints_equal, parse_ls_remote_fingerprint
@@ -104,6 +105,20 @@ def _failed(source_url: str, error: str | None, fallback: str) -> BackupResult:
 def _git_error(result, fallback: str) -> str:
     return result.stderr.strip() or result.stdout.strip() or fallback
 
+def _require_glab_ready_for_backup(context: BackupContext) -> bool:
+    if not context.has_command("glab"):
+        context.ui.error("glab is not installed or not available on PATH")
+        return False
+    ready = context.assert_glab_ready(has_command=context.has_command, env=context.env)
+    if ready.ok:
+        return True
+    context.ui.error(f"glab authentication is required for {GITLAB_HOST}")
+    detail = glab_auth_detail(ready.error)
+    if detail:
+        context.ui.error_detail(detail)
+    context.ui.error_detail(glab_reauth_instructions())
+    return False
+
 def _compare_remote_refs(
     source_url: str, destination: str, context: BackupContext,
 ) -> tuple[bool | None, str | None]:
@@ -132,9 +147,6 @@ def backup_one_repo(
 
     if not context.has_command("git"):
         return _failed(source_url, None, "git is not installed or not available on PATH")
-    ready = context.assert_glab_ready(has_command=context.has_command, env=context.env)
-    if not ready.ok:
-        return _failed(source_url, ready.error, "glab is not ready")
 
     name = parsed.project_name
     project_path = f"{BACKUP_GROUP}/{name}"
@@ -274,6 +286,9 @@ def run_backup_batch(
     urls: Sequence[str], *, context: BackupContext,
     force: bool = False, dry_run: bool = False,
 ) -> int:
+    if not _require_glab_ready_for_backup(context):
+        return 1
+
     results: list[BackupResult] = []
     if dry_run:
         context.ui.status("Dry run (no changes)")
