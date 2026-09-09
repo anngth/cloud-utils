@@ -40,12 +40,10 @@ FG_RESET = "\x1b[39m"
 BG_RESET = "\x1b[49m"
 RESET = "\x1b[0m"
 DIM = "\x1b[2m"
-PIPE = f"{CYAN}│{FG_RESET}"
 CORNER = f"{CYAN}└{FG_RESET}"
 HEADER = (
     "\n"
     f"   {BG_GREEN}{BLACK} SKILLS MANAGER {FG_RESET}{BG_RESET}\n"
-    f"{PIPE}\n"
 )
 
 
@@ -109,39 +107,39 @@ def test_usage_keeps_green_header_and_exact_command_surface() -> None:
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Usage: skm [command]\n{PIPE}\n"
-        + f"{PIPE}  {GREEN}skm{FG_RESET}  "
+        + f"{GREEN}◇{FG_RESET}  Usage: skm [command]\n"
+        + f"  {GREEN}skm{FG_RESET}  "
         + f"{GRAY}Open interactive catalog selector{FG_RESET}\n"
-        + f"{PIPE}  {GREEN}skm (help | -h | --help){FG_RESET}  "
+        + f"  {GREEN}skm (help | -h | --help){FG_RESET}  "
         + f"{GRAY}Show this help{FG_RESET}\n"
-        + f"{PIPE}\n{CYAN}◆{FG_RESET}  Lifecycle\n"
-        + f"{PIPE}  {GREEN}skm add <source|index...> [(-a | --all)]"
+        + f"{CYAN}◆{FG_RESET}  Lifecycle\n"
+        + f"  {GREEN}skm add <source|index...> [(-a | --all)]"
         + f"{FG_RESET}\n"
-        + f"{PIPE}      {GREEN}[(-y | --yes)] [(-d | --dry-run)]"
+        + f"      {GREEN}[(-y | --yes)] [(-d | --dry-run)]"
         + f"{FG_RESET}  {GRAY}Install catalog skills for selected sources"
         + f"{FG_RESET}\n"
-        + f"{PIPE}  {GREEN}skm remove <source|index...> [(-a | --all)]"
+        + f"  {GREEN}skm remove <source|index...> [(-a | --all)]"
         + f"{FG_RESET}\n"
-        + f"{PIPE}      {GREEN}[(-y | --yes)] [(-d | --dry-run)]"
+        + f"      {GREEN}[(-y | --yes)] [(-d | --dry-run)]"
         + f"{FG_RESET}  {GRAY}Uninstall catalog skills for selected sources"
         + f"{FG_RESET}\n"
-        + f"{PIPE}  {GREEN}skm status{FG_RESET}  "
+        + f"  {GREEN}skm status{FG_RESET}  "
         + f"{GRAY}Compare catalog and installed skills{FG_RESET}\n"
-        + f"{PIPE}\n{CYAN}◆{FG_RESET}  Catalog\n"
-        + f"{PIPE}  {GREEN}skm source add <source>{FG_RESET}\n"
-        + f"{PIPE}      {GREEN}[[(-k | --skill) <skill>]... | "
+        + f"{CYAN}◆{FG_RESET}  Catalog\n"
+        + f"  {GREEN}skm source add <source>{FG_RESET}\n"
+        + f"      {GREEN}[[(-k | --skill) <skill>]... | "
         + f"(-a | --all) | (-n | --no-skills)] [(-y | --yes)]{FG_RESET}  "
         + f"{GRAY}Add a catalog source{FG_RESET}\n"
-        + f"{PIPE}  {GREEN}skm source edit <source|index>{FG_RESET}\n"
-        + f"{PIPE}      {GREEN}[[(-k | --skill) <skill>]... | "
+        + f"  {GREEN}skm source edit <source|index>{FG_RESET}\n"
+        + f"      {GREEN}[[(-k | --skill) <skill>]... | "
         + f"(-a | --all) | (-n | --no-skills)] [(-y | --yes)]{FG_RESET}  "
         + f"{GRAY}Update skills for a catalog source{FG_RESET}\n"
-        + f"{PIPE}  {GREEN}skm source remove <source|index>{FG_RESET}  "
+        + f"  {GREEN}skm source remove <source|index>{FG_RESET}  "
         + f"{GRAY}Remove a catalog source{FG_RESET}\n"
-        + f"{PIPE}\n{CYAN}◆{FG_RESET}  Notes\n"
-        + f"{PIPE}  {GRAY}Source indexes are 1-based, matching the interactive "
+        + f"{CYAN}◆{FG_RESET}  Notes\n"
+        + f"  {GRAY}Source indexes are 1-based, matching the interactive "
         + f"selector and gt backup.{FG_RESET}\n"
-        + f"{PIPE}  {GRAY}source add, source edit, and source remove change the "
+        + f"  {GRAY}source add, source edit, and source remove change the "
         + f"catalog only; use add/remove to change disk.{FG_RESET}\n"
         + f"{CORNER}\n"
     )
@@ -178,8 +176,8 @@ def test_source_changed_renders_exact_empty_and_singular_counts(
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Source shown: owner/catalog\n{PIPE}\n"
-        + f"{GREEN}◇{FG_RESET}  {expected_count}\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Source shown: owner/catalog\n"
+        + f"{GREEN}◇{FG_RESET}  {expected_count}\n"
         + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
@@ -201,14 +199,13 @@ def test_source_changed_renders_available_skills_with_exact_spacing() -> None:
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Source added: obra/superpowers\n{PIPE}\n"
-        + f"{GREEN}◇{FG_RESET}  Profile: default\n{PIPE}\n"
-        + f"{GREEN}◇{FG_RESET}  2 selected skills\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Source added: obra/superpowers\n"
+        + f"{GREEN}◇{FG_RESET}  Profile: default\n"
+        + f"{GREEN}◇{FG_RESET}  2 selected skills\n"
         + f"{CYAN}◆{FG_RESET}  Available skills\n"
-        + f"{PIPE}  {GREEN}■{FG_RESET} {BRIGHT_GREEN}brainstorming"
+        + f"  {GREEN}■{FG_RESET} {BRIGHT_GREEN}brainstorming"
         + f"{FG_RESET} {GRAY}— Explore requirements{FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  {GREEN}■{FG_RESET} {BRIGHT_GREEN}testing{FG_RESET}\n"
+        + f"  {GREEN}■{FG_RESET} {BRIGHT_GREEN}testing{FG_RESET}\n"
         + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
@@ -237,8 +234,8 @@ def test_source_changed_redacts_source_text_exactly(
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Source shown: {display}\n{PIPE}\n"
-        + f"{GREEN}◇{FG_RESET}  0 selected skills\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Source shown: {display}\n"
+        + f"{GREEN}◇{FG_RESET}  0 selected skills\n"
         + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
@@ -284,36 +281,30 @@ def test_status_renders_tree_and_every_overflow_classification_exactly() -> None
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Status: /repo/app\n{PIPE}\n"
-        + f"{GREEN}◇{FG_RESET}  Profiles: frontend, quality\n{PIPE}\n"
-        + f"{PIPE}  1  {GRAY}a/repo{FG_RESET}\n"
-        + f"{PIPE}      {GREEN}■{FG_RESET} {BRIGHT_GREEN}ready{FG_RESET}\n"
-        + f"{PIPE}      {GRAY}□{FG_RESET} {BRIGHT_GREEN}missing{FG_RESET}\n"
-        + f"{PIPE}      {RED}▲{FG_RESET} {BRIGHT_GREEN}mismatch{FG_RESET}\n"
-        + f"{PIPE}      {RED}▲{FG_RESET} {BRIGHT_GREEN}unknown{FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  3  {GRAY}b/repo{FG_RESET}\n"
-        + f"{PIPE}      {GRAY}□{FG_RESET} {BRIGHT_GREEN}missing-b{FG_RESET}\n"
-        + f"{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Status: /repo/app\n"
+        + f"{GREEN}◇{FG_RESET}  Profiles: frontend, quality\n"
+        + f"  1  {GRAY}a/repo{FG_RESET}\n"
+        + f"      {GREEN}■{FG_RESET} {BRIGHT_GREEN}ready{FG_RESET}\n"
+        + f"      {GRAY}□{FG_RESET} {BRIGHT_GREEN}missing{FG_RESET}\n"
+        + f"      {RED}▲{FG_RESET} {BRIGHT_GREEN}mismatch{FG_RESET}\n"
+        + f"      {RED}▲{FG_RESET} {BRIGHT_GREEN}unknown{FG_RESET}\n"
+        + f"  3  {GRAY}b/repo{FG_RESET}\n"
+        + f"      {GRAY}□{FG_RESET} {BRIGHT_GREEN}missing-b{FG_RESET}\n"
         + f"{CYAN}◆{FG_RESET}  Source mismatch\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}mismatch{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}mismatch{FG_RESET} "
         + f"{RED}— a/repo{FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Untracked\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}unknown{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}unknown{FG_RESET} "
         + f"{RED}— a/repo{FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Extra\n"
-        + f"{PIPE}  {YELLOW}■{FG_RESET} {BRIGHT_GREEN}other{FG_RESET} "
+        + f"  {YELLOW}■{FG_RESET} {BRIGHT_GREEN}other{FG_RESET} "
         + f"{YELLOW}— x/repo{FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  {YELLOW}■{FG_RESET} {BRIGHT_GREEN}orphan{FG_RESET}\n"
-        + f"{PIPE}\n"
+        + f"  {YELLOW}■{FG_RESET} {BRIGHT_GREEN}orphan{FG_RESET}\n"
         + f"{CYAN}◆{FG_RESET}  Desired-source conflict\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}ambiguous{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}ambiguous{FG_RESET} "
         + f"{RED}— a/repo vs b/repo — required by frontend, quality"
         + f"{FG_RESET}\n"
-        + f"{PIPE}\n{CORNER}\n"
+        + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
 
@@ -342,10 +333,10 @@ def test_status_omits_every_empty_section_exactly() -> None:
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Status: /repo/app\n{PIPE}\n"
-        + f"{PIPE}  1  {GRAY}a/repo{FG_RESET}\n"
-        + f"{PIPE}      {GREEN}■{FG_RESET} {BRIGHT_GREEN}ready{FG_RESET}\n"
-        + f"{PIPE}\n{CORNER}\n"
+        + f"{GREEN}◇{FG_RESET}  Status: /repo/app\n"
+        + f"  1  {GRAY}a/repo{FG_RESET}\n"
+        + f"      {GREEN}■{FG_RESET} {BRIGHT_GREEN}ready{FG_RESET}\n"
+        + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
 
@@ -370,17 +361,15 @@ def test_status_empty_conflict_profiles_keep_oracle_required_by_suffix() -> None
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Status: /repo/app\n{PIPE}\n"
-        + f"{PIPE}  1  {GRAY}a/repo{FG_RESET}\n"
-        + f"{PIPE}      {GRAY}□{FG_RESET} {BRIGHT_GREEN}shared{FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  2  {GRAY}b/repo{FG_RESET}\n"
-        + f"{PIPE}      {GRAY}□{FG_RESET} {BRIGHT_GREEN}shared{FG_RESET}\n"
-        + f"{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Status: /repo/app\n"
+        + f"  1  {GRAY}a/repo{FG_RESET}\n"
+        + f"      {GRAY}□{FG_RESET} {BRIGHT_GREEN}shared{FG_RESET}\n"
+        + f"  2  {GRAY}b/repo{FG_RESET}\n"
+        + f"      {GRAY}□{FG_RESET} {BRIGHT_GREEN}shared{FG_RESET}\n"
         + f"{CYAN}◆{FG_RESET}  Desired-source conflict\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}shared{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}shared{FG_RESET} "
         + f"{RED}— a/repo vs b/repo — required by {FG_RESET}\n"
-        + f"{PIPE}\n{CORNER}\n"
+        + f"{CORNER}\n"
     )
     assert result.desired_conflicts[0].profiles == ()
     assert stderr.getvalue() == ""
@@ -410,31 +399,26 @@ def test_install_plan_renders_dry_run_and_all_sections_exactly() -> None:
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  DRY RUN — Install plan: /repo/app\n{PIPE}\n"
-        + f"{GREEN}◇{FG_RESET}  Profiles: frontend\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  DRY RUN — Install plan: /repo/app\n"
+        + f"{GREEN}◇{FG_RESET}  Profiles: frontend\n"
         + f"{CYAN}◆{FG_RESET}  Install\n"
-        + f"{PIPE}  {GREEN}■{FG_RESET} {BRIGHT_GREEN}missing{FG_RESET} "
+        + f"  {GREEN}■{FG_RESET} {BRIGHT_GREEN}missing{FG_RESET} "
         + f"{GREEN}— a/repo{FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  {GREEN}■{FG_RESET} {BRIGHT_GREEN}also-missing{FG_RESET} "
+        + f"  {GREEN}■{FG_RESET} {BRIGHT_GREEN}also-missing{FG_RESET} "
         + f"{GREEN}— b/repo{FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Already installed\n"
-        + f"{PIPE}  {GRAY}■{FG_RESET} {BRIGHT_GREEN}ready{FG_RESET} "
+        + f"  {GRAY}■{FG_RESET} {BRIGHT_GREEN}ready{FG_RESET} "
         + f"{GRAY}— a/repo{FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Conflict\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}blocked{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}blocked{FG_RESET} "
         + f"{RED}— a/repo{FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Extra\n"
-        + f"{PIPE}  {GRAY}■{FG_RESET} {BRIGHT_GREEN}other{FG_RESET} "
+        + f"  {GRAY}■{FG_RESET} {BRIGHT_GREEN}other{FG_RESET} "
         + f"{GRAY}— x/repo{FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Desired-source conflict\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}ambiguous{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}ambiguous{FG_RESET} "
         + f"{RED}— a/repo vs b/repo{FG_RESET}\n"
-        + f"{PIPE}\n{CORNER}\n"
+        + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
 
@@ -457,11 +441,11 @@ def test_install_plan_omits_empty_sections_exactly() -> None:
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Install plan: /repo/app\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Install plan: /repo/app\n"
         + f"{CYAN}◆{FG_RESET}  Install\n"
-        + f"{PIPE}  {GREEN}■{FG_RESET} {BRIGHT_GREEN}missing{FG_RESET} "
+        + f"  {GREEN}■{FG_RESET} {BRIGHT_GREEN}missing{FG_RESET} "
         + f"{GREEN}— a/repo{FG_RESET}\n"
-        + f"{PIPE}\n{CORNER}\n"
+        + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
 
@@ -490,31 +474,26 @@ def test_uninstall_plan_renders_every_branch_exactly() -> None:
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  DRY RUN — Uninstall plan: /repo/app\n{PIPE}\n"
-        + f"{GREEN}◇{FG_RESET}  Profiles: frontend\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  DRY RUN — Uninstall plan: /repo/app\n"
+        + f"{GREEN}◇{FG_RESET}  Profiles: frontend\n"
         + f"{CYAN}◆{FG_RESET}  Remove\n"
-        + f"{PIPE}  {YELLOW}■{FG_RESET} {BRIGHT_GREEN}remove-me{FG_RESET} "
+        + f"  {YELLOW}■{FG_RESET} {BRIGHT_GREEN}remove-me{FG_RESET} "
         + f"{YELLOW}— a/repo{FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  {YELLOW}■{FG_RESET} {BRIGHT_GREEN}also-remove{FG_RESET} "
+        + f"  {YELLOW}■{FG_RESET} {BRIGHT_GREEN}also-remove{FG_RESET} "
         + f"{YELLOW}— b/repo{FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Keep\n"
-        + f"{PIPE}  {GRAY}■{FG_RESET} {BRIGHT_GREEN}shared{FG_RESET} "
+        + f"  {GRAY}■{FG_RESET} {BRIGHT_GREEN}shared{FG_RESET} "
         + f"{GRAY}— a/repo{FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Already absent\n"
-        + f"{PIPE}  {GRAY}■{FG_RESET} {BRIGHT_GREEN}gone{FG_RESET} "
+        + f"  {GRAY}■{FG_RESET} {BRIGHT_GREEN}gone{FG_RESET} "
         + f"{GRAY}— a/repo{FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Conflict\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}blocked{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}blocked{FG_RESET} "
         + f"{RED}— a/repo{FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Unlink\n"
-        + f"{PIPE}  {YELLOW}■{FG_RESET} frontend\n"
-        + f"{PIPE}  {YELLOW}■{FG_RESET} quality\n"
-        + f"{PIPE}\n{CORNER}\n"
+        + f"  {YELLOW}■{FG_RESET} frontend\n"
+        + f"  {YELLOW}■{FG_RESET} quality\n"
+        + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
 
@@ -539,11 +518,11 @@ def test_uninstall_plan_keep_link_omits_unlink_exactly() -> None:
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Uninstall plan: /repo/app\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Uninstall plan: /repo/app\n"
         + f"{CYAN}◆{FG_RESET}  Remove\n"
-        + f"{PIPE}  {YELLOW}■{FG_RESET} {BRIGHT_GREEN}remove-me{FG_RESET} "
+        + f"  {YELLOW}■{FG_RESET} {BRIGHT_GREEN}remove-me{FG_RESET} "
         + f"{YELLOW}— a/repo{FG_RESET}\n"
-        + f"{PIPE}\n{CORNER}\n"
+        + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
 
@@ -567,13 +546,13 @@ def test_uninstall_plan_writes_newline_in_unlink_name_as_one_raw_item() -> None:
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Uninstall plan: /repo/app\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Uninstall plan: /repo/app\n"
         + f"{CYAN}◆{FG_RESET}  Unlink\n"
-        + f"{PIPE}  {YELLOW}■{FG_RESET} safe\nnext\n"
-        + f"{PIPE}\n{CORNER}\n"
+        + f"  {YELLOW}■{FG_RESET} safe\nnext\n"
+        + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
-    assert stdout.flush_count == 9
+    assert stdout.flush_count == 6
 
 
 def test_group_requirements_uses_catalog_indexes_and_does_not_mutate() -> None:
@@ -630,20 +609,17 @@ def test_apply_preview_groups_by_catalog_index_and_renders_prompt_exactly() -> N
     assert stdout.getvalue() == (
         "\x1b[2J\x1b[H"
         + HEADER
-        + f"{GREEN}◇{FG_RESET}  Apply these changes?\n{PIPE}\n"
-        + f"{CYAN}◆{FG_RESET}  Install\n{PIPE}\n"
-        + f"{PIPE}  2  {GRAY}b/two{FG_RESET}\n"
-        + f"{PIPE}      {GREEN}■{FG_RESET} {BRIGHT_GREEN}skill-c{FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{CYAN}◆{FG_RESET}  Remove\n{PIPE}\n"
-        + f"{PIPE}  1  {GRAY}a/one{FG_RESET}\n"
-        + f"{PIPE}      {GREEN}■{FG_RESET} {BRIGHT_GREEN}skill-b{FG_RESET}\n"
-        + f"{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Apply these changes?\n"
+        + f"{CYAN}◆{FG_RESET}  Install\n"
+        + f"  2  {GRAY}b/two{FG_RESET}\n"
+        + f"      {GREEN}■{FG_RESET} {BRIGHT_GREEN}skill-c{FG_RESET}\n"
+        + f"{CYAN}◆{FG_RESET}  Remove\n"
+        + f"  1  {GRAY}a/one{FG_RESET}\n"
+        + f"      {GREEN}■{FG_RESET} {BRIGHT_GREEN}skill-b{FG_RESET}\n"
         + f"{CYAN}◆{FG_RESET}  Select an item "
         + f"{WHITE}(enter to continue, q to quit){FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  {BRIGHT_GREEN}■{RESET} {WHITE}Yes{FG_RESET}\n"
-        + f"{PIPE}  {GRAY}□{RESET} {GRAY}No{FG_RESET}\n"
+        + f"  {BRIGHT_GREEN}■{RESET} {WHITE}Yes{FG_RESET}\n"
+        + f"  {GRAY}□{RESET} {GRAY}No{FG_RESET}\n"
         + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
@@ -672,27 +648,22 @@ def test_execution_summary_renders_install_failures_and_deduplicated_retry() -> 
     )
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Install incomplete\n{PIPE}\n"
-        + f"{GREEN}◇{FG_RESET}  1 succeeded; 2 failed\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Install incomplete\n"
+        + f"{GREEN}◇{FG_RESET}  1 succeeded; 2 failed\n"
         + f"{CYAN}◆{FG_RESET}  Succeeded\n"
-        + f"{PIPE}  {GREEN}■{FG_RESET} {BRIGHT_GREEN}three{FG_RESET} "
+        + f"  {GREEN}■{FG_RESET} {BRIGHT_GREEN}three{FG_RESET} "
         + f"{GRAY}— install{FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Failed\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}code review{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}code review{FG_RESET} "
         + f"{RED}— install failed (status 7){FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}quote's{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}quote's{FG_RESET} "
         + f"{RED}— install failed (status 7){FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}code review{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}code review{FG_RESET} "
         + f"{RED}— install failed (status 7){FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}quote's{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}quote's{FG_RESET} "
         + f"{RED}— install failed (status 7){FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Retry commands\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {retry}\n"
+        + f"  {RED}■{FG_RESET} {retry}\n"
         + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
@@ -732,17 +703,15 @@ def test_execution_summary_renders_uninstall_and_combined_branches_exactly(
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  {label} incomplete\n{PIPE}\n"
-        + f"{GREEN}◇{FG_RESET}  0 succeeded; 1 failed\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  {label} incomplete\n"
+        + f"{GREEN}◇{FG_RESET}  0 succeeded; 1 failed\n"
         + f"{CYAN}◆{FG_RESET}  Failed\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}one{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}one{FG_RESET} "
         + f"{RED}— {action} failed (status 4){FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}two{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}two{FG_RESET} "
         + f"{RED}— {action} failed (status 4){FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Retry commands\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {retry}\n"
+        + f"  {RED}■{FG_RESET} {retry}\n"
         + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
@@ -763,15 +732,14 @@ def test_execution_summary_renders_combined_success_exactly() -> None:
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Changes complete\n{PIPE}\n"
-        + f"{GREEN}◇{FG_RESET}  2 succeeded; 0 failed\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Changes complete\n"
+        + f"{GREEN}◇{FG_RESET}  2 succeeded; 0 failed\n"
         + f"{CYAN}◆{FG_RESET}  Succeeded\n"
-        + f"{PIPE}  {GREEN}■{FG_RESET} {BRIGHT_GREEN}one{FG_RESET} "
+        + f"  {GREEN}■{FG_RESET} {BRIGHT_GREEN}one{FG_RESET} "
         + f"{GRAY}— install{FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  {GREEN}■{FG_RESET} {BRIGHT_GREEN}two{FG_RESET} "
+        + f"  {GREEN}■{FG_RESET} {BRIGHT_GREEN}two{FG_RESET} "
         + f"{GRAY}— uninstall{FG_RESET}\n"
-        + f"{PIPE}\n{CORNER}\n"
+        + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
 
@@ -788,18 +756,17 @@ def test_uninstall_retry_with_newline_is_one_raw_copyable_command() -> None:
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Uninstall incomplete\n{PIPE}\n"
-        + f"{GREEN}◇{FG_RESET}  0 succeeded; 1 failed\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Uninstall incomplete\n"
+        + f"{GREEN}◇{FG_RESET}  0 succeeded; 1 failed\n"
         + f"{CYAN}◆{FG_RESET}  Failed\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}safe\nnext{FG_RESET} "
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}safe\nnext{FG_RESET} "
         + f"{RED}— uninstall failed (status 4){FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Retry commands\n"
-        + f"{PIPE}  {RED}■{FG_RESET} npx skills remove 'safe\nnext'\n"
+        + f"  {RED}■{FG_RESET} npx skills remove 'safe\nnext'\n"
         + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
-    assert stdout.flush_count == 13
+    assert stdout.flush_count == 9
 
 
 def test_install_retry_quotes_raw_newlines_and_shell_metacharacters() -> None:
@@ -816,21 +783,20 @@ def test_install_retry_quotes_raw_newlines_and_shell_metacharacters() -> None:
 
     assert stdout.getvalue() == (
         HEADER
-        + f"{GREEN}◇{FG_RESET}  Install incomplete\n{PIPE}\n"
-        + f"{GREEN}◇{FG_RESET}  0 succeeded; 1 failed\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Install incomplete\n"
+        + f"{GREEN}◇{FG_RESET}  0 succeeded; 1 failed\n"
         + f"{CYAN}◆{FG_RESET}  Failed\n"
-        + f"{PIPE}  {RED}■{FG_RESET} {BRIGHT_GREEN}safe\n"
+        + f"  {RED}■{FG_RESET} {BRIGHT_GREEN}safe\n"
         + f"next;$(printf skill-owned){FG_RESET} "
         + f"{RED}— install failed (status 9){FG_RESET}\n"
-        + f"{PIPE}\n"
         + f"{CYAN}◆{FG_RESET}  Retry commands\n"
-        + f"{PIPE}  {RED}■{FG_RESET} npx skills add "
+        + f"  {RED}■{FG_RESET} npx skills add "
         + "'[unsafe source redacted]' --skill 'safe\n"
         + "next;$(printf skill-owned)'\n"
         + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
-    assert stdout.flush_count == 13
+    assert stdout.flush_count == 9
     assert "source-owned" not in stdout.getvalue()
 
 
@@ -894,15 +860,13 @@ def test_generic_multi_selector_renders_exact_colors_spacing_and_hints() -> None
     assert stdout.getvalue() == (
         "\x1b[2J\x1b[H"
         + HEADER
-        + f"{GREEN}◇{FG_RESET}  Select skills from demo\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Select skills from demo\n"
         + f"{CYAN}◆{FG_RESET}  Select items "
         + f"{WHITE}(space toggle, a all, c clear, enter to continue, q to quit)"
         + f"{FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  {GRAY}□{RESET} {WHITE}alpha{FG_RESET} "
+        + f"  {GRAY}□{RESET} {WHITE}alpha{FG_RESET} "
         + f"{DIM}{GRAY}first{RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  {BRIGHT_GREEN}■{RESET} {GREEN}beta{FG_RESET} "
+        + f"  {BRIGHT_GREEN}■{RESET} {GREEN}beta{FG_RESET} "
         + f"{DIM}{GRAY}second{RESET}\n"
         + f"{CORNER}\n"
     )
@@ -922,12 +886,11 @@ def test_generic_single_selector_and_cancelled_footer_are_exact() -> None:
     assert stdout.getvalue() == (
         "\x1b[2J\x1b[H"
         + HEADER
-        + f"{GREEN}◇{FG_RESET}  Choose profile\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Choose profile\n"
         + f"{CYAN}◆{FG_RESET}  Select an item "
         + f"{WHITE}(enter to continue, q to quit){FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  {GRAY}□{RESET} {GRAY}Frontend{FG_RESET}\n"
-        + f"{PIPE}  {BRIGHT_GREEN}■{RESET} {WHITE}Review{FG_RESET}\n"
+        + f"  {GRAY}□{RESET} {GRAY}Frontend{FG_RESET}\n"
+        + f"  {BRIGHT_GREEN}■{RESET} {WHITE}Review{FG_RESET}\n"
         + f"{CORNER}  {RED}Selection cancelled{FG_RESET}\n"
     )
     assert stderr.getvalue() == ""
@@ -973,18 +936,16 @@ def test_catalog_selector_renders_hierarchy_partial_parent_and_color_ladder() ->
     assert stdout.getvalue() == (
         "\x1b[2J\x1b[H"
         + HEADER
-        + f"{GREEN}◇{FG_RESET}  Choose skills\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Choose skills\n"
         + f"{CYAN}◆{FG_RESET}  Select items "
         + f"{WHITE}(space toggle, a all, c clear, enter to continue, q to quit)"
         + f"{FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  1  {GRAY}□{RESET}  {GRAY}a/repo{FG_RESET}\n"
-        + f"{PIPE}      {BRIGHT_GREEN}■{RESET} {WHITE}one{FG_RESET}\n"
-        + f"{PIPE}      {GRAY}□{RESET} {GRAY}two{FG_RESET} "
+        + f"  1  {GRAY}□{RESET}  {GRAY}a/repo{FG_RESET}\n"
+        + f"      {BRIGHT_GREEN}■{RESET} {WHITE}one{FG_RESET}\n"
+        + f"      {GRAY}□{RESET} {GRAY}two{FG_RESET} "
         + f"{DIM}{GRAY}second skill{RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  2  {BRIGHT_GREEN}■{RESET}  {GREEN}b/repo{FG_RESET}\n"
-        + f"{PIPE}      {BRIGHT_GREEN}■{RESET} {GREEN}three{FG_RESET}\n"
+        + f"  2  {BRIGHT_GREEN}■{RESET}  {GREEN}b/repo{FG_RESET}\n"
+        + f"      {BRIGHT_GREEN}■{RESET} {GREEN}three{FG_RESET}\n"
         + f"{CORNER}\n"
     )
     assert stderr.getvalue() == ""
@@ -1013,13 +974,12 @@ def test_cancelled_catalog_selector_renders_exact_footer() -> None:
     assert stdout.getvalue() == (
         "\x1b[2J\x1b[H"
         + HEADER
-        + f"{GREEN}◇{FG_RESET}  Choose skills\n{PIPE}\n"
+        + f"{GREEN}◇{FG_RESET}  Choose skills\n"
         + f"{CYAN}◆{FG_RESET}  Select items "
         + f"{WHITE}(space toggle, a all, c clear, enter to continue, q to quit)"
         + f"{FG_RESET}\n"
-        + f"{PIPE}\n"
-        + f"{PIPE}  1  {BRIGHT_GREEN}■{RESET}  {WHITE}a/repo{FG_RESET}\n"
-        + f"{PIPE}      {BRIGHT_GREEN}■{RESET} {GREEN}one{FG_RESET}\n"
+        + f"  1  {BRIGHT_GREEN}■{RESET}  {WHITE}a/repo{FG_RESET}\n"
+        + f"      {BRIGHT_GREEN}■{RESET} {GREEN}one{FG_RESET}\n"
         + f"{CORNER}  {RED}Selection cancelled{FG_RESET}\n"
     )
     assert stderr.getvalue() == ""

@@ -21,9 +21,7 @@ PROMPT = b"Base32 secret: "
 CTRL_C_GOLDEN = (
     "\r\n"
     "   \x1b[42m\x1b[30m 2FA \x1b[39m\x1b[49m\r\n"
-    "\x1b[36m│\x1b[39m\r\n"
     "\x1b[32m◇\x1b[39m  Generate TOTP\r\n"
-    "\x1b[36m│\x1b[39m\r\n"
     "\x1b[36m◆\x1b[39m  Base32 secret: "
     "\x1b[36m└\x1b[39m\r\n"
 ).encode("utf-8")

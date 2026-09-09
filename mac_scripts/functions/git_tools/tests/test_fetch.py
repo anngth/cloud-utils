@@ -279,7 +279,7 @@ def test_fetch_renders_multiple_gone_branches_as_frame_continuations() -> None:
 
     assert run_fetch_command([], cwd="/repo", env={}, ui=GitToolsUi(stdout, io.StringIO()), run_git_fn=git) == 0
     plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", stdout.getvalue())
-    assert "│  ■ Cleaning gone branches: old-feature\n│      older-feature" in plain
+    assert "  ■ Cleaning gone branches: old-feature\n      older-feature" in plain
 
 
 def test_fetch_sync_upstream_on_main_merges_then_pushes_origin() -> None:

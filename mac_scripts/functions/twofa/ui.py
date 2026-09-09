@@ -20,6 +20,6 @@ class TwoFactorUi(FrameUi):
         return self.prompt_text("Base32 secret: ")
 
     def success_copied(self, code: str) -> None:
-        self.line(self.pipe)
+        self.line()
         self.step(f"Code copied: {code}")
         self.end()

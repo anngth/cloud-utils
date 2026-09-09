@@ -10,13 +10,10 @@ from mac_scripts.functions.shared.ui import FrameUi
 EXPECTED_FRAME_BYTES = (
     "\n"
     "   \x1b[42m\x1b[30m 2FA \x1b[39m\x1b[49m\n"
-    "\x1b[36m│\x1b[39m\n"
     "\x1b[32m◇\x1b[39m  Usage: 2fa\n"
-    "\x1b[36m│\x1b[39m\n"
-    "\x1b[36m│\x1b[39m\n"
     "\x1b[36m◆\x1b[39m  Notes\n"
-    "\x1b[36m│\x1b[39m  \x1b[32m■\x1b[39m Ready\n"
-    "\x1b[36m│\x1b[39m      \x1b[90msecondary\x1b[39m\n"
+    "  \x1b[32m■\x1b[39m Ready\n"
+    "      \x1b[90msecondary\x1b[39m\n"
     "\x1b[36m└\x1b[39m\n"
 )
 
@@ -99,11 +96,11 @@ def test_item_tones_markers_and_unknown_tone_fallback() -> None:
 
     assert stderr.getvalue() == ""
     assert stdout.getvalue() == (
-        "\x1b[36m│\x1b[39m  \x1b[33m■\x1b[39m warn\n"
-        "\x1b[36m│\x1b[39m  \x1b[31m■\x1b[39m fail\n"
-        "\x1b[36m│\x1b[39m  \x1b[90m□\x1b[39m quiet\n"
-        "\x1b[36m│\x1b[39m  \x1b[90m□\x1b[39m custom\n"
-        "\x1b[36m│\x1b[39m  \x1b[33m!\x1b[39m manual\n"
+        "  \x1b[33m■\x1b[39m warn\n"
+        "  \x1b[31m■\x1b[39m fail\n"
+        "  \x1b[90m□\x1b[39m quiet\n"
+        "  \x1b[90m□\x1b[39m custom\n"
+        "  \x1b[33m!\x1b[39m manual\n"
     )
 
 
@@ -116,11 +113,11 @@ def test_multiline_items_and_details_stay_inside_frame() -> None:
 
     assert stderr.getvalue() == ""
     assert stdout.getvalue() == (
-        "\x1b[36m│\x1b[39m  \x1b[32m■\x1b[39m first\n"
-        "\x1b[36m│\x1b[39m      \x1b[90msecond\x1b[39m\n"
-        "\x1b[36m│\x1b[39m      \x1b[90mthird\x1b[39m\n"
-        "\x1b[36m│\x1b[39m      \x1b[90mfourth\x1b[39m\n"
-        "\x1b[36m│\x1b[39m      \x1b[90mfifth\x1b[39m\n"
+        "  \x1b[32m■\x1b[39m first\n"
+        "      \x1b[90msecond\x1b[39m\n"
+        "      \x1b[90mthird\x1b[39m\n"
+        "      \x1b[90mfourth\x1b[39m\n"
+        "      \x1b[90mfifth\x1b[39m\n"
     )
 
 
@@ -133,10 +130,10 @@ def test_terminal_newlines_preserve_blank_continuation_rows() -> None:
 
     assert stderr.getvalue() == ""
     assert stdout.getvalue() == (
-        "\x1b[36m│\x1b[39m  \x1b[32m■\x1b[39m a\n"
-        "\x1b[36m│\x1b[39m      \x1b[90m\x1b[39m\n"
-        "\x1b[36m│\x1b[39m      \x1b[90mb\x1b[39m\n"
-        "\x1b[36m│\x1b[39m      \x1b[90m\x1b[39m\n"
+        "  \x1b[32m■\x1b[39m a\n"
+        "      \x1b[90m\x1b[39m\n"
+        "      \x1b[90mb\x1b[39m\n"
+        "      \x1b[90m\x1b[39m\n"
     )
 
 
@@ -152,7 +149,7 @@ def test_help_rows_and_prompt_text_use_frame_primitives() -> None:
     assert prompt == "\x1b[36m◆\x1b[39m  Base32 secret: "
     assert stdout.getvalue() == (
         "\n"
-        "\x1b[36m│\x1b[39m  \x1b[32m2fa\x1b[39m  \x1b[90mPrompt for Base32 secret\x1b[39m\n"
-        "\x1b[36m│\x1b[39m  \x1b[90mSecret stays hidden\x1b[39m\n"
+        "  \x1b[32m2fa\x1b[39m  \x1b[90mPrompt for Base32 secret\x1b[39m\n"
+        "  \x1b[90mSecret stays hidden\x1b[39m\n"
     )
     assert stderr.getvalue() == ""

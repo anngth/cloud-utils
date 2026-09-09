@@ -736,9 +736,9 @@ def test_run_backup_batch_separates_repo_and_summary_sections(
     for code in ("\033[36m", "\033[39m", "\033[31m", "\033[90m"):
         plain = plain.replace(code, "")
     assert (
-        f"│\n◆  {SOURCE} → {BACKUP_GROUP}/{BASE_NAME}"
-        f"\n│\n◆  {SOURCE_B} → {BACKUP_GROUP}/{BASE_NAME_B}"
-        "\n│\n◆  Backup summary"
+        f"◆  {SOURCE} → {BACKUP_GROUP}/{BASE_NAME}"
+        f"\n◆  {SOURCE_B} → {BACKUP_GROUP}/{BASE_NAME_B}"
+        "\n◆  Backup summary"
     ) in plain
 
 

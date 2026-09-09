@@ -112,7 +112,7 @@ class SkmUi:
 
     def _continuation(self, syntax: object, description: object = "") -> None:
         suffix = f"  {_fg(GRAY, description)}" if description else ""
-        self._out(f"{self.frame.pipe}      {_fg(GREEN, syntax)}{suffix}")
+        self._out(f"      {_fg(GREEN, syntax)}{suffix}")
 
     def _skill_item(
         self,
@@ -126,21 +126,19 @@ class SkmUi:
     ) -> None:
         detail = f" {_fg(suffix_color, suffix)}" if suffix else ""
         self._out(
-            f"{self.frame.pipe}{indent}{_fg(marker_color, marker)} "
+            f"{indent}{_fg(marker_color, marker)} "
             f"{_fg(BRIGHT_GREEN, name)}{detail}"
         )
 
     def _raw_item(self, text: object, color: str = GREEN) -> None:
-        self._out(f"{self.frame.pipe}  {_fg(color, '■')} {text}")
+        self._out(f"  {_fg(color, '■')} {text}")
 
     def _skill_list(
         self,
         values: Sequence[_Row],
         render: Callable[[_Row], None],
     ) -> None:
-        for index, value in enumerate(values):
-            if index:
-                self._out(self.frame.pipe)
+        for value in values:
             render(value)
 
     def _requirement_suffix(self, value: Requirement) -> str:
@@ -169,7 +167,6 @@ class SkmUi:
             )
 
         self._skill_list(values, render)
-        self._out(self.frame.pipe)
 
     def usage(self) -> None:
         self._title()
@@ -257,7 +254,7 @@ class SkmUi:
             if not entry.skills:
                 continue
             self._out(
-                f"{self.frame.pipe}  {source_index}  "
+                f"  {source_index}  "
                 f"{_fg(GRAY, redact_source(entry.source))}"
             )
             for skill in entry.skills:
@@ -275,7 +272,6 @@ class SkmUi:
                     marker_color=marker_color,
                     indent="      ",
                 )
-            self._out(self.frame.pipe)
 
     def status(
         self,
@@ -307,7 +303,6 @@ class SkmUi:
                 )
 
             self._skill_list(status.extras, render_extra)
-            self._out(self.frame.pipe)
         if status.desired_conflicts:
             self.frame.active("Desired-source conflict")
 
@@ -326,7 +321,6 @@ class SkmUi:
                 )
 
             self._skill_list(status.desired_conflicts, render_conflict)
-            self._out(self.frame.pipe)
         self.frame.end()
 
     def install_plan(
@@ -359,7 +353,6 @@ class SkmUi:
                 )
 
             self._skill_list(plan.extras, render_extra)
-            self._out(self.frame.pipe)
         if plan.desired_conflicts:
             self.frame.active("Desired-source conflict")
 
@@ -376,7 +369,6 @@ class SkmUi:
                 )
 
             self._skill_list(plan.desired_conflicts, render_conflict)
-            self._out(self.frame.pipe)
         self.frame.end()
 
     def uninstall_plan(
@@ -401,7 +393,6 @@ class SkmUi:
             self.frame.active("Unlink")
             for name in plan.unlink_profiles:
                 self._raw_item(name, YELLOW)
-            self._out(self.frame.pipe)
         self.frame.end()
 
     def _retry_command(self, record: MutationRecordLike) -> str:
@@ -445,7 +436,6 @@ class SkmUi:
                 self._skill_item(name, suffix=f"— {record.action}")
 
             self._skill_list(rows, render_success)
-            self._out(self.frame.pipe)
         if result.failed:
             self.frame.active("Failed")
             rows = tuple(
@@ -466,7 +456,6 @@ class SkmUi:
                 )
 
             self._skill_list(rows, render_failure)
-            self._out(self.frame.pipe)
         retry_commands = tuple(
             dict.fromkeys(self._retry_command(record) for record in result.failed)
         )
@@ -492,28 +481,25 @@ class SkmUi:
             if not requirements:
                 continue
             self.frame.active(label)
-            self._out(self.frame.pipe)
             groups = group_requirements_by_catalog_source(
                 requirements, catalog
             )
             for group in groups:
                 self._out(
-                    f"{self.frame.pipe}  {group.source_index}  "
+                    f"  {group.source_index}  "
                     f"{_fg(GRAY, group.label)}"
                 )
                 for skill in group.skills:
                     self._skill_item(skill, indent="      ")
-                self._out(self.frame.pipe)
         hint = _fg(WHITE, "(enter to continue, q to quit)")
         self.frame.active(f"Select an item {hint}")
-        self._out(self.frame.pipe)
         for index, entry in enumerate(confirm_state.items):
             selected = index == confirm_state.cursor
             box = "■" if selected else "□"
             box_color = BRIGHT_GREEN if selected else GRAY
             label_color = WHITE if selected else GRAY
             self._out(
-                f"{self.frame.pipe}  {box_color}{box}{RESET} "
+                f"  {box_color}{box}{RESET} "
                 f"{_fg(label_color, entry.label)}"
             )
         self.frame.end()
@@ -558,12 +544,9 @@ class SkmUi:
         )
         noun = "items" if multiple else "an item"
         self.frame.active(f"Select {noun} {_fg(WHITE, hint_text)}")
-        self._out(self.frame.pipe)
         previous_skill = False
         for index, entry in enumerate(state.items):
             skill_entry = getattr(entry, "kind", None) == "skill"
-            if index and skill_entry and previous_skill:
-                self._out(self.frame.pipe)
             selected = index in state.selected if multiple else index == state.cursor
             box = "■" if selected else "□"
             box_color = BRIGHT_GREEN if selected else GRAY
@@ -580,7 +563,7 @@ class SkmUi:
                 f" {SELECTOR_DESCRIPTION_COLOR}{hint}{RESET}" if hint else ""
             )
             self._out(
-                f"{self.frame.pipe}  {box_color}{box}{RESET} "
+                f"  {box_color}{box}{RESET} "
                 f"{_fg(label_color, entry.label)}{hint_suffix}"
             )
             previous_skill = skill_entry
@@ -611,11 +594,8 @@ class SkmUi:
             "(space toggle, a all, c clear, enter to continue, q to quit)",
         )
         self.frame.active(f"Select items {hint}")
-        self._out(self.frame.pipe)
         for index, entry in enumerate(state.items):
             kind = getattr(entry, "kind", None)
-            if index and kind == "source":
-                self._out(self.frame.pipe)
             if kind == "source":
                 selected = self._catalog_source_selected(state, entry)
             else:
@@ -635,12 +615,12 @@ class SkmUi:
             if kind == "source":
                 number = getattr(entry, "source_index", index + 1)
                 self._out(
-                    f"{self.frame.pipe}  {number}  {box_color}{box}{RESET}  "
+                    f"  {number}  {box_color}{box}{RESET}  "
                     f"{_fg(label_color, entry.label)}"
                 )
             else:
                 self._out(
-                    f"{self.frame.pipe}      {box_color}{box}{RESET} "
+                    f"      {box_color}{box}{RESET} "
                     f"{_fg(label_color, entry.label)}{hint_suffix}"
                 )
         self._selector_end(cancelled)

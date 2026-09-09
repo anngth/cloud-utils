@@ -45,30 +45,30 @@ def test_usage_matches_skm_style_sections_and_signatures() -> None:
 
     for first, continuation in (
         (
-            "│  gt backup [(-f | --force) | --dry-run]",
-            "│      Interactive select; force and dry-run are mutually exclusive",
+            "  gt backup [(-f | --force) | --dry-run]",
+            "      Interactive select; force and dry-run are mutually exclusive",
         ),
         (
-            "│  gt backup --all [(-f | --force) | --dry-run]",
-            "│      Backup or preview every listed repo",
+            "  gt backup --all [(-f | --force) | --dry-run]",
+            "      Backup or preview every listed repo",
         ),
         (
-            "│  gt backup stale [--days <n>] [--all] [(-f | --force) | --dry-run]",
-            "│      Stale repos only (default 7 days)",
+            "  gt backup stale [--days <n>] [--all] [(-f | --force) | --dry-run]",
+            "      Stale repos only (default 7 days)",
         ),
     ):
         index = lines.index(first)
         assert lines[index + 1] == continuation
 
     for line in (
-        "│  gt (help | -h | --help)  Show this help",
-        "│  gt push  Force push (safe --force-with-lease)",
-        "│  gt fetch [--sync-upstream]  Fetch with optional upstream sync",
-        "│  gt backup add <ssh-url> [<ssh-url> ...]  Add SSH URL(s) to managed list",
-        "│  gt backup remove <index|ssh-url>  Remove by 1-based index or URL",
-        "│  Selector: space toggle, a all, c clear, enter start, q quit",
-        "│  Remove indexes are 1-based (same as skm).",
-        "│  --force skips fingerprint short-circuit; cannot combine with --dry-run.",
+        "  gt (help | -h | --help)  Show this help",
+        "  gt push  Force push (safe --force-with-lease)",
+        "  gt fetch [--sync-upstream]  Fetch with optional upstream sync",
+        "  gt backup add <ssh-url> [<ssh-url> ...]  Add SSH URL(s) to managed list",
+        "  gt backup remove <index|ssh-url>  Remove by 1-based index or URL",
+        "  Selector: space toggle, a all, c clear, enter start, q quit",
+        "  Remove indexes are 1-based (same as skm).",
+        "  --force skips fingerprint short-circuit; cannot combine with --dry-run.",
     ):
         assert line in lines
 
@@ -83,7 +83,7 @@ def test_status_renders_a_framed_success_item() -> None:
 
     ui.status("Checking backup group")
 
-    assert "│  ■ Checking backup group" in _plain(stdout.getvalue())
+    assert "■ Checking backup group" in _plain(stdout.getvalue())
     assert not re.search(r"^--- ", stdout.getvalue(), re.MULTILINE)
 
 
@@ -126,9 +126,9 @@ def test_semantic_frame_renders_headline_tones_details_and_footer() -> None:
         "■ Fetched origin/main",
         "■ No upstream configured",
         "□ Skipped upstream sync",
-        "│      Run: gt fetch --sync-upstream",
+        "    Run: gt fetch --sync-upstream",
         "■ Push rejected",
-        "│      permission denied",
+        "    permission denied",
         "└",
     ):
         assert expected in plain
@@ -172,10 +172,10 @@ def test_multiline_semantic_output_keeps_every_line_inside_the_frame() -> None:
     ui.error_detail("fatal: first failure\nfatal: second failure")
 
     assert (
-        "│  ■ Cleaning gone branches: old-feature\n"
-        "│      older-feature\n"
-        "│      remote: first update\n"
-        "│      remote: second update"
+        "  ■ Cleaning gone branches: old-feature\n"
+        "      older-feature\n"
+        "      remote: first update\n"
+        "      remote: second update"
     ) in _plain(stdout.getvalue())
     assert _plain(stderr.getvalue()) == (
         "   fatal: first failure\n   fatal: second failure\n"
@@ -241,7 +241,7 @@ def test_render_backup_selector_omits_timestamp_labels() -> None:
     assert re.search(r"2\s+.*□.*git@gitlab\.com:acme/b\.git", rendered)
     assert "Last backup" not in rendered
     assert "Last checked" not in rendered
-    assert re.search(r"org/a\.git[\s\S]*│\n│\s+2\s+", _plain(rendered))
+    assert re.search(r"org/a\.git[\s\S]*\n\s+2\s+", _plain(rendered))
 
 
 def test_cancelled_backup_selector_keeps_list_and_cancelled_footer() -> None:

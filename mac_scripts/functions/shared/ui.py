@@ -33,7 +33,6 @@ class FrameUi:
     def __init__(self, stdout: TextWriter, stderr: TextWriter) -> None:
         self.stdout = stdout
         self.stderr = stderr
-        self.pipe = _fg(CYAN, "│")
 
     def _out(self, text: str = "") -> None:
         self.stdout.write(f"{text}\n")
@@ -49,25 +48,22 @@ class FrameUi:
     def title(self, label: object) -> None:
         self._out()
         self._out(f"   {BG_GREEN}{BLACK} {label} {FG_RESET}{BG_RESET}")
-        self._out(self.pipe)
 
     def step(self, text: object) -> None:
         self._out(f"{_fg(GREEN, '◇')}  {text}")
-        self._out(self.pipe)
 
     def active(self, text: object) -> None:
         self._out(f"{_fg(CYAN, '◆')}  {text}")
 
     def section(self, text: object) -> None:
-        self._out(self.pipe)
         self.active(text)
 
     def command(self, syntax: object, description: object = "") -> None:
         suffix = f"  {_fg(GRAY, description)}" if description else ""
-        self._out(f"{self.pipe}  {_fg(GREEN, syntax)}{suffix}")
+        self._out(f"  {_fg(GREEN, syntax)}{suffix}")
 
     def note(self, text: object) -> None:
-        self._out(f"{self.pipe}  {_fg(GRAY, text)}")
+        self._out(f"  {_fg(GRAY, text)}")
 
     def prompt_text(self, text: object) -> str:
         return f"{_fg(CYAN, '◆')}  {text}"
@@ -82,14 +78,14 @@ class FrameUi:
         resolved = tone if tone in TONE_COLOR else "muted"
         symbol = marker or ("□" if resolved == "muted" else "■")
         first, *rest = _split_lines(text)
-        self._out(f"{self.pipe}  {_fg(TONE_COLOR[resolved], symbol)} {first}")
+        self._out(f"  {_fg(TONE_COLOR[resolved], symbol)} {first}")
         for continuation in rest:
             self.detail(continuation)
 
     def detail(self, text: object, *, tone: str = "muted") -> None:
         resolved = tone if tone in TONE_COLOR else "muted"
         for line in _split_lines(text):
-            self._out(f"{self.pipe}      {_fg(TONE_COLOR[resolved], line)}")
+            self._out(f"      {_fg(TONE_COLOR[resolved], line)}")
 
     def end(self, text: object = "") -> None:
         suffix = f"  {_fg(BRIGHT_GREEN, text)}" if text else ""

@@ -238,15 +238,15 @@ def _preview(tmp_path: Path, keys: tuple[bytes, ...]):
     [
         (
             (b"a", b"c", b"j", b" ", b"\r"),
-            ("◇ Apply these changes?", "◆ Install", "│ ■ alpha"),
+            ("◇ Apply these changes?", "◆ Install", "■ alpha"),
         ),
         (
             (b"\x1b[", b"B", b"j", b" ", b"\r"),
-            ("◇ Apply these changes?", "◆ Install", "│ ■ beta"),
+            ("◇ Apply these changes?", "◆ Install", "■ beta"),
         ),
         (
             (b"j", b"j", b"k", b" ", b"\r"),
-            ("◇ Apply these changes?", "◆ Install", "│ ■ alpha"),
+            ("◇ Apply these changes?", "◆ Install", "■ alpha"),
         ),
     ],
 )
