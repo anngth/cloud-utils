@@ -19,7 +19,6 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "gt.jsonl"
 SOURCE_A = "git@github.com:org/a.git"
 SOURCE_B = "git@gitlab.com:acme/b.git"
 OLD = "2000-01-01T00:00:00.000Z"
-FUTURE = "2999-01-01T00:00:00.000Z"
 
 
 def _repo(url: str, *, checked: str | None = None) -> dict[str, object]:
@@ -72,16 +71,6 @@ SCENARIOS: tuple[dict[str, object], ...] = (
         "name": "backup-all-force",
         "argv": ["backup", "--all", "--force"],
         "document": {"version": 4, "repos": [_repo(SOURCE_A)]},
-    },
-    {
-        "name": "backup-stale-empty",
-        "argv": ["backup", "stale", "--all"],
-        "document": {"version": 4, "repos": [_repo(SOURCE_A, checked=FUTURE)]},
-    },
-    {
-        "name": "backup-stale-all",
-        "argv": ["backup", "stale", "--all", "--dry-run"],
-        "document": {"version": 4, "repos": [_repo(SOURCE_A, checked=OLD)]},
     },
     {
         "name": "config-v1-migration",

@@ -26,8 +26,6 @@ _HELP_SECTIONS = (
         ("gt backup [(-f | --force) | --dry-run]", "",
          "Interactive select; force and dry-run are mutually exclusive"),
         ("gt backup --all [(-f | --force) | --dry-run]", "", "Backup or preview every listed repo"),
-        ("gt backup stale [--days <n>] [--all] [(-f | --force) | --dry-run]", "",
-         "Stale repos only (default 7 days)"),
         ("gt backup add <ssh-url> [<ssh-url> ...]", "Add SSH URL(s) to managed list", ""),
         ("gt backup remove <index|ssh-url>", "Remove by 1-based index or URL", ""),
     )),

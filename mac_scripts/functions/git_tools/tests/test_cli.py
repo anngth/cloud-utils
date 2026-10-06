@@ -97,11 +97,11 @@ def test_help_mentions_managed_backup_list_commands() -> None:
     for text in (
         "backup",
         "backup --all",
-        "backup stale",
         "backup add <ssh-url>",
         "backup remove <index|ssh-url>",
     ):
         assert text in stdout
+    assert "backup stale" not in stdout
     assert "-n" not in stdout
     assert "--new" not in stdout
     assert "backup <ssh-url>" not in stdout

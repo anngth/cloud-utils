@@ -41,7 +41,6 @@ SOURCE_B = "git@github.com:org/other.git"
 BASE_NAME = "org-app"
 BASE_NAME_B = "org-other"
 FIXED_NOW = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
-RECENT_CHECKED = "2026-08-07T12:00:00.000Z"
 
 
 class InputStub:
@@ -995,7 +994,7 @@ def test_run_backup_command_selection_write_failure_skips_batch(
 
 @pytest.mark.parametrize(
     ("args", "heading"),
-    [([], "Select repos to backup"), (["stale"], "Select stale repos to backup")],
+    [([], "Select repos to backup")],
 )
 def test_run_backup_command_cancel_redraws_selector(
     tmp_path: Path, args: list[str], heading: str
@@ -1069,7 +1068,7 @@ def test_run_backup_command_all_migrates_v1_list_on_load(tmp_path: Path) -> None
     }
 
 
-@pytest.mark.parametrize("args", [["--all"], ["stale", "--all"]])
+@pytest.mark.parametrize("args", [["--all"]])
 def test_run_backup_command_automatic_batch_writes_migration_before_external_work(
     tmp_path: Path, args: list[str]
 ) -> None:
@@ -1098,7 +1097,7 @@ def test_run_backup_command_automatic_batch_writes_migration_before_external_wor
     assert events[:3] == ["write-migration", "external:glab", "external:git"]
 
 
-@pytest.mark.parametrize("args", [["--all"], ["stale", "--all"]])
+@pytest.mark.parametrize("args", [["--all"]])
 def test_run_backup_command_migration_write_failure_prevents_external_work(
     tmp_path: Path, args: list[str]
 ) -> None:
@@ -1244,10 +1243,7 @@ def test_run_backup_command_cancel_exits_without_starting_batch(tmp_path: Path) 
 
 @pytest.mark.parametrize(
     ("args", "message"),
-    [
-        ([], "Use `gt backup --all`"),
-        (["stale"], "Use `gt backup stale --all`"),
-    ],
+    [([], "Use `gt backup --all`")],
 )
 def test_run_backup_command_interactive_requires_tty(
     tmp_path: Path, args: list[str], message: str
@@ -1327,7 +1323,6 @@ def test_run_backup_command_rejects_batch_only_flags_on_add_remove(
     [
         ["--all", "--force", "--dry-run"],
         ["--force", "--dry-run"],
-        ["stale", "--all", "--force", "--dry-run"],
     ],
 )
 def test_run_backup_command_rejects_force_and_dry_run_together(
@@ -1511,202 +1506,3 @@ def test_run_backup_command_interactive_dry_run_does_not_persist_selection(
     ]
 
 
-def test_run_backup_command_stale_empty_set_prints_muted_absent_item(
-    tmp_path: Path,
-) -> None:
-    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
-    seed_repos(
-        paths,
-        [
-            {"url": SOURCE, "lastCheckedAt": RECENT_CHECKED},
-            {"url": SOURCE_B, "lastCheckedAt": RECENT_CHECKED},
-        ],
-    )
-    stdout = io.StringIO()
-    ui = GitToolsUi(stdout, io.StringIO())
-    h = make_harness(tmp_path, ui=ui)
-    assert run_backup_command(["stale"], context=h.context) == 0
-    assert "\033[90m□\033[39m No stale repos" in stdout.getvalue()
-    assert "REPO BACKUP" in stdout.getvalue()
-
-
-def test_run_backup_command_stale_all_preserves_full_list_order(
-    tmp_path: Path,
-) -> None:
-    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
-    seed_repos(
-        paths,
-        [
-            {"url": SOURCE, "lastCheckedAt": None},
-            {"url": SOURCE_B, "lastCheckedAt": RECENT_CHECKED},
-        ],
-    )
-    recorded: list[str] = []
-    h = make_harness(
-        tmp_path,
-        record_last_backup_at=lambda _paths, url, **_kwargs: recorded.append(url)
-        or type("Result", (), {"ok": True, "error": None})(),
-    )
-    assert run_backup_command(["stale", "--all"], context=h.context) == 0
-    assert recorded == [SOURCE]
-    assert f"ok  {SOURCE}" in h.ui.items
-    assert f"ok  {SOURCE_B}" not in h.ui.items
-
-
-def test_run_backup_command_stale_interactive_shows_only_stale_repos(
-    tmp_path: Path,
-) -> None:
-    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
-    seed_repos(
-        paths,
-        [
-            {"url": SOURCE, "lastCheckedAt": None},
-            {"url": SOURCE_B, "lastCheckedAt": RECENT_CHECKED},
-        ],
-    )
-    captured: list[object] = []
-
-    def selector(items, **_kwargs):
-        captured.extend(items)
-        state = SelectorState(tuple(items), 0, frozenset({0}))
-        return SelectorResult("submit", state, (SOURCE,))
-
-    h = make_harness(tmp_path, run_selector=selector)
-    assert run_backup_command(["stale"], context=h.context) == 0
-    assert [item.value for item in captured] == [SOURCE]
-
-
-def test_run_backup_command_stale_submit_rewrites_selection_on_full_list(
-    tmp_path: Path,
-) -> None:
-    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
-    seed_repos(
-        paths,
-        [
-            {"url": SOURCE, "lastCheckedAt": None, "selectedLast": False},
-            {
-                "url": SOURCE_B,
-                "lastCheckedAt": RECENT_CHECKED,
-                "selectedLast": True,
-            },
-        ],
-    )
-
-    def selector(items, **_kwargs):
-        state = SelectorState(tuple(items), 0, frozenset({0}))
-        return SelectorResult("submit", state, (SOURCE,))
-
-    h = make_harness(tmp_path, run_selector=selector)
-    assert run_backup_command(["stale"], context=h.context) == 0
-    assert [repo["selectedLast"] for repo in read_disk(paths)["repos"]] == [
-        True,
-        False,
-    ]
-
-
-def test_run_backup_command_stale_days_changes_filtered_set(tmp_path: Path) -> None:
-    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
-    seed_repos(
-        paths,
-        [
-            {"url": SOURCE, "lastCheckedAt": "2026-08-07T11:00:00.000Z"},
-            {"url": SOURCE_B, "lastCheckedAt": RECENT_CHECKED},
-        ],
-    )
-    captured: list[str] = []
-
-    def selector(items, **_kwargs):
-        captured.extend(item.value for item in items)
-        state = SelectorState(tuple(items), 0, frozenset())
-        return SelectorResult("cancel", state, ())
-
-    h = make_harness(tmp_path, run_selector=selector)
-    assert run_backup_command(["stale", "--days", "1"], context=h.context) == 1
-    assert captured == [SOURCE]
-
-
-@pytest.mark.parametrize("value", ["abc", "0", "1.5", "-1", "\x1c1\x1c"])
-def test_run_backup_command_stale_invalid_days_errors(
-    tmp_path: Path, value: str
-) -> None:
-    h = make_harness(tmp_path)
-    assert run_backup_command(["stale", "--days", value], context=h.context) == 1
-    if value == "-1":
-        assert h.ui.errors == [
-            "Usage: gt backup stale [--days <n>] [--all] [-f|--force] [--dry-run]"
-        ]
-    else:
-        assert h.ui.errors == [
-            f"Invalid --days value: {value} (must be a positive integer)"
-        ]
-
-
-@pytest.mark.parametrize(
-    "value", ["1e3", "0x10", "+1", " 1 ", "\ufeff1\ufeff"]
-)
-def test_run_backup_command_stale_days_accepts_js_number_integer_forms(
-    tmp_path: Path, value: str
-) -> None:
-    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
-    seed_repos(paths, [{"url": SOURCE, "lastCheckedAt": RECENT_CHECKED}])
-    h = make_harness(tmp_path)
-    assert run_backup_command(["stale", "--days", value], context=h.context) == 0
-    assert "No stale repos" in h.ui.statuses
-
-
-def test_run_backup_command_stale_days_rejects_huge_number_without_crashing(
-    tmp_path: Path,
-) -> None:
-    value = "9" * 10_000
-    h = make_harness(tmp_path)
-    assert run_backup_command(["stale", "--days", value], context=h.context) == 1
-    assert h.ui.errors == [
-        f"Invalid --days value: {value} (must be a positive integer)"
-    ]
-
-
-@pytest.mark.parametrize("args", [["stale", "--days"], ["stale", "repo"]])
-def test_run_backup_command_stale_malformed_usage(
-    tmp_path: Path, args: list[str]
-) -> None:
-    h = make_harness(tmp_path)
-    assert run_backup_command(args, context=h.context) == 1
-    assert h.ui.errors == [
-        "Usage: gt backup stale [--days <n>] [--all] [-f|--force] [--dry-run]"
-    ]
-
-
-def test_run_backup_command_stale_unknown_flag_errors(tmp_path: Path) -> None:
-    h = make_harness(tmp_path)
-    assert run_backup_command(["stale", "--nope"], context=h.context) == 1
-    assert h.ui.errors == ["Unknown flag: --nope"]
-
-
-def test_run_backup_command_stale_all_force_skips_fingerprints(tmp_path: Path) -> None:
-    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
-    seed_repos(paths, [SOURCE])
-    calls: list[str] = []
-    h = make_harness(
-        tmp_path,
-        project_exists=lambda *_args: ExistsResult(True, exists=True),
-        run_git=lambda args, **_kwargs: calls.append(args[0]) or CommandResult(0),
-    )
-    assert (
-        run_backup_command(["stale", "--all", "--force"], context=h.context)
-        == 0
-    )
-    assert "ls-remote" not in calls
-    assert "clone" in calls
-
-
-def test_run_backup_command_stale_all_dry_run_has_no_writes(tmp_path: Path) -> None:
-    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
-    seed_repos(paths, [SOURCE])
-    before = paths.backups_file.read_bytes()
-    h = make_harness(tmp_path)
-    assert (
-        run_backup_command(["stale", "--all", "--dry-run"], context=h.context)
-        == 0
-    )
-    assert_backup_frame_before_repo(h.ui, dry_run=True)
-    assert paths.backups_file.read_bytes() == before

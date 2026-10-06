@@ -5,8 +5,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import os
 from pathlib import Path
-import math
-import re
 import shutil
 import sys
 import tempfile
@@ -26,17 +24,15 @@ from .gitlab import project_ssh_url, project_web_url, protect_branch, set_defaul
 from .refs_fingerprint import fingerprints_equal, parse_ls_remote_fingerprint
 from .selector import SelectorItem, SelectorResult, SelectorState, run_selector
 from .ssh_url import parse_ssh_git_url
-from .stale import is_stale_repo
 from .ui import GitToolsUi
 
 ADD_HINT = "Use `gt backup add <ssh-url>` to add a repo first."
 FORCE_ONLY_HINT = (
-    "The --force flag is only valid for interactive backup, gt backup --all, and gt backup stale"
+    "The --force flag is only valid for interactive backup and gt backup --all"
 )
 DRY_RUN_ONLY_HINT = (
-    "The --dry-run flag is only valid for interactive backup, gt backup --all, and gt backup stale"
+    "The --dry-run flag is only valid for interactive backup and gt backup --all"
 )
-STALE_USAGE = "Usage: gt backup stale [--days <n>] [--all] [-f|--force] [--dry-run]"
 
 def _make_temp_dir(prefix: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=prefix))
@@ -487,120 +483,6 @@ def _run_remove(args: tuple[str, ...], context: BackupContext) -> int:
     context.ui.list_end()
     return 0
 
-def _parse_stale_options(
-    args: tuple[str, ...], context: BackupContext
-) -> tuple[bool, float, bool, bool] | None:
-    all_repos = False
-    days = 7
-    force = False
-    dry_run = False
-    index = 0
-    while index < len(args):
-        arg = args[index]
-        if arg == "--all":
-            all_repos = True
-        elif arg == "--days":
-            index += 1
-            if index >= len(args) or args[index].startswith("-"):
-                context.ui.error(STALE_USAGE)
-                return None
-            raw = args[index]
-            parsed_days = _parse_js_positive_integer(raw)
-            if parsed_days is None:
-                context.ui.error(
-                    f"Invalid --days value: {raw} (must be a positive integer)"
-                )
-                return None
-            days = parsed_days
-        elif arg in ("-f", "--force"):
-            force = True
-        elif arg == "--dry-run":
-            dry_run = True
-        elif arg.startswith("-"):
-            context.ui.error(f"Unknown flag: {arg}")
-            return None
-        else:
-            context.ui.error(STALE_USAGE)
-            return None
-        index += 1
-    return all_repos, days, force, dry_run
-
-_JS_DECIMAL_RE = re.compile(
-    r"[+]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)",
-    re.ASCII,
-)
-
-_ECMASCRIPT_TRIM_CHARS = (
-    "\u0009\u000b\u000c\u0020\u00a0\u1680"
-    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
-    "\u2028\u2029\u202f\u205f\u3000\ufeff\u000a\u000d"
-)
-
-def _parse_js_positive_integer(raw: str) -> float | None:
-    text = raw.strip(_ECMASCRIPT_TRIM_CHARS)
-    try:
-        if re.fullmatch(r"0[xX][0-9a-fA-F]+", text):
-            value = float(int(text[2:], 16))
-        elif re.fullmatch(r"0[bB][01]+", text):
-            value = float(int(text[2:], 2))
-        elif re.fullmatch(r"0[oO][0-7]+", text):
-            value = float(int(text[2:], 8))
-        elif _JS_DECIMAL_RE.fullmatch(text):
-            value = float(text)
-        else:
-            return None
-    except (OverflowError, ValueError):
-        return None
-    return value if math.isfinite(value) and value > 0 and value.is_integer() else None
-
-def _run_stale(args: tuple[str, ...], context: BackupContext) -> int:
-    parsed = _parse_stale_options(args, context)
-    if parsed is None:
-        return 1
-    all_repos, days, force, dry_run = parsed
-    if force and dry_run:
-        context.ui.error("Cannot combine --force and --dry-run")
-        return 1
-    loaded = _load_repos(context)
-    if loaded is None:
-        return 1
-    if all_repos and not dry_run and not _persist_migration(loaded, context):
-        return 1
-    now = context.now()
-    stale = [
-        repo
-        for repo in loaded.repos
-        if is_stale_repo(repo.model_dump(by_alias=True), now=now, days=days)
-    ]
-    list_path = format_display_path(
-        context.paths.backups_file, home=context.env.get("HOME")
-    )
-    if not stale:
-        _start_backup_frame(context, list_path, dry_run=dry_run)
-        context.ui.status("No stale repos", tone="muted")
-        context.ui.list_end()
-        return 0
-    if all_repos:
-        _start_backup_frame(context, list_path, dry_run=dry_run)
-        return run_backup_batch(
-            [repo.url for repo in stale],
-            context=context,
-            force=force,
-            dry_run=dry_run,
-        )
-    return _select_and_backup(
-        stale,
-        context=context,
-        heading="Select stale repos to backup",
-        tty_error=(
-            "A terminal is required to select stale repos interactively. "
-            "Use `gt backup stale --all` to back up every stale repo without selecting."
-        ),
-        force=force,
-        dry_run=dry_run,
-        list_path=list_path,
-    )
-
 def run_backup_command(
     args: Sequence[str] = (), *, context: BackupContext
 ) -> int:
@@ -610,7 +492,10 @@ def run_backup_command(
     if tokens and tokens[0] == "remove":
         return _run_remove(tokens[1:], context)
     if tokens and tokens[0] == "stale":
-        return _run_stale(tokens[1:], context)
+        context.ui.error(
+            "Unknown backup command: stale. Use gt backup or gt backup --all."
+        )
+        return 1
 
     all_repos = False
     force = False

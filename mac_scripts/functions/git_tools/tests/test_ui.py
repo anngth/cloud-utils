@@ -54,10 +54,6 @@ def test_usage_matches_skm_style_sections_and_signatures() -> None:
             "  gt backup --all [(-f | --force) | --dry-run]",
             "      Backup or preview every listed repo",
         ),
-        (
-            "  gt backup stale [--days <n>] [--all] [(-f | --force) | --dry-run]",
-            "      Stale repos only (default 7 days)",
-        ),
     ):
         index = lines.index(first)
         assert lines[index + 1] == continuation
@@ -77,6 +73,7 @@ def test_usage_matches_skm_style_sections_and_signatures() -> None:
     assert "■" not in rendered
     assert "-n|--new" not in rendered
     assert "backup <ssh-url>" not in rendered
+    assert "backup stale" not in rendered
     assert "Run 'gt --help'" not in rendered
 
 
