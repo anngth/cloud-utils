@@ -97,6 +97,22 @@ def _find_repo(document: BackupsDocumentV4, canonical: str) -> int:
         -1,
     )
 
+def backup_project_key(ssh_url: str) -> str | None:
+    parsed, error = _canonicalize(ssh_url)
+    if error is not None or parsed is None:
+        return None
+    return parsed.project_name
+
+def duplicate_project_message(project: str, others: list[str], *, listed: bool) -> str:
+    relation = "already listed" if listed else "also selected"
+    return f"Duplicate backup project {project} ({relation}): {', '.join(others)}"
+
+def _earliest_project_url(document: BackupsDocumentV4, project: str) -> str | None:
+    for repo in document.repos:
+        if backup_project_key(repo.url) == project:
+            return repo.url
+    return None
+
 def _format_timestamp(now: datetime) -> str:
     return now.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -135,6 +151,13 @@ def add_backup_repo(paths: GtPaths, ssh_url: str) -> AddBackupRepoResult:
     if _find_repo(document, parsed.canonical) != -1:
         return AddBackupRepoResult(ok=False, error=f"Duplicate repo (already listed): {parsed.ssh_url}")
 
+    existing = _earliest_project_url(document, parsed.project_name)
+    if existing is not None:
+        return AddBackupRepoResult(
+            ok=False,
+            error=duplicate_project_message(parsed.project_name, [existing], listed=True),
+        )
+
     document.repos.append(_repo(parsed.ssh_url))
     error = _write(paths, document)
     if error is not None:
@@ -158,6 +181,13 @@ def add_backup_repos(paths: GtPaths, urls: list[str]) -> AddBackupReposResult:
         if _find_repo(document, parsed.canonical) != -1:
             failures.append(FailedRepo(
                 url=raw_url, error=f"Duplicate repo (already listed): {parsed.ssh_url}"
+            ))
+            continue
+        existing = _earliest_project_url(document, parsed.project_name)
+        if existing is not None:
+            failures.append(FailedRepo(
+                url=raw_url,
+                error=duplicate_project_message(parsed.project_name, [existing], listed=True),
             ))
             continue
         document.repos.append(_repo(parsed.ssh_url))

@@ -198,6 +198,65 @@ def test_multi_add_rejects_canonical_duplicate_inside_batch(tmp_path: Path) -> N
     ]
 
 
+def test_add_rejects_cross_host_project_collision(tmp_path: Path) -> None:
+    paths = paths_for(tmp_path)
+    stored = "git@github.com:Org/Foo.git"
+    incoming = "git@gitlab.com:org/foo.git"
+    assert add_backup_repo(paths, stored).ok is True
+
+    result = add_backup_repo(paths, incoming)
+
+    assert result.ok is False
+    assert result.error == (
+        "Duplicate backup project org-foo (already listed): "
+        "git@github.com:Org/Foo.git"
+    )
+    assert read_repos(paths) == [repo(stored)]
+
+
+def test_add_rejects_hyphen_boundary_project_collision(tmp_path: Path) -> None:
+    paths = paths_for(tmp_path)
+    stored = "git@github.com:foo-bar/baz.git"
+    incoming = "git@github.com:foo/bar-baz.git"
+
+    result = add_backup_repos(paths, [stored, incoming])
+
+    assert result.ok is False
+    assert [(entry.url, entry.index) for entry in result.added] == [(stored, 1)]
+    assert [(entry.url, entry.error) for entry in result.failures] == [
+        (
+            incoming,
+            "Duplicate backup project foo-bar-baz (already listed): "
+            "git@github.com:foo-bar/baz.git",
+        )
+    ]
+    assert [entry["url"] for entry in read_repos(paths)] == [stored]
+
+
+def test_add_project_collision_alone_does_not_rewrite_file(tmp_path: Path) -> None:
+    paths = paths_for(tmp_path)
+    seed(paths, {"version": 4, "repos": [repo("git@github.com:Org/Foo.git")]})
+    before = paths.backups_file.read_bytes()
+
+    result = add_backup_repos(paths, ["git@gitlab.com:org/foo.git"])
+
+    assert result.ok is False
+    assert result.added == ()
+    assert paths.backups_file.read_bytes() == before
+
+
+def test_add_canonical_duplicate_keeps_the_repo_error(tmp_path: Path) -> None:
+    paths = paths_for(tmp_path)
+    result = add_backup_repos(
+        paths, ["git@github.com:Org/Foo.git", "git@GitHub.com:Org/Foo"]
+    )
+
+    assert result.failures[0].error == (
+        "Duplicate repo (already listed): git@github.com:Org/Foo.git"
+    )
+    assert "backup project" not in result.failures[0].error
+
+
 def test_remove_by_one_based_index_preserves_remaining_values(tmp_path: Path) -> None:
     paths = paths_for(tmp_path)
     seed(

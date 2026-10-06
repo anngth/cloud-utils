@@ -1314,6 +1314,23 @@ def test_run_backup_command_add_partial_success_persists_valid_url(
     assert [repo["url"] for repo in read_disk(h.paths)["repos"]] == [SOURCE]
 
 
+def test_run_backup_command_add_reports_project_collision(tmp_path: Path) -> None:
+    h = make_harness(tmp_path)
+    code = run_backup_command(
+        ["add", "git@github.com:Org/Foo.git", "git@gitlab.com:org/foo.git"],
+        context=h.context,
+    )
+
+    assert code == 1
+    assert (
+        "git@gitlab.com:org/foo.git: Duplicate backup project org-foo "
+        "(already listed): git@github.com:Org/Foo.git"
+    ) in h.ui.errors
+    assert [repo["url"] for repo in read_disk(h.paths)["repos"]] == [
+        "git@github.com:Org/Foo.git"
+    ]
+
+
 def test_run_backup_command_add_all_invalid_leaves_file_missing(
     tmp_path: Path,
 ) -> None:
