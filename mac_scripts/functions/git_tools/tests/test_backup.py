@@ -1610,3 +1610,141 @@ def test_run_backup_command_positional_url_stays_retired(tmp_path: Path) -> None
         "gt backup one-shot URL is retired; use gt backup add / "
         "gt backup / gt backup --all"
     ]
+
+
+GITHUB_FOO = "git@github.com:Org/Foo.git"
+GITLAB_FOO = "git@gitlab.com:org/foo.git"
+UNIQUE = "git@github.com:org/other.git"
+OLD_STAMP = "2000-01-01T00:00:00.000Z"
+
+
+def _git_recorder():
+    calls = []
+
+    def run_git(args, **_kwargs):
+        calls.append(list(args))
+        return CommandResult(0)
+
+    return calls, run_git
+
+
+def test_backup_all_skips_colliding_group_and_continues_unique(tmp_path: Path) -> None:
+    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
+    seed_repos(
+        paths,
+        [
+            {"url": GITHUB_FOO, "lastBackupAt": OLD_STAMP, "lastCheckedAt": OLD_STAMP},
+            {"url": UNIQUE, "lastBackupAt": None, "lastCheckedAt": None},
+            {"url": GITLAB_FOO, "lastBackupAt": OLD_STAMP, "lastCheckedAt": OLD_STAMP},
+        ],
+    )
+    calls, run_git = _git_recorder()
+    h = make_harness(tmp_path, run_git=run_git)
+
+    assert run_backup_command(["--all"], context=h.context) == 1
+
+    repos = read_disk(paths)["repos"]
+    assert repos[0]["lastBackupAt"] == OLD_STAMP
+    assert repos[0]["lastCheckedAt"] == OLD_STAMP
+    assert repos[2]["lastBackupAt"] == OLD_STAMP
+    assert repos[1]["lastBackupAt"] == "2026-08-08T12:00:00.000Z"
+    assert h.created == ["org-other"]
+    assert f"fail  {GITHUB_FOO}" in h.ui.items
+    assert (
+        "— Duplicate backup project org-foo (also selected): "
+        f"{GITLAB_FOO}"
+    ) in h.ui.items
+    assert all(GITHUB_FOO not in " ".join(call) for call in calls)
+    assert all(GITLAB_FOO not in " ".join(call) for call in calls)
+    assert any(UNIQUE in " ".join(call) for call in calls)
+
+
+def test_backup_all_dry_run_reports_collisions_as_failures(tmp_path: Path) -> None:
+    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
+    seed_repos(paths, [GITHUB_FOO, UNIQUE, GITLAB_FOO])
+    calls, run_git = _git_recorder()
+    h = make_harness(tmp_path, run_git=run_git)
+
+    assert run_backup_command(["--all", "--dry-run"], context=h.context) == 1
+
+    assert f"fail  {GITHUB_FOO}" in h.ui.items
+    assert "would mirror" not in "\n".join(
+        item for item in h.ui.items if GITHUB_FOO in item or "org-foo" in item
+    )
+    assert any(
+        event[0] == "section" and UNIQUE in event[1] for event in h.ui.events
+    )
+    assert not any(
+        event[0] == "section" and GITHUB_FOO in event[1] for event in h.ui.events
+    )
+    assert all(GITHUB_FOO not in " ".join(call) for call in calls)
+    assert read_disk(paths)["repos"][0]["lastCheckedAt"] is None
+
+
+def test_backup_all_collision_only_does_not_call_git_or_glab(tmp_path: Path) -> None:
+    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
+    seed_repos(paths, [GITHUB_FOO, GITLAB_FOO])
+    external = []
+    h = make_harness(
+        tmp_path,
+        has_command=lambda name: external.append(name) or True,
+        run_git=lambda args, **_kwargs: external.append("git") or CommandResult(0),
+    )
+
+    assert run_backup_command(["--all"], context=h.context) == 1
+
+    assert external == []
+    assert h.created == []
+    assert f"fail  {GITHUB_FOO}" in h.ui.items
+    assert f"fail  {GITLAB_FOO}" in h.ui.items
+
+
+def test_interactive_selection_of_one_colliding_url_still_backs_up(tmp_path: Path) -> None:
+    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
+    seed_repos(paths, [GITHUB_FOO, GITLAB_FOO])
+
+    def selector(items, **_kwargs):
+        state = SelectorState(tuple(items), 0, frozenset({0}))
+        return SelectorResult("submit", state, (GITHUB_FOO,))
+
+    h = make_harness(tmp_path, run_selector=selector)
+    assert run_backup_command([], context=h.context) == 0
+    assert h.created == ["org-foo"]
+    assert f"fail  {GITHUB_FOO}" not in h.ui.items
+
+
+def test_interactive_submission_saves_selection_then_fails_colliding_pair(
+    tmp_path: Path,
+) -> None:
+    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
+    seed_repos(paths, [GITHUB_FOO, UNIQUE, GITLAB_FOO])
+
+    def selector(items, **_kwargs):
+        state = SelectorState(tuple(items), 0, frozenset({0, 1, 2}))
+        return SelectorResult("submit", state, (GITHUB_FOO, UNIQUE, GITLAB_FOO))
+
+    h = make_harness(tmp_path, run_selector=selector)
+    assert run_backup_command([], context=h.context) == 1
+    assert [repo["selectedLast"] for repo in read_disk(paths)["repos"]] == [
+        True, True, True,
+    ]
+    assert h.created == ["org-other"]
+
+
+def test_backup_all_force_mirrors_unique_live_repo_and_skips_collision(
+    tmp_path: Path,
+) -> None:
+    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
+    seed_repos(paths, [GITHUB_FOO, UNIQUE, GITLAB_FOO])
+    calls, run_git = _git_recorder()
+    h = make_harness(
+        tmp_path,
+        run_git=run_git,
+        project_exists=lambda _group, _name: ExistsResult(True, exists=True),
+    )
+
+    assert run_backup_command(["--all", "--force"], context=h.context) == 1
+
+    assert any(call[:2] == ["clone", "--mirror"] and UNIQUE in call for call in calls)
+    assert all(GITHUB_FOO not in " ".join(call) for call in calls)
+    assert all(GITLAB_FOO not in " ".join(call) for call in calls)

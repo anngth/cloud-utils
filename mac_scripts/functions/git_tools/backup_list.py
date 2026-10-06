@@ -107,6 +107,21 @@ def duplicate_project_message(project: str, others: list[str], *, listed: bool) 
     relation = "already listed" if listed else "also selected"
     return f"Duplicate backup project {project} ({relation}): {', '.join(others)}"
 
+def collision_errors(urls: list[str]) -> list[str | None]:
+    groups: dict[str, list[int]] = {}
+    for index, url in enumerate(urls):
+        key = backup_project_key(url)
+        if key is not None:
+            groups.setdefault(key, []).append(index)
+    errors: list[str | None] = [None] * len(urls)
+    for key, indexes in groups.items():
+        if len(indexes) < 2:
+            continue
+        for index in indexes:
+            others = [urls[other] for other in indexes if other != index]
+            errors[index] = duplicate_project_message(key, others, listed=False)
+    return errors
+
 def _earliest_project_url(document: BackupsDocumentV4, project: str) -> str | None:
     for repo in document.repos:
         if backup_project_key(repo.url) == project:

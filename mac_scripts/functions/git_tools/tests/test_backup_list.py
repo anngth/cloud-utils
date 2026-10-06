@@ -11,6 +11,7 @@ from git_tools.config import GtPaths, resolve_gt_paths
 from git_tools.backup_list import (
     add_backup_repo,
     add_backup_repos,
+    collision_errors,
     record_last_backup_at,
     record_last_checked_at,
     remove_backup_repo,
@@ -480,3 +481,50 @@ def test_selection_update_preserves_extensions_and_js_bytes(tmp_path: Path) -> N
 
     assert result.ok is True
     assert paths.backups_file.read_bytes() == node_rewrite_bytes(document, "selected")
+
+
+def test_collision_errors_fails_each_member_and_spares_unique_slugs() -> None:
+    github = "git@github.com:Org/Foo.git"
+    gitlab = "git@gitlab.com:org/foo.git"
+    unique = "git@github.com:org/other.git"
+    third = "git@bitbucket.org:org/foo.git"
+
+    errors = collision_errors([github, unique, gitlab, third])
+
+    assert errors[1] is None
+    assert errors[0] == (
+        "Duplicate backup project org-foo (also selected): "
+        "git@gitlab.com:org/foo.git, git@bitbucket.org:org/foo.git"
+    )
+    assert errors[2] == (
+        "Duplicate backup project org-foo (also selected): "
+        "git@github.com:Org/Foo.git, git@bitbucket.org:org/foo.git"
+    )
+    assert errors[3] == (
+        "Duplicate backup project org-foo (also selected): "
+        "git@github.com:Org/Foo.git, git@gitlab.com:org/foo.git"
+    )
+
+
+def test_collision_errors_fails_two_separate_pairs() -> None:
+    errors = collision_errors([
+        "git@github.com:foo-bar/baz.git",
+        "git@github.com:acme/one.git",
+        "git@github.com:foo/bar-baz.git",
+        "git@gitlab.com:acme/one.git",
+    ])
+
+    assert all(error is not None for error in errors)
+    assert "foo-bar-baz" in errors[0]
+    assert "acme-one" in errors[1]
+
+
+def test_collision_errors_uses_indexes_for_the_same_url_twice() -> None:
+    url = "git@github.com:Org/Foo.git"
+    errors = collision_errors([url, url])
+    message = f"Duplicate backup project org-foo (also selected): {url}"
+    assert errors == [message, message]
+
+
+def test_collision_errors_ignores_invalid_urls() -> None:
+    assert collision_errors(["not-a-url"]) == [None]

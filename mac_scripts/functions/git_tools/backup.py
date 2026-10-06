@@ -12,8 +12,8 @@ from typing import Literal, TextIO
 
 import click
 
-from .backup_list import add_backup_repos, record_last_backup_at, record_last_checked_at
-from .backup_list import remove_backup_repo, set_selected_last
+from .backup_list import add_backup_repos, collision_errors, record_last_backup_at
+from .backup_list import record_last_checked_at, remove_backup_repo, set_selected_last
 from .config import BackupRepoV4, BackupsDocumentV4, GtPaths, format_display_path
 from .config import migrate_backups_document, read_backups_document, write_backups_document
 from .git import run_git
@@ -282,14 +282,18 @@ def run_backup_batch(
     urls: Sequence[str], *, context: BackupContext,
     force: bool = False, dry_run: bool = False,
 ) -> int:
-    if not _require_glab_ready_for_backup(context):
+    collisions = collision_errors(list(urls))
+    eligible = [url for url, error in zip(urls, collisions) if error is None]
+    if eligible and not _require_glab_ready_for_backup(context):
         return 1
-
-    results: list[BackupResult] = []
-    if dry_run:
+    if dry_run and eligible:
         context.ui.status("Dry run (no changes)")
 
-    for url in urls:
+    results: list[BackupResult] = []
+    for url, error in zip(urls, collisions):
+        if error is not None:
+            results.append(BackupResult("fail", url, error=error))
+            continue
         result = backup_one_repo(url, force=force, dry_run=dry_run, context=context)
         if result.status == "fail" or dry_run:
             results.append(result)
