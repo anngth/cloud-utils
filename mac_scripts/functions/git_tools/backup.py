@@ -412,10 +412,14 @@ def _select_and_backup(
         multiple=True,
         input=context.stdin,
         output=context.stdout,
-        render=lambda state: context.ui.render_backup_selector(heading, state, list_path=list_path),
+        render=lambda state: context.ui.render_backup_selector(
+            heading, state, list_path=list_path, now=context.now(),
+        ),
     )
     if selection.kind == "cancel":
-        context.ui.cancelled_backup_selector(heading, selection.state, list_path=list_path)
+        context.ui.cancelled_backup_selector(
+            heading, selection.state, list_path=list_path, now=context.now(),
+        )
         return 1
     if not selection.selected:
         context.ui.error("No repos selected")

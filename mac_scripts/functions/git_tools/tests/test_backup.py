@@ -993,6 +993,37 @@ def test_run_backup_command_selection_write_failure_skips_batch(
     assert "Backup summary" not in "\n".join(h.ui.statuses)
 
 
+def test_selector_callbacks_receive_backup_clock(tmp_path: Path) -> None:
+    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
+    seed_repos(paths, [SOURCE])
+
+    class ClockUi(UiSpy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.render_now = None
+            self.cancel_now = None
+
+        def render_backup_selector(self, heading, state, *, list_path=None, now=None, cancelled=False):
+            del heading, state, list_path, cancelled
+            self.render_now = now
+
+        def cancelled_backup_selector(self, heading, state, *, list_path=None, now=None):
+            self.cancel_now = now
+            super().cancelled_backup_selector(heading, state, list_path=list_path)
+
+    ui = ClockUi()
+
+    def selector(items, **kwargs):
+        state = SelectorState(tuple(items), 0, frozenset())
+        kwargs["render"](state)
+        return SelectorResult("cancel", state, ())
+
+    h = make_harness(tmp_path, ui=ui, run_selector=selector)
+    assert run_backup_command([], context=h.context) == 1
+    assert ui.render_now == FIXED_NOW
+    assert ui.cancel_now == FIXED_NOW
+
+
 @pytest.mark.parametrize(
     ("args", "heading"),
     [([], "Select repos to backup"), (["stale"], "Select stale repos to backup")],

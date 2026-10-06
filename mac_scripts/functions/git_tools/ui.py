@@ -11,6 +11,7 @@ from shared.ui import (
     _split_lines,
 )
 
+from .last_backup import format_last_backup_label, format_last_checked_label
 from .selector import SelectorState
 
 WHITE = "\033[97m"
@@ -36,6 +37,13 @@ _HELP_NOTES = (
     "Remove indexes are 1-based (same as skm).",
     "--force skips fingerprint short-circuit; cannot combine with --dry-run.",
 )
+
+def _selector_time_label(entry: object, attr: str, prefix: str, formatter, now: object) -> str:
+    value = getattr(entry, attr, None)
+    if value is None:
+        return f"{prefix}: never"
+    return formatter(value, now)
+
 
 class GitToolsUi(FrameUi):
     def usage(self) -> None:
@@ -97,7 +105,6 @@ class GitToolsUi(FrameUi):
         now: object | None = None,
         cancelled: bool = False,
     ) -> None:
-        del now
         self.stdout.write("\033[2J\033[H")
         self.title("REPO BACKUP")
         if list_path:
@@ -110,8 +117,19 @@ class GitToolsUi(FrameUi):
             box = "■" if selected else "□"
             box_color = BRIGHT_GREEN if selected else GRAY
             label_color = WHITE if index == state.cursor else GRAY
-            row = f"  {index + 1}  {box_color}{box}{RESET}  {_fg(label_color, entry.label)}"
+            number = str(index + 1)
+            plain_prefix = f"  {number}  {box}  "
+            row = f"  {number}  {box_color}{box}{RESET}  {_fg(label_color, entry.label)}"
             self._out(row)
+            indent = " " * len(plain_prefix)
+            backup_label = _selector_time_label(
+                entry, "last_backup_at", "Last backup", format_last_backup_label, now,
+            )
+            checked_label = _selector_time_label(
+                entry, "last_checked_at", "Last checked", format_last_checked_label, now,
+            )
+            self._out(f"{indent}{_fg(GRAY, backup_label)}")
+            self._out(f"{indent}{_fg(GRAY, checked_label)}")
         if cancelled:
             self._out(f"{_fg(CYAN, '└')}  {_fg(RED, 'Selection cancelled')}")
         else:

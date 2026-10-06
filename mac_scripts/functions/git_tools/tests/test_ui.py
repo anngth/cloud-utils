@@ -1,5 +1,7 @@
 import io
 import re
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from git_tools.selector import SelectorItem, create_selector_state, reduce_selector
 from git_tools.ui import GitToolsUi
@@ -224,24 +226,99 @@ def test_render_backup_selector_shows_numbers_checkboxes_and_hint() -> None:
     assert "└" in rendered
 
 
-def test_render_backup_selector_omits_timestamp_labels() -> None:
-    ui, stdout, _ = _capture()
-    state = create_selector_state(
-        [
-            SelectorItem("git@github.com:org/a.git", "git@github.com:org/a.git"),
-            SelectorItem("git@gitlab.com:acme/b.git", "git@gitlab.com:acme/b.git"),
-        ],
-        initial=("git@github.com:org/a.git",),
+NOW = datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc)
+
+
+def _item(url: str, backup: str | None = None, checked: str | None = None):
+    return SimpleNamespace(
+        label=url, value=url, last_backup_at=backup, last_checked_at=checked,
     )
 
-    ui.render_backup_selector("Select repos to backup", state)
 
-    rendered = stdout.getvalue()
-    assert re.search(r"1\s+.*■.*git@github\.com:org/a\.git", rendered)
-    assert re.search(r"2\s+.*□.*git@gitlab\.com:acme/b\.git", rendered)
-    assert "Last backup" not in rendered
-    assert "Last checked" not in rendered
-    assert re.search(r"org/a\.git[\s\S]*\n\s+2\s+", _plain(rendered))
+def test_render_backup_selector_prints_never_for_null_without_formatting(
+    monkeypatch,
+) -> None:
+    def boom(*_args, **_kwargs):
+        raise AssertionError("format called")
+
+    monkeypatch.setattr("git_tools.ui.format_last_backup_label", boom)
+    monkeypatch.setattr("git_tools.ui.format_last_checked_label", boom)
+    ui, stdout, _ = _capture()
+    ui.render_backup_selector(
+        "Select repos to backup",
+        create_selector_state([_item("git@github.com:org/a.git")]),
+        now=NOW,
+    )
+
+    rendered = _plain(stdout.getvalue())
+    assert "Last backup: never" in rendered
+    assert "Last checked: never" in rendered
+
+
+def test_render_backup_selector_formats_strings_with_supplied_now(monkeypatch) -> None:
+    calls = []
+
+    def backup_label(value, now=None):
+        calls.append(("backup", value, now))
+        return "Last backup: 2 hours ago (2026-08-08 15:00)"
+
+    def checked_label(value, now=None):
+        calls.append(("checked", value, now))
+        return "Last checked: 1 hour ago (2026-08-08 16:00)"
+
+    monkeypatch.setattr("git_tools.ui.format_last_backup_label", backup_label)
+    monkeypatch.setattr("git_tools.ui.format_last_checked_label", checked_label)
+    ui, stdout, _ = _capture()
+    ui.render_backup_selector(
+        "Select repos to backup",
+        create_selector_state([
+            _item(
+                "git@github.com:org/a.git",
+                "2026-08-08T08:00:00.000Z",
+                "2026-08-08T09:00:00.000Z",
+            )
+        ]),
+        now=NOW,
+    )
+
+    rendered = _plain(stdout.getvalue())
+    assert calls == [
+        ("backup", "2026-08-08T08:00:00.000Z", NOW),
+        ("checked", "2026-08-08T09:00:00.000Z", NOW),
+    ]
+    assert "Last backup: 2 hours ago (2026-08-08 15:00)" in rendered
+    assert "Last checked: 1 hour ago (2026-08-08 16:00)" in rendered
+    assert "git@github.com:org/a.git" in rendered
+
+
+def test_render_backup_selector_prints_invalid_timestamp_for_a_broken_string() -> None:
+    ui, stdout, _ = _capture()
+    ui.render_backup_selector(
+        "Select repos to backup",
+        create_selector_state([
+            _item("git@github.com:org/a.git", "not-iso", "also-bad")
+        ]),
+        now=NOW,
+    )
+
+    rendered = _plain(stdout.getvalue())
+    assert "Last backup: Invalid timestamp" in rendered
+    assert "Last checked: Invalid timestamp" in rendered
+
+
+def test_cancelled_backup_selector_shows_timestamp_lines() -> None:
+    ui, stdout, _ = _capture()
+    ui.cancelled_backup_selector(
+        "Select repos to backup",
+        create_selector_state([_item("git@github.com:org/a.git")]),
+        list_path="~/gt/backups.json",
+        now=NOW,
+    )
+
+    rendered = _plain(stdout.getvalue())
+    assert "Last backup: never" in rendered
+    assert "Last checked: never" in rendered
+    assert "Selection cancelled" in rendered
 
 
 def test_cancelled_backup_selector_keeps_list_and_cancelled_footer() -> None:
