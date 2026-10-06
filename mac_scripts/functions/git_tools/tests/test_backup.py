@@ -1546,6 +1546,46 @@ def test_run_backup_command_stale_is_an_unknown_command(tmp_path: Path) -> None:
     assert h.created == []
 
 
+@pytest.mark.parametrize("args", [["--help"], ["-h"]])
+def test_run_backup_command_help_prints_usage_without_reading_list(
+    tmp_path: Path, args: list[str]
+) -> None:
+    stdout = io.StringIO()
+    ui = GitToolsUi(stdout, io.StringIO())
+
+    def fail_read(_path):
+        raise AssertionError("backups file was read")
+
+    h = make_harness(tmp_path, ui=ui, read_backups_document=fail_read)
+    assert run_backup_command(args, context=h.context) == 0
+    assert "Usage: gt <command>" in stdout.getvalue()
+    assert "backup stale" not in stdout.getvalue()
+
+
+def test_run_backup_command_help_with_other_args_stays_an_unknown_flag(
+    tmp_path: Path,
+) -> None:
+    h = make_harness(tmp_path)
+    assert run_backup_command(["--all", "--help"], context=h.context) == 1
+    assert h.ui.errors == ["Unknown flag: --help"]
+
+
+def test_run_backup_command_add_help_stays_an_invalid_url(tmp_path: Path) -> None:
+    h = make_harness(tmp_path)
+    assert run_backup_command(["add", "--help"], context=h.context) == 1
+    assert any("Invalid SSH URL" in error for error in h.ui.errors)
+    assert "Usage: gt <command>" not in "\n".join(h.ui.errors)
+
+
+def test_run_backup_command_remove_help_stays_a_remove_error(tmp_path: Path) -> None:
+    paths = resolve_gt_paths({"CLOUD_UTILS_CONFIG_DIR": str(tmp_path)})
+    seed_repos(paths, [SOURCE])
+    h = make_harness(tmp_path)
+    assert run_backup_command(["remove", "--help"], context=h.context) == 1
+    assert h.ui.errors == ["Invalid SSH URL"]
+    assert [repo["url"] for repo in read_disk(paths)["repos"]] == [SOURCE]
+
+
 def test_run_backup_command_positional_url_stays_retired(tmp_path: Path) -> None:
     h = make_harness(tmp_path)
     assert run_backup_command([SOURCE], context=h.context) == 1

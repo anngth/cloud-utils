@@ -496,6 +496,9 @@ def run_backup_command(
             "Unknown backup command: stale. Use gt backup or gt backup --all."
         )
         return 1
+    if tokens in {("--help",), ("-h",)}:
+        context.ui.usage()
+        return 0
 
     all_repos = False
     force = False
