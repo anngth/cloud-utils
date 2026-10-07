@@ -128,6 +128,8 @@ class GitToolsUi(FrameUi):
             )
             self._out(f"{indent}{_fg(GRAY, backup_label)}")
             self._out(f"{indent}{_fg(GRAY, checked_label)}")
+            if index + 1 < len(state.items):
+                self._out("")
         if cancelled:
             self._out(f"{_fg(CYAN, '└')}  {_fg(RED, 'Selection cancelled')}")
         else:

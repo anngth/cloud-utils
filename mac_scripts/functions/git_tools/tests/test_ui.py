@@ -220,6 +220,7 @@ def test_render_backup_selector_shows_numbers_checkboxes_and_hint() -> None:
     assert "space toggle, a all, c clear, enter to start, q to quit" in rendered
     assert re.search(r"1\s+.*■.*git@github\.com:org/a\.git", rendered)
     assert re.search(r"2\s+.*□.*git@gitlab\.com:acme/b\.git", rendered)
+    assert re.search(r"Last checked: never\n\n\s+2\s+", _plain(rendered))
     assert "└" in rendered
 
 
