@@ -79,7 +79,7 @@ declare -A FLAGS=(
   ["zsh"]=false
   ["zimfw"]=false
   ["bash-it"]=false
-  ["apt-update"]=true
+  ["apt-update"]=false
   ["basic-tools"]=false
   ["uv"]=false
   ["firefox"]=false
@@ -774,16 +774,7 @@ install_python() {
 }
 
 cleanup() {
-  log_info "Performing cleanup tasks..."
-
-  # Update and upgrade system
-  sudo apt update -y
-  sudo apt full-upgrade -y
-  sudo apt --fix-broken install -y
-  sudo apt install -f -y
-  sudo dpkg --configure -a
-
-  # Remove unnecessary packages
+  log_info "Removing unused packages and cleaning apt cache..."
   sudo apt autoremove -y
   sudo apt autoclean
   sudo apt clean
@@ -962,10 +953,15 @@ new_vps_setup() {
   # System updates
   echo ""
   echo "📦 Step 1/8: System Updates & Essential Packages"
-  if ask_install "System updates and basic tools"; then
-    CHOICES["system_updates"]="yes"
+  if ask_install "system package upgrades"; then
+    CHOICES["apt_update"]="yes"
   else
-    CHOICES["system_updates"]="no"
+    CHOICES["apt_update"]="no"
+  fi
+  if ask_install "basic tools (git, tmux, wget, curl, htop)"; then
+    CHOICES["basic_tools"]="yes"
+  else
+    CHOICES["basic_tools"]="no"
   fi
   
   # Security
@@ -1088,7 +1084,22 @@ new_vps_setup() {
   fi
   
   # ========== INSTALLATION PHASE ==========
-  
+
+  local any_yes=false
+  local choice_key
+  for choice_key in "${!CHOICES[@]}"; do
+    if [ "${CHOICES[$choice_key]}" = "yes" ]; then
+      any_yes=true
+      break
+    fi
+  done
+
+  if [ "$any_yes" = false ]; then
+    echo ""
+    echo "No changes made."
+    return 0
+  fi
+
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "  STARTING INSTALLATION"
@@ -1101,10 +1112,14 @@ new_vps_setup() {
   fi
   
   # System updates
-  if [ "${CHOICES[system_updates]}" = "yes" ]; then
+  if [ "${CHOICES[apt_update]}" = "yes" ]; then
     echo ""
-    echo "📦 Installing system updates and basic tools..."
+    echo "📦 Upgrading system packages..."
     update_apt
+  fi
+  if [ "${CHOICES[basic_tools]}" = "yes" ]; then
+    echo ""
+    echo "📦 Installing basic tools..."
     install_basic_tools
   fi
   
@@ -1217,10 +1232,20 @@ new_vps_setup() {
     install_firefox
   fi
   
-  # Cleanup
-  echo ""
-  echo "🧹 Step 8/8: Final Cleanup"
-  cleanup
+  # Cleanup only after an upgrade or a package install
+  local needs_cleanup=false
+  for choice_key in apt_update basic_tools firewall fail2ban fnm python uv rclone docker tailscale proxy zsh zimfw bash-it zoxide eza fastfetch qbittorrent xrdp firefox; do
+    if [ "${CHOICES[$choice_key]}" = "yes" ]; then
+      needs_cleanup=true
+      break
+    fi
+  done
+
+  if [ "$needs_cleanup" = true ]; then
+    echo ""
+    echo "🧹 Step 8/8: Final Cleanup"
+    cleanup
+  fi
   
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1297,6 +1322,7 @@ declare -A COMPONENT_DESCRIPTIONS=(
 
 run_installations() {
   local install_performed=false
+  local needs_cleanup=false
   local -a installed_components=()
   
   # Run installations in order
@@ -1314,6 +1340,10 @@ run_installations() {
         if $func; then
           installed_components+=("${COMPONENT_DESCRIPTIONS[$component]}")
           install_performed=true
+          case "$component" in
+            set-password|ssh-security|verify-xrdp) ;;
+            *) needs_cleanup=true ;;
+          esac
         else
           log_warning "Failed to install: $component (continuing...)"
         fi
@@ -1337,10 +1367,12 @@ run_installations() {
     fi
   done
   
-  # Perform cleanup if any installation was performed
+  # Clean package cache only after an upgrade or a package install
   if [ "$install_performed" = true ]; then
-    echo ""
-    cleanup
+    if [ "$needs_cleanup" = true ]; then
+      echo ""
+      cleanup
+    fi
     echo ""
     echo "🎉 Installation completed successfully!"
     echo "📋 Summary of what was installed:"
