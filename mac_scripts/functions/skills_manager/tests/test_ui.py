@@ -22,6 +22,8 @@ from skills_manager.ui import (
     SELECTOR_DESCRIPTION_COLOR,
     SkmUi,
     group_requirements_by_catalog_source,
+    catalog_window,
+    selector_item_limit,
     selector_name_color,
     shell_arg,
 )
@@ -826,6 +828,30 @@ def test_confirm_renders_only_the_injected_prompt_and_flushes() -> None:
     assert stdout.flush_count == 1
 
 
+def test_selector_item_limit_reserves_the_cursor_row() -> None:
+    assert selector_item_limit(24) == 18
+    assert selector_item_limit(6) == 1
+    assert selector_item_limit(0) is None
+
+
+def test_catalog_window_spends_rows_on_the_leading_blank_and_source_gap() -> None:
+    items = (
+        RichSelectorItem("repo-a", "repo-a", kind="source", source_index=1),
+        RichSelectorItem("alpha", "alpha", kind="skill", source_index=1),
+        RichSelectorItem("beta", "beta", kind="skill", source_index=1),
+        RichSelectorItem("repo-b", "repo-b", kind="source", source_index=2),
+        RichSelectorItem("gamma", "gamma", kind="skill", source_index=2),
+    )
+
+    offset, visible = catalog_window(items, 0, 0, 4)
+
+    assert (offset, tuple(visible)) == (0, (0, 1, 2))
+
+    offset, visible = catalog_window(items, 3, offset, 4)
+
+    assert (offset, tuple(visible)) == (1, (1, 2, 3))
+
+
 @pytest.mark.parametrize(
     ("is_cursor", "is_selected", "expected"),
     [
@@ -940,10 +966,12 @@ def test_catalog_selector_renders_hierarchy_partial_parent_and_color_ladder() ->
         + f"{CYAN}◆{FG_RESET}  Select items "
         + f"{WHITE}(space toggle, a all, c clear, enter to continue, q to quit)"
         + f"{FG_RESET}\n"
+        + "\n"
         + f"  1  {GRAY}□{RESET}  {GRAY}a/repo{FG_RESET}\n"
         + f"      {BRIGHT_GREEN}■{RESET} {WHITE}one{FG_RESET}\n"
         + f"      {GRAY}□{RESET} {GRAY}two{FG_RESET} "
         + f"{DIM}{GRAY}second skill{RESET}\n"
+        + "\n"
         + f"  2  {BRIGHT_GREEN}■{RESET}  {GREEN}b/repo{FG_RESET}\n"
         + f"      {BRIGHT_GREEN}■{RESET} {GREEN}three{FG_RESET}\n"
         + f"{CORNER}\n"
@@ -978,8 +1006,100 @@ def test_cancelled_catalog_selector_renders_exact_footer() -> None:
         + f"{CYAN}◆{FG_RESET}  Select items "
         + f"{WHITE}(space toggle, a all, c clear, enter to continue, q to quit)"
         + f"{FG_RESET}\n"
+        + "\n"
         + f"  1  {BRIGHT_GREEN}■{RESET}  {WHITE}a/repo{FG_RESET}\n"
         + f"      {BRIGHT_GREEN}■{RESET} {GREEN}one{FG_RESET}\n"
         + f"{CORNER}  {RED}Selection cancelled{FG_RESET}\n"
     )
     assert stderr.getvalue() == ""
+
+
+def _selector_labels(count: int) -> tuple[RichSelectorItem, ...]:
+    return tuple(
+        RichSelectorItem(f"skill-{index}", f"skill-{index}", kind="skill")
+        for index in range(count)
+    )
+
+
+@pytest.mark.parametrize("surface", ["catalog", "generic"])
+def test_long_selector_keeps_cursor_on_screen_and_paints_one_frame(
+    surface: str,
+) -> None:
+    stdout, stderr, ui = _ui()
+    ui._item_row_limit = 2
+    items = _selector_labels(6)
+
+    def render(cursor: int) -> str:
+        before = stdout.flush_count
+        state = SelectorState(items=items, cursor=cursor, selected=frozenset())
+        if surface == "catalog":
+            ui.catalog_selector("Choose skills", state)
+        else:
+            ui.selector("Choose skills", state, mode="install")
+        painted = stdout.getvalue()
+        assert stdout.flush_count - before == 1
+        assert stderr.getvalue() == ""
+        assert painted.startswith("\x1b[2J\x1b[H")
+        leading_blank = surface == "catalog" and "skill-0" in painted
+        assert painted.count("\n") == (8 if leading_blank else 7)
+        stdout.seek(0)
+        stdout.truncate(0)
+        return painted
+
+    top = render(0)
+    assert "skill-0" in top and "skill-1" in top
+    assert "skill-2" not in top
+
+    stayed = render(1)
+    assert "skill-0" in stayed and "skill-1" in stayed
+    assert "skill-2" not in stayed
+
+    slid = render(2)
+    assert "skill-0" not in slid
+    assert "skill-1" in slid and "skill-2" in slid
+
+    bottom = render(5)
+    assert "skill-4" in bottom and "skill-5" in bottom
+    assert "skill-3" not in bottom
+
+    held = render(4)
+    assert "skill-4" in held and "skill-5" in held
+    assert "skill-3" not in held
+
+
+def test_catalog_blank_line_is_only_before_the_first_item() -> None:
+    stdout, stderr, ui = _ui()
+    ui._item_row_limit = 2
+    items = (
+        RichSelectorItem("repo-a", "repo-a", kind="source", source_index=1),
+        RichSelectorItem("alpha", "alpha", kind="skill", source_index=1),
+        RichSelectorItem("repo-b", "repo-b", kind="source", source_index=2),
+        RichSelectorItem("beta", "beta", kind="skill", source_index=2),
+    )
+
+    ui.catalog_selector(
+        "Choose skills",
+        SelectorState(items=items, cursor=0, selected=frozenset()),
+    )
+
+    top = stdout.getvalue()
+    assert stderr.getvalue() == ""
+    assert top.count("\n") == 8
+    repo_a = top.index("repo-a")
+    alpha = top.index("alpha")
+    assert "\n\n" not in top[repo_a:alpha]
+    assert "repo-b" not in top
+
+    stdout.seek(0)
+    stdout.truncate(0)
+    ui.catalog_selector(
+        "Choose skills",
+        SelectorState(items=items, cursor=2, selected=frozenset()),
+    )
+
+    slid = stdout.getvalue()
+    assert slid.count("\n") == 8
+    assert "repo-a" not in slid
+    alpha = slid.index("alpha")
+    repo_b = slid.index("repo-b")
+    assert "\n\n" in slid[alpha:repo_b]

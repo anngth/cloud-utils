@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import os
 import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -34,7 +36,67 @@ DIM = "\033[2m"
 RESET = "\033[0m"
 SELECTOR_DESCRIPTION_COLOR = f"{DIM}{GRAY}"
 _SAFE_SHELL_DISPLAY = re.compile(r"[A-Za-z0-9_./:@%+=,-]+")
+_SELECTOR_CHROME_LINES = 5
 _Row = TypeVar("_Row")
+
+
+def selector_item_limit(terminal_lines: int) -> int | None:
+    if terminal_lines <= 0:
+        return None
+    return max(1, terminal_lines - 1 - _SELECTOR_CHROME_LINES)
+
+
+def _catalog_rows(items: Sequence[object], start: int, end: int) -> int:
+    if end <= start:
+        return 0
+    rows = end - start + (1 if start == 0 else 0)
+    for index in range(start + 1, end):
+        if getattr(items[index], "source_index", None) != getattr(
+            items[index - 1], "source_index", None
+        ):
+            rows += 1
+    return rows
+
+
+def catalog_window(
+    items: Sequence[object], cursor: int, offset: int, row_budget: int | None
+) -> tuple[int, range]:
+    count = len(items)
+    if count <= 0:
+        return 0, range(0)
+    if row_budget is None or _catalog_rows(items, 0, count) <= row_budget:
+        return 0, range(count)
+    budget = max(1, row_budget)
+    cursor = min(max(0, cursor), count - 1)
+    offset = min(max(0, offset), cursor)
+    end = offset
+    while end < count and _catalog_rows(items, offset, end + 1) <= budget:
+        end += 1
+    if end <= offset:
+        end = min(count, offset + 1)
+    if cursor >= end:
+        end = cursor + 1
+        offset = end
+        while offset > 0 and _catalog_rows(items, offset - 1, end) <= budget:
+            offset -= 1
+    return offset, range(offset, end)
+
+
+def selector_window(
+    count: int, cursor: int, offset: int, limit: int | None
+) -> tuple[int, range]:
+    if count <= 0:
+        return 0, range(0)
+    if limit is None or count <= limit:
+        return 0, range(count)
+    visible = max(1, limit)
+    offset = min(max(0, offset), count - visible)
+    cursor = min(max(0, cursor), count - 1)
+    if cursor < offset:
+        offset = cursor
+    elif cursor >= offset + visible:
+        offset = cursor - visible + 1
+    return offset, range(offset, offset + visible)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +161,8 @@ class SkmUi:
         self.stdout = stdout
         self.stderr = stderr
         self.frame = FrameUi(stdout, stderr)
+        self._item_row_limit: int | None = None
+        self._selector_offset = 0
 
     def _out(self, text: object = "") -> None:
         self.frame.line(text)
@@ -106,6 +170,63 @@ class SkmUi:
     def _clear(self) -> None:
         self.stdout.write("\033[2J\033[H")
         self.stdout.flush()
+
+    def _selector_item_limit(self) -> int | None:
+        if self._item_row_limit is not None:
+            return max(1, self._item_row_limit)
+        try:
+            if not self.stdout.isatty():
+                return None
+            terminal_lines = os.get_terminal_size(self.stdout.fileno()).lines
+        except (AttributeError, OSError, ValueError):
+            return None
+        return selector_item_limit(terminal_lines)
+
+    def _catalog_indexes(self, state: SelectorState) -> range:
+        row_budget = None
+        if self._item_row_limit is None:
+            try:
+                if self.stdout.isatty():
+                    row_budget = selector_item_limit(
+                        os.get_terminal_size(self.stdout.fileno()).lines
+                    )
+            except (AttributeError, OSError, ValueError):
+                row_budget = None
+        if row_budget is not None:
+            offset, indexes = catalog_window(
+                state.items, state.cursor, self._selector_offset, row_budget
+            )
+            self._selector_offset = offset
+            return indexes
+        offset, indexes = selector_window(
+            len(state.items),
+            state.cursor,
+            self._selector_offset,
+            self._selector_item_limit(),
+        )
+        self._selector_offset = offset
+        return indexes
+
+    def _visible_indexes(self, state: SelectorState, limit: int | None) -> range:
+        offset, indexes = selector_window(
+            len(state.items), state.cursor, self._selector_offset, limit
+        )
+        self._selector_offset = offset
+        return indexes
+
+    def _paint_selector(self, draw: Callable[[], None]) -> None:
+        buffer = io.StringIO()
+        stdout = self.stdout
+        frame_stdout = self.frame.stdout
+        self.stdout = buffer
+        self.frame.stdout = buffer
+        try:
+            draw()
+        finally:
+            self.stdout = stdout
+            self.frame.stdout = frame_stdout
+        stdout.write(buffer.getvalue())
+        stdout.flush()
 
     def _title(self) -> None:
         self.frame.title("SKILLS MANAGER")
@@ -533,41 +654,47 @@ class SkmUi:
         mode: str | None,
         cancelled: bool,
     ) -> None:
-        self._clear()
-        self._title()
-        self.frame.step(heading)
-        multiple = mode == "install"
-        hint_text = (
-            "(space toggle, a all, c clear, enter to continue, q to quit)"
-            if multiple
-            else "(enter to continue, q to quit)"
-        )
-        noun = "items" if multiple else "an item"
-        self.frame.active(f"Select {noun} {_fg(WHITE, hint_text)}")
-        previous_skill = False
-        for index, entry in enumerate(state.items):
-            skill_entry = getattr(entry, "kind", None) == "skill"
-            selected = index in state.selected if multiple else index == state.cursor
-            box = "■" if selected else "□"
-            box_color = BRIGHT_GREEN if selected else GRAY
-            is_cursor = index == state.cursor
-            label_color = (
-                selector_name_color(
-                    is_cursor=is_cursor, is_selected=selected
+        limit = self._selector_item_limit()
+
+        def draw() -> None:
+            self._clear()
+            self._title()
+            self.frame.step(heading)
+            multiple = mode == "install"
+            hint_text = (
+                "(space toggle, a all, c clear, enter to continue, q to quit)"
+                if multiple
+                else "(enter to continue, q to quit)"
+            )
+            noun = "items" if multiple else "an item"
+            self.frame.active(f"Select {noun} {_fg(WHITE, hint_text)}")
+            for index in self._visible_indexes(state, limit):
+                entry = state.items[index]
+                skill_entry = getattr(entry, "kind", None) == "skill"
+                selected = (
+                    index in state.selected if multiple else index == state.cursor
                 )
-                if skill_entry
-                else WHITE if is_cursor else GRAY
-            )
-            hint = getattr(entry, "hint", "")
-            hint_suffix = (
-                f" {SELECTOR_DESCRIPTION_COLOR}{hint}{RESET}" if hint else ""
-            )
-            self._out(
-                f"  {box_color}{box}{RESET} "
-                f"{_fg(label_color, entry.label)}{hint_suffix}"
-            )
-            previous_skill = skill_entry
-        self._selector_end(cancelled)
+                box = "■" if selected else "□"
+                box_color = BRIGHT_GREEN if selected else GRAY
+                is_cursor = index == state.cursor
+                label_color = (
+                    selector_name_color(
+                        is_cursor=is_cursor, is_selected=selected
+                    )
+                    if skill_entry
+                    else WHITE if is_cursor else GRAY
+                )
+                hint = getattr(entry, "hint", "")
+                hint_suffix = (
+                    f" {SELECTOR_DESCRIPTION_COLOR}{hint}{RESET}" if hint else ""
+                )
+                self._out(
+                    f"  {box_color}{box}{RESET} "
+                    f"{_fg(label_color, entry.label)}{hint_suffix}"
+                )
+            self._selector_end(cancelled)
+
+        self._paint_selector(draw)
 
     def catalog_selector(
         self, heading: object, state: SelectorState
@@ -586,44 +713,57 @@ class SkmUi:
         *,
         cancelled: bool,
     ) -> None:
-        self._clear()
-        self._title()
-        self.frame.step(heading)
-        hint = _fg(
-            WHITE,
-            "(space toggle, a all, c clear, enter to continue, q to quit)",
-        )
-        self.frame.active(f"Select items {hint}")
-        for index, entry in enumerate(state.items):
-            kind = getattr(entry, "kind", None)
-            if kind == "source":
-                selected = self._catalog_source_selected(state, entry)
-            else:
-                selected = index in state.selected
-            box = "■" if selected else "□"
-            box_color = BRIGHT_GREEN if selected else GRAY
-            label_color = selector_name_color(
-                is_cursor=index == state.cursor,
-                is_selected=selected,
+        indexes = tuple(self._catalog_indexes(state))
+
+        def draw() -> None:
+            self._clear()
+            self._title()
+            self.frame.step(heading)
+            hint = _fg(
+                WHITE,
+                "(space toggle, a all, c clear, enter to continue, q to quit)",
             )
-            hint_text = getattr(entry, "hint", "")
-            hint_suffix = (
-                f" {SELECTOR_DESCRIPTION_COLOR}{hint_text}{RESET}"
-                if hint_text
-                else ""
-            )
-            if kind == "source":
-                number = getattr(entry, "source_index", index + 1)
-                self._out(
-                    f"  {number}  {box_color}{box}{RESET}  "
-                    f"{_fg(label_color, entry.label)}"
+            self.frame.active(f"Select items {hint}")
+            if indexes and indexes[0] == 0:
+                self._out("")
+            previous_source = None
+            for index in indexes:
+                entry = state.items[index]
+                source = getattr(entry, "source_index", None)
+                if previous_source is not None and source != previous_source:
+                    self._out("")
+                previous_source = source
+                kind = getattr(entry, "kind", None)
+                if kind == "source":
+                    selected = self._catalog_source_selected(state, entry)
+                else:
+                    selected = index in state.selected
+                box = "■" if selected else "□"
+                box_color = BRIGHT_GREEN if selected else GRAY
+                label_color = selector_name_color(
+                    is_cursor=index == state.cursor,
+                    is_selected=selected,
                 )
-            else:
-                self._out(
-                    f"      {box_color}{box}{RESET} "
-                    f"{_fg(label_color, entry.label)}{hint_suffix}"
+                hint_text = getattr(entry, "hint", "")
+                hint_suffix = (
+                    f" {SELECTOR_DESCRIPTION_COLOR}{hint_text}{RESET}"
+                    if hint_text
+                    else ""
                 )
-        self._selector_end(cancelled)
+                if kind == "source":
+                    number = getattr(entry, "source_index", index + 1)
+                    self._out(
+                        f"  {number}  {box_color}{box}{RESET}  "
+                        f"{_fg(label_color, entry.label)}"
+                    )
+                else:
+                    self._out(
+                        f"      {box_color}{box}{RESET} "
+                        f"{_fg(label_color, entry.label)}{hint_suffix}"
+                    )
+            self._selector_end(cancelled)
+
+        self._paint_selector(draw)
 
     @staticmethod
     def _catalog_source_selected(state: SelectorState, source: object) -> bool:
