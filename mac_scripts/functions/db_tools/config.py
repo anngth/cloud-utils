@@ -64,7 +64,10 @@ def resolve_secrets_file(
 
 
 class SecretsCache:
-    """Parses a secrets file once per path, reloading when its mtime moves."""
+    """Parses a secrets file once per path, reloading when its mtime moves.
+
+    Raises ``ConfigError`` if the file (or a parent component) is missing.
+    """
 
     def __init__(self) -> None:
         self._path: Path | None = None
@@ -72,14 +75,18 @@ class SecretsCache:
         self._secrets: RawSecrets | None = None
 
     def load(self, path: Path) -> RawSecrets:
-        stat = path.stat()
+        try:
+            stat = path.stat()
+            text = path.read_text(encoding="utf-8")
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            raise ConfigError(f"secrets file not found: {path}") from exc
         if (
             self._secrets is not None
             and self._path == path
             and self._mtime == stat.st_mtime
         ):
             return self._secrets
-        secrets = parse_secrets_text(path.read_text(encoding="utf-8"))
+        secrets = parse_secrets_text(text)
         self._path = path
         self._mtime = stat.st_mtime
         self._secrets = secrets

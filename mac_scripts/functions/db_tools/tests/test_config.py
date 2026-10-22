@@ -162,6 +162,45 @@ def test_secrets_cache_reuses_object_until_file_or_mtime_changes(tmp_path: Path)
     assert third.vps == (VPS_ROW,)
 
 
+def test_secrets_cache_raises_config_error_when_path_vanishes(tmp_path: Path) -> None:
+    path = tmp_path / "secrets"
+    path.write_text(EMPTY_SECRETS)
+    cache = SecretsCache()
+    cache.load(path)
+    path.unlink()
+    with pytest.raises(ConfigError):
+        cache.load(path)
+    cache2 = SecretsCache()  # fresh cache, path already gone
+    with pytest.raises(ConfigError):
+        cache2.load(path)
+
+
+def test_run_cli_prints_message_and_exits_one_when_secrets_vanish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    override = tmp_path / "secrets"
+    override.write_text(EMPTY_SECRETS)
+
+    real_cache = SecretsCache
+
+    class VanishingCache(real_cache):
+        def load(self, path: Path) -> object:
+            path.unlink()
+            return super().load(path)
+
+    monkeypatch.setattr("db_tools.cli.SecretsCache", VanishingCache)
+    out = io.StringIO()
+    err = io.StringIO()
+    code = run_cli(
+        ["connect"],
+        env={"HOME": str(tmp_path / "home"), "DBT_SECRETS_FILE": str(override)},
+        stdout=out,
+        stderr=err,
+    )
+    assert code == 1
+    assert str(override) in err.getvalue()
+
+
 def test_run_cli_connect_reports_bad_second_line(tmp_path: Path) -> None:
     override = tmp_path / "secrets"
     override.write_text("typeset -a VPS_CONFIGS=(\n    echo hi\n)\n")
