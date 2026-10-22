@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import NoReturn, TextIO
 
 from .config import ConfigError, SecretsCache, resolve_secrets_file
 from .models import (
@@ -620,3 +622,13 @@ def _select_targets(
         stderr.write(f"❌ Error: PostgreSQL destination row {index} is invalid\n")
         return None
     return [target]
+
+
+def main() -> NoReturn:
+    raise SystemExit(
+        run_cli(sys.argv[1:], env=os.environ, stdout=sys.stdout, stderr=sys.stderr)
+    )
+
+
+if __name__ == "__main__":
+    main()

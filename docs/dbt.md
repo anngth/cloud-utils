@@ -18,4 +18,4 @@ dbt sync postgres -c  # postgres only
 - **MongoDB sync** — backs up target before restore; rolls back on failure.
 - **PostgreSQL** — Supabase/`postgres` targets may use a temp dump file; `dbt sync -c` does not remove those files.
 
-Secrets: `VPS_CONFIGS`, `POSTGRES_SOURCES`, `POSTGRES_TARGETS`, `MONGO_SOURCES`, `MONGO_TARGETS` (see [`secrets.example`](../mac_scripts/functions/db-tools/secrets.example)).
+Secrets: `VPS_CONFIGS`, `POSTGRES_SOURCES`, `POSTGRES_TARGETS`, `MONGO_SOURCES`, `MONGO_TARGETS` (see [`secrets.example`](../mac_scripts/functions/db_tools/secrets.example)).

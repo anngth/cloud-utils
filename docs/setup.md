@@ -123,7 +123,7 @@ Layout:
 | `bud` | `bud/desired.json`                                  | `mac_scripts/functions/brew-desired-update/desired.example.json`             |
 | `gt`  | `gt/backups.json`                                   | Created by `gt backup add`; older schemas migrate automatically               |
 | `skm` | `skm/sources.json`                                  | `mac_scripts/functions/skills_manager/sources.json.example` (reference only) |
-| `dbt` | `dbt/secrets`                                       | `mac_scripts/functions/db-tools/secrets.example`                              |
+| `dbt` | `dbt/secrets`                                       | `mac_scripts/functions/db_tools/secrets.example`                              |
 
 On first run, `bud` bootstraps missing `desired.json` from
 `desired.example.json`. `dbt` bootstraps missing files from

@@ -1,15 +1,8 @@
 #!/bin/zsh
-
-# Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-
-# Source function modules and run with arguments
-source "$SCRIPT_DIR/functions/db-tools/config.zsh"
-source "$SCRIPT_DIR/functions/db-tools/ui.zsh"
-source "$SCRIPT_DIR/functions/db-tools/connection.zsh"
-source "$SCRIPT_DIR/functions/db-tools/postgres.zsh"
-source "$SCRIPT_DIR/functions/db-tools/mongo.zsh"
-source "$SCRIPT_DIR/functions/db-tools/sync-list.zsh"
-source "$SCRIPT_DIR/functions/db-tools/main.zsh"
-
-db_tools "$@"
+PYTHON_BIN="$SCRIPT_DIR/../.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  print -P "%F{red}❌ dbt requires the project environment; run 'uv sync --locked' in ${SCRIPT_DIR:h}%f" >&2
+  exit 1
+fi
+exec "$PYTHON_BIN" -m db_tools.cli "$@"

@@ -33,6 +33,14 @@ def _copy_gt_wrapper(tmp_path: Path) -> Path:
     return wrapper
 
 
+def _copy_dbt_wrapper(tmp_path: Path) -> Path:
+    scripts_dir = tmp_path / "repo" / "mac_scripts"
+    scripts_dir.mkdir(parents=True)
+    wrapper = scripts_dir / "dbt"
+    shutil.copy2(REPO_ROOT / "mac_scripts" / "dbt", wrapper)
+    return wrapper
+
+
 def _copy_skm_wrapper(tmp_path: Path) -> Path:
     scripts_dir = tmp_path / "repo" / "mac_scripts"
     scripts_dir.mkdir(parents=True)
@@ -197,6 +205,56 @@ def test_gt_reports_how_to_create_missing_project_environment(
     stderr_lines = result.stderr.splitlines()
     assert len(stderr_lines) == 1
     assert "gt" in stderr_lines[0]
+    assert "uv sync --locked" in stderr_lines[0]
+    assert not (wrapper.parents[1] / ".venv").exists()
+
+
+def test_dbt_uses_project_venv_and_forwards_arguments_from_foreign_cwd(
+    tmp_path: Path,
+) -> None:
+    wrapper = _copy_dbt_wrapper(tmp_path)
+    repo_root = wrapper.parents[1]
+    _recording_python(
+        repo_root,
+        exit_code=37,
+        invocation_variable="DBT_INVOCATION",
+    )
+    invocation_path = tmp_path / "invocation.json"
+    foreign_cwd = tmp_path / "foreign"
+    foreign_cwd.mkdir()
+
+    result = subprocess.run(
+        [str(wrapper), "list", "--status"],
+        cwd=foreign_cwd,
+        env={"DBT_INVOCATION": str(invocation_path)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert invocation_path.exists(), "dbt did not use the project Python"
+    invocation = json.loads(invocation_path.read_text(encoding="utf-8"))
+    assert invocation == ["-m", "db_tools.cli", "list", "--status"]
+    assert result.returncode == 37
+
+
+def test_dbt_reports_how_to_create_missing_project_environment(
+    tmp_path: Path,
+) -> None:
+    wrapper = _copy_dbt_wrapper(tmp_path)
+
+    result = subprocess.run(
+        [str(wrapper)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    stderr_lines = result.stderr.splitlines()
+    assert len(stderr_lines) == 1
+    assert "dbt" in stderr_lines[0]
     assert "uv sync --locked" in stderr_lines[0]
     assert not (wrapper.parents[1] / ".venv").exists()
 
