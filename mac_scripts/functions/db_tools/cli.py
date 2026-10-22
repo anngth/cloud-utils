@@ -7,7 +7,19 @@ from pathlib import Path
 from typing import TextIO
 
 from .config import ConfigError, SecretsCache, resolve_secrets_file
-from .models import PostgresSource, PostgresTarget, RawSecrets
+from .models import (
+    MongoSource,
+    MongoTarget,
+    PostgresSource,
+    PostgresTarget,
+    RawSecrets,
+)
+from .mongo import (
+    mongo_host,
+    mongo_status,
+    parse_mongo_source_row,
+    parse_mongo_target_row,
+)
 from .postgres import (
     clear_postgres_backups,
     parse_postgres_source_row,
@@ -138,7 +150,7 @@ def _print_sync_configs(
     stdout: TextIO,
     stderr: TextIO,
 ) -> int:
-    """Show Postgres sync entries with 1-based indexes; --status probes psql."""
+    """Show sync entries with 1-based indexes; --status probes the clients."""
     sources: list[PostgresSource] = []
     for row in raw_secrets.postgres_sources:
         source = parse_postgres_source_row(row)
@@ -153,6 +165,20 @@ def _print_sync_configs(
             stderr.write(f"skipped invalid row: {row}\n")
         else:
             targets.append(target)
+    mongo_sources: list[MongoSource] = []
+    for row in raw_secrets.mongo_sources:
+        source = parse_mongo_source_row(row)
+        if source is None:
+            stderr.write(f"skipped invalid row: {row}\n")
+        else:
+            mongo_sources.append(source)
+    mongo_targets: list[MongoTarget] = []
+    for row in raw_secrets.mongo_targets:
+        target = parse_mongo_target_row(row)
+        if target is None:
+            stderr.write(f"skipped invalid row: {row}\n")
+        else:
+            mongo_targets.append(target)
 
     connected = 0
     disconnected = 0
@@ -189,7 +215,40 @@ def _print_sync_configs(
         stdout.write("  (No PostgreSQL targets configured)\n")
 
     stdout.write("\n")
-    if status and (sources or targets):
+    stdout.write(f"🍃 MongoDB Sources ({len(mongo_sources)}):\n")
+    for index, source in enumerate(mongo_sources, start=1):
+        icon = ""
+        if status:
+            if mongo_status(source.uri, runtime=runtime):
+                icon = "🟢 "
+                connected += 1
+            else:
+                icon = "🔴 "
+                disconnected += 1
+        stdout.write(
+            f"  {icon}{index}) {source.name} → {source.databases}"
+            f" | {mongo_host(source.uri)}\n"
+        )
+    if not mongo_sources:
+        stdout.write("  (No MongoDB sources configured)\n")
+
+    stdout.write("\n")
+    stdout.write(f"🎯 MongoDB Targets ({len(mongo_targets)}):\n")
+    for index, target in enumerate(mongo_targets, start=1):
+        icon = ""
+        if status:
+            if mongo_status(target.uri, runtime=runtime):
+                icon = "🟢 "
+                connected += 1
+            else:
+                icon = "🔴 "
+                disconnected += 1
+        stdout.write(f"  {icon}{index}) {target.name} | {mongo_host(target.uri)}\n")
+    if not mongo_targets:
+        stdout.write("  (No MongoDB targets configured)\n")
+
+    stdout.write("\n")
+    if status and (sources or targets or mongo_sources or mongo_targets):
         stdout.write(
             f"Summary: 🟢 {connected} connected  |  🔴 {disconnected} disconnected\n"
         )
