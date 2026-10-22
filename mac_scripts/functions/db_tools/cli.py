@@ -13,6 +13,7 @@ from .postgres import (
     parse_postgres_source_row,
     parse_postgres_target_row,
     parse_postgres_url,
+    perform_postgres_sync,
     postgres_status,
 )
 from .runtime import Runtime, default_runtime
@@ -30,6 +31,8 @@ commands:
   test [filter]     check the hosts used for tunnels
   sync <service>    sync Postgres or MongoDB databases
     sync list --status    test database connections
+    sync postgres -s <idx> -d <idx> [--verbose]
+                      sync the source database onto a target
     sync postgres -c [-n] [-s idx] [-d idx]
                       delete Postgres backup databases; -n lists only
 """
@@ -204,6 +207,7 @@ def _clear_postgres_backups_cli(
     """Route `sync postgres -c [-n] [-s idx] [-d idx]` (flags in any order)."""
     clear_backups = False
     dry_run = False
+    verbose = False
     source_text: str | None = None
     destination_text: str | None = None
     index = 0
@@ -215,6 +219,10 @@ def _clear_postgres_backups_cli(
             continue
         if arg in ("-n", "--dry-run"):
             dry_run = True
+            index += 1
+            continue
+        if arg in ("-v", "--verbose"):
+            verbose = True
             index += 1
             continue
         if arg in ("-s", "--source", "-d", "--destination", "-db", "--database"):
@@ -232,10 +240,37 @@ def _clear_postgres_backups_cli(
         return 1
 
     if not clear_backups:
-        stderr.write("❌ Error: PostgreSQL sync is not implemented yet\n")
-        stderr.write("   Use 'dbt sync postgres -c' to clean backup databases\n")
-        stderr.write(USAGE)
-        return 1
+        if destination_text is None:
+            stderr.write("❌ Error: PostgreSQL sync requires --destination\n")
+            stderr.write("   Use 'dbt list' to list available configurations\n")
+            return 1
+        if source_text is None:
+            stderr.write("❌ Error: PostgreSQL sync requires --source\n")
+            stderr.write("   Use 'dbt list' to list available configurations\n")
+            return 1
+
+        # -db/--database is accepted for parity; the source names the database.
+        destinations = _select_targets(
+            raw_secrets.postgres_targets, destination_text, stderr
+        )
+        if destinations is None:
+            return 1
+        source = _select_source(raw_secrets.postgres_sources, source_text, stderr)
+        if source is None:
+            return 1
+        stdout.write("\n🐘 PostgreSQL Sync\n")
+        stdout.write("==================\n")
+        stdout.write(f"  From: {source.name} → Database: {source.database}\n")
+        stdout.write(f"  To: {destinations[0].name}\n")
+        stdout.write("\n")
+        return perform_postgres_sync(
+            source,
+            destinations[0],
+            verbose=verbose,
+            runtime=runtime,
+            stdout=stdout,
+            stderr=stderr,
+        )
 
     source_database: str | None = None
     if source_text is not None:
