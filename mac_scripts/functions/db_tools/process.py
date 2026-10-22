@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 from collections.abc import Mapping, Sequence
 from typing import TextIO
 
@@ -53,6 +54,20 @@ def run_pipe(
     return _run_pipe_captured(left, right, left_env, right_env)
 
 
+def _close_pipe(stream: TextIO | None) -> None:
+    """Close one parent-side pipe end; caller-owned streams never arrive."""
+    if stream is not None and not stream.closed:
+        stream.close()
+
+
+def _kill_children(*children: subprocess.Popen) -> None:
+    """Kill and reap children whose pipe unwound under an interrupt."""
+    for child in children:
+        if child.poll() is None:
+            child.kill()
+        child.wait()
+
+
 def _run_pipe_captured(
     left: Sequence[str],
     right: Sequence[str],
@@ -76,14 +91,44 @@ def _run_pipe_captured(
         text=True,
         shell=False,
     )
-    assert left_child.stdout is not None
-    left_child.stdout.close()
-    right_stdout, right_stderr = right_child.communicate()
-    _left_stdout, left_stderr = left_child.communicate()
+    left_stderr = left_child.stderr
+    assert left_child.stdout is not None and left_stderr is not None
+    left_child.stdout.close()  # the right child owns the read end from here
+    # Drain the left child's stderr while the right child runs: once the
+    # OS pipe buffer fills, the left child blocks until this parent reads,
+    # and a large dump would otherwise deadlock the whole pipe.
+    drained: list[str] = []
+
+    def _drain_left_stderr() -> None:
+        try:
+            drained.append(left_stderr.read())
+        except (OSError, ValueError):  # pragma: no cover - fd closed first
+            drained.append("")
+        try:
+            left_stderr.close()
+        except (OSError, ValueError):  # pragma: no cover - already closed
+            pass
+
+    drain = threading.Thread(target=_drain_left_stderr, daemon=True)
+    drain.start()
+    try:
+        right_stdout, right_stderr = right_child.communicate()
+        drain.join()
+        left_child.wait()
+    except BaseException:
+        # A bound interrupt handler raised SystemExit mid-communicate:
+        # no child may outlive the pipe it was killed out of. The daemon
+        # drain thread unblocks on its own once the left child is reaped.
+        _kill_children(left_child, right_child)
+        raise
+    finally:
+        # Belt and suspenders: no parent-side pipe end stays open.
+        _close_pipe(right_child.stdout)
+        _close_pipe(right_child.stderr)
     return CommandResult(
         (left_child.returncode or 0) or (right_child.returncode or 0),
         right_stdout or "",
-        (left_stderr or "") + (right_stderr or ""),
+        (drained[0] if drained else "") + (right_stderr or ""),
     )
 
 
@@ -116,6 +161,13 @@ def _run_pipe_live(
     )
     assert left_child.stdout is not None
     left_child.stdout.close()
-    left_code = left_child.wait()
-    right_code = right_child.wait()
+    try:
+        left_code = left_child.wait()
+        right_code = right_child.wait()
+    except BaseException:
+        # A bound interrupt handler raised SystemExit mid-wait: no child
+        # may outlive the pipe. The stdout/stderr streams belong to the
+        # caller and must not be closed here.
+        _kill_children(left_child, right_child)
+        raise
     return CommandResult(left_code or right_code, "", "")
