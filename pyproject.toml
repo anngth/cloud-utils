@@ -25,6 +25,7 @@ packages = [
   "mac_scripts/functions/twofa",
   "mac_scripts/functions/git_tools",
   "mac_scripts/functions/skills_manager",
+  "mac_scripts/functions/db_tools",
 ]
 
 [tool.pytest.ini_options]
