@@ -123,3 +123,79 @@ def test_apt_update_flag_upgrades_once(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert [line for line in lines if "full-upgrade" in line] == ["apt -y full-upgrade"]
     assert "apt clean" in lines
+
+
+def _ufw(lines: list[str]) -> list[str]:
+    return [line for line in lines if line.startswith("ufw ")]
+
+
+def test_firewall_denies_incoming_and_allows_ssh(tmp_path: Path) -> None:
+    result, lines = _run(tmp_path, "-firewall")
+
+    assert result.returncode == 0, result.stderr
+    assert _ufw(lines) == [
+        "ufw default deny incoming",
+        "ufw default allow outgoing",
+        "ufw allow 22/tcp",
+        "ufw --force enable",
+    ]
+
+
+def test_firewall_keeps_port_22_when_ssh_port_flag_differs(tmp_path: Path) -> None:
+    result, lines = _run(tmp_path, "-firewall", "-ssh-port=2222")
+
+    assert result.returncode == 0, result.stderr
+    assert _ufw(lines) == [
+        "ufw default deny incoming",
+        "ufw default allow outgoing",
+        "ufw allow 2222/tcp",
+        "ufw allow 22/tcp",
+        "ufw --force enable",
+    ]
+
+
+def test_firewall_allows_selected_proxy_and_xrdp_ports(tmp_path: Path) -> None:
+    result, lines = _run(
+        tmp_path,
+        "-firewall",
+        "-proxy",
+        "-proxy-port=8080",
+        "-xrdp",
+        "-xrdp-port=3390",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _ufw(lines) == [
+        "ufw default deny incoming",
+        "ufw default allow outgoing",
+        "ufw allow 22/tcp",
+        "ufw allow 8080/tcp",
+        "ufw allow 3390/tcp",
+        "ufw --force enable",
+    ]
+
+
+def test_firewall_allows_the_xrdp_port_the_installer_actually_sets(tmp_path: Path) -> None:
+    result, lines = _run(tmp_path, "-firewall", "-xrdp")
+
+    assert result.returncode == 0, result.stderr
+    assert "ufw allow 33899/tcp" in _ufw(lines)
+    assert "ufw allow 3389/tcp" not in _ufw(lines)
+
+
+def test_interactive_firewall_allows_proxy_and_xrdp_ports_it_configures(tmp_path: Path) -> None:
+    answers = ["n"] * 22
+    answers[3] = "y"  # firewall
+    answers[12] = "y"  # proxy, moved to 31288
+    answers[20] = "y"  # xrdp, moved to 33899
+    result, lines = _run(tmp_path, stdin="\n".join(answers) + "\n")
+
+    assert result.returncode == 0, result.stderr
+    assert _ufw(lines) == [
+        "ufw default deny incoming",
+        "ufw default allow outgoing",
+        "ufw allow 22/tcp",
+        "ufw allow 31288/tcp",
+        "ufw allow 33899/tcp",
+        "ufw --force enable",
+    ]

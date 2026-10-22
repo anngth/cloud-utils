@@ -781,20 +781,56 @@ cleanup() {
   log_success "Cleanup completed successfully."
 }
 
+_choice_yes() {
+  local key="$1"
+  if ! declare -p CHOICES >/dev/null 2>&1; then
+    return 1
+  fi
+  [[ "${CHOICES[$key]:-no}" == "yes" ]]
+}
+
+_ufw_allow_port() {
+  local port="$1"
+  local name="$2"
+  if ! validate_port "$port" "$name"; then
+    return 1
+  fi
+  sudo ufw allow "${port}/tcp"
+}
+
 configure_firewall() {
   log_info "Configuring firewall (UFW)..."
-  
-  # Install UFW if not already installed
+
   sudo apt install -y ufw
-  
-  # Set default policies - ALLOW ALL INCOMING
-   sudo ufw default allow incoming
-   sudo ufw default allow outgoing
-  
-  # Enable firewall
+
+  sudo ufw default deny incoming
+  sudo ufw default allow outgoing
+
+  # sshd is left on 22; -ssh-port only opens an extra hole and must not replace 22.
+  _ufw_allow_port "$SSH_PORT" "SSH" || return 1
+  if [[ "$SSH_PORT" != "22" ]]; then
+    _ufw_allow_port "22" "SSH" || return 1
+  fi
+
+  if [[ "${FLAGS[proxy]:-false}" == "true" ]]; then
+    _ufw_allow_port "$PROXY_PORT" "proxy" || return 1
+  elif _choice_yes proxy; then
+    _ufw_allow_port "31288" "proxy" || return 1
+  fi
+
+  if [[ "${FLAGS[xrdp]:-false}" == "true" ]]; then
+    if [[ "${VALUES[xrdp-port]}" != "$DEFAULT_XRDP_PORT" ]]; then
+      _ufw_allow_port "${VALUES[xrdp-port]}" "XRDP" || return 1
+    else
+      _ufw_allow_port "33899" "XRDP" || return 1
+    fi
+  elif _choice_yes xrdp; then
+    _ufw_allow_port "33899" "XRDP" || return 1
+  fi
+
   sudo ufw --force enable
-  
-  log_success "Firewall configured successfully (all incoming traffic allowed)."
+
+  log_success "Firewall configured (incoming denied; SSH and selected service ports allowed)."
 }
 
 configure_ssh_security() {
