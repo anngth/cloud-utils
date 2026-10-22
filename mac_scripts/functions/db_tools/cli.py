@@ -15,10 +15,12 @@ from .models import (
     RawSecrets,
 )
 from .mongo import (
+    clear_mongo_backups,
     mongo_host,
     mongo_status,
     parse_mongo_source_row,
     parse_mongo_target_row,
+    perform_mongo_sync,
 )
 from .postgres import (
     clear_postgres_backups,
@@ -47,6 +49,10 @@ commands:
                       sync the source database onto a target
     sync postgres -c [-n] [-s idx] [-d idx]
                       delete Postgres backup databases; -n lists only
+    sync mongodb -s <idx> -d <idx> [-db idx] [-v]
+                      sync the source database onto a target
+    sync -c [-n]       delete backup databases on every target:
+                       Postgres first, then MongoDB; -n lists only
 """
 
 _SYNC_LIST_USAGE = "usage: dbt sync list|ls [--status]\n"
@@ -124,6 +130,10 @@ def _run_sync(
         stderr.write("unknown sync type\n" + USAGE)
         return 1
     subcommand, rest = args[0], args[1:]
+    if subcommand in ("-c", "--clear-backups"):
+        return _clear_backups_cli(
+            rest, raw_secrets=raw_secrets, runtime=runtime, stdout=stdout, stderr=stderr
+        )
     if subcommand in ("list", "ls"):
         status = False
         for arg in rest:
@@ -136,6 +146,10 @@ def _run_sync(
         )
     if subcommand in ("postgres", "postgresql", "pg"):
         return _clear_postgres_backups_cli(
+            rest, raw_secrets=raw_secrets, runtime=runtime, stdout=stdout, stderr=stderr
+        )
+    if subcommand == "mongodb":
+        return _mongo_sync_cli(
             rest, raw_secrets=raw_secrets, runtime=runtime, stdout=stdout, stderr=stderr
         )
     stderr.write(f"unknown sync type: {subcommand}\n" + USAGE)
@@ -372,6 +386,194 @@ def _flag_value(args: list[str], index: int) -> tuple[str | None, int]:
     if index + 1 < len(args):
         return args[index + 1], index + 2
     return None, index + 1
+
+
+def _mongo_sync_cli(
+    args: list[str],
+    *,
+    raw_secrets: RawSecrets,
+    runtime: Runtime,
+    stdout: TextIO,
+    stderr: TextIO,
+) -> int:
+    """Route `sync mongodb -s idx -d idx [-db idx] [-v]` (flags in any order)."""
+    verbose = False
+    source_text: str | None = None
+    destination_text: str | None = None
+    database_text: str | None = None
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in ("-v", "--verbose"):
+            verbose = True
+            index += 1
+            continue
+        if arg in ("-s", "--source", "-d", "--destination", "-db", "--database"):
+            value, index = _flag_value(args, index)
+            if value is None:
+                stderr.write(f"missing value for {arg}\n" + USAGE)
+                return 1
+            if arg in ("-s", "--source"):
+                source_text = value
+            elif arg in ("-d", "--destination"):
+                destination_text = value
+            else:
+                database_text = value
+            continue
+        stderr.write(f"unknown option: {arg}\n" + USAGE)
+        return 1
+
+    if destination_text is None:
+        stderr.write("❌ Error: MongoDB sync requires --destination\n")
+        stderr.write("   Use 'dbt list' to list available configurations\n")
+        return 1
+    if source_text is None:
+        stderr.write("❌ Error: MongoDB sync requires --source\n")
+        stderr.write("   Use 'dbt list' to list available configurations\n")
+        return 1
+
+    source = _select_mongo_source(raw_secrets.mongo_sources, source_text, stderr)
+    if source is None:
+        return 1
+    target = _select_mongo_target(raw_secrets.mongo_targets, destination_text, stderr)
+    if target is None:
+        return 1
+    database = _select_mongo_database(
+        source.databases,
+        database_text if database_text is not None else "1",
+        stderr,
+    )
+    if database is None:
+        return 1
+
+    stdout.write("\n🍃 MongoDB Sync\n")
+    stdout.write("==================\n")
+    stdout.write(f"  From: {source.name} → Database: {database}\n")
+    stdout.write(f"  To: {target.name}\n")
+    stdout.write("\n")
+    return perform_mongo_sync(
+        source.uri,
+        database,
+        target.uri,
+        verbose=verbose,
+        runtime=runtime,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
+def _clear_backups_cli(
+    args: list[str],
+    *,
+    raw_secrets: RawSecrets,
+    runtime: Runtime,
+    stdout: TextIO,
+    stderr: TextIO,
+) -> int:
+    """Route `sync -c [-n]`: clean Postgres targets, then Mongo targets."""
+    dry_run = False
+    for arg in args:
+        if arg in ("-n", "--dry-run"):
+            dry_run = True
+            continue
+        stderr.write(f"unknown option: {arg}\n" + USAGE)
+        return 1
+
+    targets: list[PostgresTarget] = []
+    for row in raw_secrets.postgres_targets:
+        target = parse_postgres_target_row(row)
+        if target is None:
+            stderr.write(f"skipped invalid row: {row}\n")
+        else:
+            targets.append(target)
+    if not targets:
+        stdout.write("ℹ️  No PostgreSQL targets configured\n")
+        return 1
+
+    mongo_targets: list[MongoTarget] = []
+    for row in raw_secrets.mongo_targets:
+        target = parse_mongo_target_row(row)
+        if target is None:
+            stderr.write(f"skipped invalid row: {row}\n")
+        else:
+            mongo_targets.append(target)
+
+    stdout.write("\n🧹 Backup Cleanup\n")
+    stdout.write("=================\n")
+    stdout.write(f"  PostgreSQL targets: {len(targets)}\n")
+    stdout.write(f"  MongoDB targets: {len(mongo_targets)}\n")
+    stdout.write("\n")
+    postgres_code = clear_postgres_backups(
+        targets,
+        source_database=None,
+        dry_run=dry_run,
+        runtime=runtime,
+        stdout=stdout,
+        stderr=stderr,
+    )
+    if not mongo_targets:
+        stdout.write("ℹ️  No MongoDB targets configured\n")
+        return 1 if postgres_code else 0
+    mongo_code = clear_mongo_backups(
+        mongo_targets,
+        dry_run=dry_run,
+        runtime=runtime,
+        stdout=stdout,
+        stderr=stderr,
+    )
+    return 1 if postgres_code or mongo_code else 0
+
+
+def _select_mongo_source(
+    rows: tuple[str, ...], text: str, stderr: TextIO
+) -> MongoSource | None:
+    try:
+        index = int(text)
+    except ValueError:
+        index = 0
+    if not 1 <= index <= len(rows):
+        stderr.write(f"❌ Error: Invalid MongoDB source index: {text}\n")
+        stderr.write(f"   Available sources: 1-{len(rows)}\n")
+        return None
+    source = parse_mongo_source_row(rows[index - 1])
+    if source is None:
+        stderr.write(f"❌ Error: MongoDB source row {index} is invalid\n")
+        return None
+    return source
+
+
+def _select_mongo_target(
+    rows: tuple[str, ...], text: str, stderr: TextIO
+) -> MongoTarget | None:
+    try:
+        index = int(text)
+    except ValueError:
+        index = 0
+    if not 1 <= index <= len(rows):
+        stderr.write(f"❌ Error: Invalid MongoDB destination index: {text}\n")
+        stderr.write(f"   Available destinations: 1-{len(rows)}\n")
+        return None
+    target = parse_mongo_target_row(rows[index - 1])
+    if target is None:
+        stderr.write(f"❌ Error: MongoDB destination row {index} is invalid\n")
+        return None
+    return target
+
+
+def _select_mongo_database(
+    databases: str, text: str, stderr: TextIO
+) -> str | None:
+    """1-based index into the source's comma-separated database list."""
+    names = [name.strip() for name in databases.split(",")]
+    try:
+        index = int(text)
+    except ValueError:
+        index = 0
+    if not 1 <= index <= len(names):
+        stderr.write(f"❌ Error: Invalid MongoDB database index: {text}\n")
+        stderr.write(f"   Available databases: 1-{len(names)}\n")
+        return None
+    return names[index - 1]
 
 
 def _select_source(

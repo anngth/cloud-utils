@@ -24,13 +24,18 @@ from db_tools.mongo import (
     parse_mongo_source_row,
     parse_mongo_target_row,
 )
-from db_tools.runtime import Runtime
+from db_tools.runtime import Runtime, SignalHooks
 from shared.process import CommandResult
 
 MONGOSH = "/usr/local/bin/mongosh"
 MONGO = "/usr/local/bin/mongo"
 MONGODUMP = "/usr/local/bin/mongodump"
 MONGORESTORE = "/usr/local/bin/mongorestore"
+PSQL = "/usr/local/bin/psql"
+PG_DUMP = "/usr/local/bin/pg_dump"
+PG_RESTORE = "/usr/local/bin/pg_restore"
+
+PG_WHICH = {"psql": PSQL, "pg_dump": PG_DUMP, "pg_restore": PG_RESTORE}
 
 FULL_WHICH = {
     "mongosh": MONGOSH,
@@ -61,7 +66,13 @@ class FakeMongo:
     list_codes: dict[str, int] = field(default_factory=dict)  # host -> returncode
     drop_codes: dict[str, int] = field(default_factory=dict)  # database -> returncode
     ping_code: int = 0
+    ping_by_host: dict[str, int] = field(default_factory=dict)  # host -> returncode
     list_stdout: str = ALL_BACKUPS
+    exists_stdout: str = "true"  # fake answer for MONGO_EXISTS_SCRIPT
+    pipe_codes: list[int] = field(default_factory=list)  # piped commands, in order
+    pipes: list[tuple[list[str], list[str]]] = field(default_factory=list)
+    pipe_streams: list[bool] = field(default_factory=list)
+    handler_at_pipe: list[object] = field(default_factory=list)
 
     def run_command(self, argv, *, env=None, input_text=None, **_kwargs):
         self.calls.append(list(argv))
@@ -76,8 +87,17 @@ class FakeMongo:
             stderr = "not authorized\n" if self.drop_codes.get(database) else ""
             return CommandResult(self.drop_codes.get(database, 0), "", stderr)
         if script == MONGO_PING_SCRIPT:
-            return CommandResult(self.ping_code, "1", "")
+            code = self.ping_by_host.get(mongo_host(argv[1]), self.ping_code)
+            return CommandResult(code, "1", "")
+        if script == MONGO_EXISTS_SCRIPT:
+            return CommandResult(0, self.exists_stdout, "")
         raise AssertionError(f"unexpected command: {argv}")
+
+    def run_pipe(self, left, right, *, stream: bool = False, **_kwargs):
+        self.pipes.append((list(left), list(right)))
+        self.pipe_streams.append(stream)
+        code = self.pipe_codes.pop(0) if self.pipe_codes else 0
+        return CommandResult(code, "", "")
 
     def drops(self) -> list[tuple[list[str], str]]:
         pairs = []
@@ -87,21 +107,32 @@ class FakeMongo:
         return pairs
 
 
-def _runtime(fake: FakeMongo) -> Runtime:
+def _runtime(
+    fake: FakeMongo, *, now: datetime | None = None, signals: object = None
+) -> Runtime:
+    signals = signals if signals is not None else SignalHooksStub()
+    handler = getattr(signals, "handler", None)
+
+    def run_pipe(*args, **kwargs):
+        fake.handler_at_pipe.append(getattr(signals, "handler", None))
+        return fake.run_pipe(*args, **kwargs)
+
     return Runtime(
         run_command=fake.run_command,
-        run_pipe=lambda *_args, **_kwargs: CommandResult(0, "", ""),
+        run_pipe=run_pipe,
         which=lambda name: fake.which.get(name),
         path_exists=lambda _path: False,
         process_alive=lambda _pid: False,
         signal=lambda _pid, _signum: True,
         sleep=lambda _seconds: None,
-        now=datetime.now,
-        signals=SignalHooksStub(),
+        now=(lambda: now) if now is not None else datetime.now,
+        signals=signals,
     )
 
 
 class SignalHooksStub:
+    handler: object = None
+
     def bind(self, handler) -> None:  # pragma: no cover - cleanup binds nothing
         raise AssertionError("clear_mongo_backups must not bind signal handlers")
 
@@ -118,6 +149,7 @@ def _drive(
     *,
     sources: tuple[str, ...] = SOURCES,
     targets: tuple[str, ...] = TARGETS,
+    now: datetime | None = None,
     **fake_args,
 ):
     path = tmp_path / "dbt_secrets"
@@ -134,7 +166,7 @@ def _drive(
         },
         stdout=out,
         stderr=err,
-        dependencies=_runtime(fake),
+        dependencies=_runtime(fake, now=now, signals=SyncSignals()),
     )
     return code, out.getvalue(), err.getvalue(), fake
 
@@ -519,3 +551,501 @@ def test_sync_list_skips_invalid_mongo_rows_with_a_warning(tmp_path) -> None:
     assert "bad" in err
     assert "🍃 MongoDB Sources (0):" in out
     assert "  (No MongoDB sources configured)" in out
+
+
+# --- sync flow (library level; CLI selection below) ------------------------------
+
+# The brief's test clock; `app` then backs up as this name.
+BACKUP_CLOCK = datetime(2026, 10, 22, 15, 4, 5)
+SYNC_BACKUP = "app_backup_20261022_150405"
+
+SOURCE_URI = SOURCES[0].split("|")[1]
+TARGET_URI = TARGETS[0].split("|")[1]
+
+
+class SyncSignals(SignalHooks):
+    """A signals stub whose bind only stores the handler (never the OS)."""
+
+    def __init__(self) -> None:
+        self.handler = None
+        self.bound: list[object] = []
+
+    def bind(self, handler) -> None:
+        self.bound.append(handler)
+        self.handler = handler
+
+
+def _sync_runtime(fake: FakeMongo, *, now: datetime = BACKUP_CLOCK):
+    """Runtime with a fixed clock and a handler snapshot on every pipe."""
+    signals = SyncSignals()
+
+    def run_pipe(*args, **kwargs):
+        fake.handler_at_pipe.append(signals.handler)
+        return fake.run_pipe(*args, **kwargs)
+
+    runtime = Runtime(
+        run_command=fake.run_command,
+        run_pipe=run_pipe,
+        which=lambda name: fake.which.get(name),
+        path_exists=lambda _path: False,
+        process_alive=lambda _pid: False,
+        signal=lambda _pid, _signum: True,
+        sleep=lambda _seconds: None,
+        now=lambda: now,
+        signals=signals,
+    )
+    return runtime, signals
+
+
+def _sync(fake: FakeMongo, *, verbose: bool = False):
+    # Imported here: on RED `perform_mongo_sync` does not exist yet.
+    from db_tools.mongo import perform_mongo_sync
+
+    runtime, signals = _sync_runtime(fake)
+    out, err = io.StringIO(), io.StringIO()
+    code = perform_mongo_sync(
+        SOURCE_URI,
+        "app",
+        TARGET_URI,
+        verbose=verbose,
+        runtime=runtime,
+        stdout=out,
+        stderr=err,
+    )
+    return code, out.getvalue(), err.getvalue(), signals
+
+
+def test_source_ping_failure_returns_one_without_a_pipe() -> None:
+    fake = FakeMongo(ping_code=1)
+    code, _out, err, _signals = _sync(fake)
+
+    assert code == 1
+    assert fake.pipes == []
+    assert "source connection failed" in err
+    assert len(fake.calls) == 1  # only the source ping ran
+
+
+def test_target_ping_failure_returns_one_without_a_pipe() -> None:
+    fake = FakeMongo(ping_by_host={"127.0.0.1": 1})
+    code, _out, err, _signals = _sync(fake)
+
+    assert code == 1
+    assert fake.pipes == []
+    assert "target connection failed" in err
+    assert [mongo_host(call[1]) for call in fake.calls] == ["cluster.example", "127.0.0.1"]
+
+
+def test_missing_mongodump_returns_one() -> None:
+    fake = FakeMongo(which={"mongosh": MONGOSH, "mongorestore": MONGORESTORE})
+    code, _out, err, _signals = _sync(fake)
+
+    assert code == 1
+    assert fake.pipes == []
+    assert "MongoDB" in err
+
+
+def test_exists_true_backs_up_syncs_and_drops_backup() -> None:
+    fake = FakeMongo()
+    code, out, err, signals = _sync(fake)
+
+    assert code == 0
+    assert err == ""
+    assert fake.pipes == [
+        (
+            [MONGODUMP, f"--uri={TARGET_URI}", "--db=app", "--archive", "--gzip"],
+            [
+                MONGORESTORE,
+                f"--uri={TARGET_URI}",
+                "--archive",
+                "--gzip",
+                "--nsFrom=app.*",
+                f"--nsTo={SYNC_BACKUP}.*",
+            ],
+        ),
+        (
+            [MONGODUMP, f"--uri={SOURCE_URI}", "--db=app", "--archive", "--gzip"],
+            [
+                MONGORESTORE,
+                f"--uri={TARGET_URI}",
+                "--drop",
+                "--archive",
+                "--gzip",
+                "--nsFrom=app.*",
+                "--nsTo=app.*",
+            ],
+        ),
+    ]
+    # Ping source, ping target, probe the target database, drop the backup.
+    assert fake.envs == [
+        {},
+        {},
+        {"DBT_MONGO_DB": "app"},
+        {"DBT_MONGO_DB": SYNC_BACKUP},
+    ]
+    assert [database for _argv, database in fake.drops()] == [SYNC_BACKUP]
+    assert SYNC_BACKUP in out
+    # The handler is bound only once the backup pipe succeeded ...
+    assert fake.handler_at_pipe == [None, signals.bound[0]]
+    assert signals.bound[0] is not None
+    # ... and it is gone again before this function returns.
+    assert signals.handler is None
+
+
+def test_backup_pipe_failure_returns_one_before_sync() -> None:
+    fake = FakeMongo(pipe_codes=[1])
+    code, _out, _err, signals = _sync(fake)
+
+    assert code == 1
+    assert len(fake.pipes) == 1  # backup only; the sync pipe never starts
+    assert fake.drops() == []
+    assert fake.handler_at_pipe == [None]
+    assert signals.handler is None
+
+
+def test_exists_false_skips_backup_and_runs_sync() -> None:
+    fake = FakeMongo(exists_stdout="false")
+    code, out, _err, signals = _sync(fake)
+
+    assert code == 0
+    assert "skipping backup" in out
+    assert len(fake.pipes) == 1  # only the sync pipe
+    sync_left, sync_right = fake.pipes[0]
+    assert "--drop" in sync_right
+    assert "--nsFrom=app.*" in sync_right
+    assert "--nsTo=app.*" in sync_right
+    # No backup database exists, so no handler is ever bound.
+    assert signals.bound == []
+    assert signals.handler is None
+    assert fake.drops() == []
+
+
+@pytest.mark.parametrize("verbose", [True, False])
+def test_pipe_stream_flag_matches_verbose(verbose: bool) -> None:
+    fake = FakeMongo()
+    code, _out, _err, _signals = _sync(fake, verbose=verbose)
+
+    assert code == 0
+    assert fake.pipe_streams == [verbose, verbose]
+
+
+def test_sync_failure_restores_backup() -> None:
+    fake = FakeMongo(pipe_codes=[0, 1])
+    code, out, _err, _signals = _sync(fake)
+
+    assert code == 1
+    assert len(fake.pipes) == 3
+    restore_left, restore_right = fake.pipes[2]
+    assert restore_left == [
+        MONGODUMP,
+        f"--uri={TARGET_URI}",
+        f"--db={SYNC_BACKUP}",
+        "--archive",
+        "--gzip",
+    ]
+    assert restore_right == [
+        MONGORESTORE,
+        f"--uri={TARGET_URI}",
+        "--drop",
+        "--archive",
+        "--gzip",
+        f"--nsFrom={SYNC_BACKUP}.*",
+        "--nsTo=app.*",
+    ]
+    # The restored backup is removed again.
+    assert [database for _argv, database in fake.drops()] == [SYNC_BACKUP]
+    assert f"Restoring backup database '{SYNC_BACKUP}'" in out
+
+
+def test_restore_failure_keeps_backup() -> None:
+    fake = FakeMongo(pipe_codes=[0, 1, 1])
+    code, out, _err, _signals = _sync(fake)
+
+    assert code == 1
+    # The restore failed, so the backup database must not be dropped.
+    assert fake.drops() == []
+    assert f"available as '{SYNC_BACKUP}'" in out
+
+
+def test_success_drops_backup_and_exit_zero() -> None:
+    fake = FakeMongo()
+    code, out, _err, _signals = _sync(fake)
+
+    assert code == 0
+    assert "Removing backup database" in out
+    assert "Backup removed" in out
+
+
+def test_failed_backup_drop_warns_but_exits_zero() -> None:
+    fake = FakeMongo(drop_codes={SYNC_BACKUP: 1})
+    code, out, _err, _signals = _sync(fake)
+
+    assert code == 0
+    assert SYNC_BACKUP in out
+    assert "⚠️" in out
+
+
+def test_signal_handler_restores_backup_and_returns_130() -> None:
+    fake = FakeMongo()
+    code, _out, _err, signals = _sync(fake)
+
+    # The handler was live during the sync pipe: an interrupt there restores.
+    handler = fake.handler_at_pipe[1]
+    assert handler is not None
+    assert handler is signals.bound[0]
+    assert handler() == 130
+    restore_left, restore_right = fake.pipes[2]
+    assert restore_left == [
+        MONGODUMP,
+        f"--uri={TARGET_URI}",
+        f"--db={SYNC_BACKUP}",
+        "--archive",
+        "--gzip",
+    ]
+    assert restore_right == [
+        MONGORESTORE,
+        f"--uri={TARGET_URI}",
+        "--drop",
+        "--archive",
+        "--gzip",
+        f"--nsFrom={SYNC_BACKUP}.*",
+        "--nsTo=app.*",
+    ]
+
+
+def test_interrupt_without_backup_signals_nothing_to_restore() -> None:
+    fake = FakeMongo(exists_stdout="false")
+    _code, _out, _err, signals = _sync(fake)
+
+    # Unused except by this test's unpacking; signals carries the assertion.
+    assert signals.handler is None
+
+
+# --- sync mongodb · run_cli selection ---------------------------------------------
+
+
+def test_sync_mongodb_syncs_the_selected_database(tmp_path) -> None:
+    code, _out, err, fake = _drive(
+        tmp_path,
+        ["sync", "mongodb", "-s", "1", "-d", "1", "-db", "2"],
+        now=BACKUP_CLOCK,
+    )
+
+    assert code == 0
+    assert err == ""
+    assert len(fake.pipes) == 2
+    sync_left, sync_right = fake.pipes[1]
+    assert "--db=logs" in sync_left
+    assert "--nsFrom=logs.*" in sync_right
+    assert "--nsTo=logs.*" in sync_right
+    assert {"DBT_MONGO_DB": "logs"} in fake.envs
+    assert [database for _argv, database in fake.drops()] == [
+        "logs_backup_20261022_150405"
+    ]
+
+
+def test_sync_mongodb_defaults_to_the_first_database(tmp_path) -> None:
+    code, _out, err, fake = _drive(
+        tmp_path, ["sync", "mongodb", "-s", "1", "-d", "1"], now=BACKUP_CLOCK
+    )
+
+    assert code == 0
+    assert err == ""
+    sync_left, _sync_right = fake.pipes[1]
+    assert "--db=app" in sync_left
+
+
+def test_sync_mongodb_database_index_out_of_range_exits_one_without_ping(tmp_path) -> None:
+    code, _out, err, fake = _drive(
+        tmp_path, ["sync", "mongodb", "-s", "1", "-d", "1", "-db", "3"]
+    )
+
+    assert code == 1
+    assert fake.calls == []  # no ping, no probe
+    assert "Invalid MongoDB database index: 3" in err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["sync", "mongodb"],
+        ["sync", "mongodb", "-s", "1"],
+        ["sync", "mongodb", "-d", "1"],
+    ],
+)
+def test_sync_mongodb_requires_source_and_destination(tmp_path, argv: list[str]) -> None:
+    code, _out, err, fake = _drive(tmp_path, argv)
+
+    assert code == 1
+    assert fake.calls == []
+    assert err != ""
+
+
+def test_sync_mongodb_rejects_the_clear_flag(tmp_path) -> None:
+    code, _out, _err, fake = _drive(tmp_path, ["sync", "mongodb", "-c"])
+
+    assert code == 1
+    assert fake.calls == []
+    assert fake.pipes == []
+
+
+def test_sync_mongodb_without_mongodump_returns_one(tmp_path) -> None:
+    which = {"mongosh": MONGOSH, "mongorestore": MONGORESTORE}
+    code, _out, err, fake = _drive(
+        tmp_path, ["sync", "mongodb", "-s", "1", "-d", "1"], now=BACKUP_CLOCK, which=which
+    )
+
+    assert code == 1
+    assert fake.pipes == []
+    assert "MongoDB" in err
+
+
+# --- sync -c / --clear-backups · combined cleanup ----------------------------------
+
+PG_TARGETS = ("pg1|postgresql://u:p@pgt.example:5432/db",)
+
+
+@dataclass
+class FakeAll(FakeMongo):
+    """The Mongo fake plus psql dispatch; shared timeline in `calls`."""
+
+    which: dict[str, str] = field(default_factory=lambda: {**FULL_WHICH, **PG_WHICH})
+    pg_list_stdout: str = "old_backup_20260101_120000\n"
+    pg_list_fail_hosts: frozenset[str] = frozenset()
+
+    def run_command(self, argv, *, env=None, input_text=None, **kwargs):
+        if argv[0] == PSQL:
+            self.calls.append(list(argv))  # keep one ordered timeline
+            self.envs.append(dict(env) if env is not None else None)
+            query = argv[-1]
+            host = argv[argv.index("-h") + 1]
+            if query.startswith("SELECT datname FROM pg_database"):
+                if host in self.pg_list_fail_hosts:
+                    return CommandResult(1, "", "psql: connection refused")
+                return CommandResult(0, self.pg_list_stdout, "")
+            if query.startswith("SELECT pg_terminate_backend"):
+                return CommandResult(0, "", "")
+            if query.startswith("DROP DATABASE"):
+                return CommandResult(0, "", "")
+            raise AssertionError(f"unexpected psql command: {argv}")
+        return super().run_command(argv, env=env, input_text=input_text, **kwargs)
+
+
+def _write_all_secrets(
+    path: Path,
+    pg_sources: tuple[str, ...],
+    pg_targets: tuple[str, ...],
+    mongo_sources: tuple[str, ...],
+    mongo_targets: tuple[str, ...],
+) -> None:
+    lines: list[str] = []
+    for name, rows in (
+        ("POSTGRES_SOURCES", pg_sources),
+        ("POSTGRES_TARGETS", pg_targets),
+        ("MONGO_SOURCES", mongo_sources),
+        ("MONGO_TARGETS", mongo_targets),
+    ):
+        lines.append(f"typeset -a {name}=(")
+        lines.extend(f'  "{row}"' for row in rows)
+        lines.append(")")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _drive_all(
+    tmp_path,
+    argv: list[str],
+    *,
+    pg_sources: tuple[str, ...] = (),
+    pg_targets: tuple[str, ...] = PG_TARGETS,
+    mongo_sources: tuple[str, ...] = SOURCES,
+    mongo_targets: tuple[str, ...] = TARGETS,
+    **fake_args,
+):
+    path = tmp_path / "dbt_secrets"
+    _write_all_secrets(path, pg_sources, pg_targets, mongo_sources, mongo_targets)
+    fake = FakeAll(**fake_args)
+    out = io.StringIO()
+    err = io.StringIO()
+    code = run_cli(
+        argv,
+        env={
+            "HOME": str(tmp_path / "home"),
+            "CLOUD_UTILS_CONFIG_DIR": str(tmp_path / "cfg"),
+            "DBT_SECRETS_FILE": str(path),
+        },
+        stdout=out,
+        stderr=err,
+        dependencies=_runtime(fake),
+    )
+    return code, out.getvalue(), err.getvalue(), fake
+
+
+def _pg_list_index(fake: FakeAll) -> int:
+    return next(
+        index
+        for index, argv in enumerate(fake.calls)
+        if argv[0] == PSQL and argv[-1].startswith("SELECT datname FROM pg_database")
+    )
+
+
+def _mongo_list_index(fake: FakeAll) -> int:
+    return next(
+        index
+        for index, argv in enumerate(fake.calls)
+        if argv[0] == MONGOSH and argv[-1] == MONGO_LIST_SCRIPT
+    )
+
+
+def test_sync_clear_lists_postgres_backups_before_mongo(tmp_path) -> None:
+    code, _out, err, fake = _drive_all(tmp_path, ["sync", "-c"])
+
+    assert code == 0
+    assert err == ""
+    pg_first = _pg_list_index(fake)
+    mongo_first = _mongo_list_index(fake)
+    assert pg_first < mongo_first
+    # No Postgres source filter is applied to the listing query.
+    query = fake.calls[pg_first][-1]
+    assert "_backup_[0-9]{8}_[0-9]{6}" in query
+    assert "left(datname" not in query
+
+
+def test_sync_clear_with_clear_backups_spelling(tmp_path) -> None:
+    code, _out, _err, fake = _drive_all(tmp_path, ["sync", "--clear-backups"])
+
+    assert code == 0
+    assert _mongo_list_index(fake) >= 0
+
+
+def test_sync_clear_runs_mongo_after_postgres_failure(tmp_path) -> None:
+    code, _out, err, fake = _drive_all(
+        tmp_path, ["sync", "-c"], pg_list_fail_hosts=frozenset({"pgt.example"})
+    )
+
+    assert code == 1
+    assert _mongo_list_index(fake) >= 0  # the Mongo half still ran
+    assert "Failed to list" in err
+
+
+def test_sync_clear_without_postgres_targets_exits_one_without_mongosh(tmp_path) -> None:
+    code, _out, _err, fake = _drive_all(tmp_path, ["sync", "-c"], pg_targets=())
+
+    assert code == 1
+    assert fake.calls == []  # no psql and no mongosh
+
+
+def test_sync_clear_without_mongo_targets_returns_zero(tmp_path) -> None:
+    code, out, _err, fake = _drive_all(tmp_path, ["sync", "-c"], mongo_targets=())
+
+    assert code == 0
+    assert _pg_list_index(fake) >= 0
+    assert not any(argv[0] == MONGOSH for argv in fake.calls)
+
+
+def test_sync_clear_applies_dry_run_to_both_halves(tmp_path) -> None:
+    code, out, err, fake = _drive_all(tmp_path, ["sync", "-c", "-n"])
+
+    assert code == 0
+    assert err == ""
+    assert out.count("Dry run only; no databases were dropped") == 3  # 1 Postgres + 2 Mongo targets
+    assert fake.drops() == []
+    assert not any("DROP DATABASE" in " ".join(argv) for argv in fake.calls)

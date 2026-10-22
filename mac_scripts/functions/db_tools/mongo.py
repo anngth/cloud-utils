@@ -201,3 +201,159 @@ def _first_error_line(stderr_text: str) -> str:
         if line.strip():
             return line.strip()
     return ""
+
+
+def _dump_argv(tools: MongoTools, uri: str, database: str) -> list[str]:
+    """One `mongodump --uri=... --db=<database> --archive --gzip` invocation."""
+    return [tools.mongodump, f"--uri={uri}", f"--db={database}", "--archive", "--gzip"]
+
+
+def _restore_argv(
+    tools: MongoTools, uri: str, *, drop: bool, ns_from: str, ns_to: str
+) -> list[str]:
+    """One `mongorestore` invocation; namespaces come from the caller."""
+    argv = [tools.mongorestore, f"--uri={uri}"]
+    if drop:
+        argv.append("--drop")
+    argv += ["--archive", "--gzip", f"--nsFrom={ns_from}.*", f"--nsTo={ns_to}.*"]
+    return argv
+
+
+def _database_exists(
+    tools: MongoTools, uri: str, database: str, runtime: Runtime
+) -> bool:
+    """The exists script answers on stdout; its last line decides.
+
+    The shell port piped the probe through `tail -1 | grep -q '^true$'`, so a
+    failed or silent probe reads as "no collections" the same way here.
+    """
+    argv, env = mongo_eval_argv(tools.client, uri, database, MONGO_EXISTS_SCRIPT)
+    result = runtime.run_command(argv, env=env)
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return bool(lines) and lines[-1] == "true"
+
+
+def perform_mongo_sync(
+    source_uri: str,
+    database: str,
+    target_uri: str,
+    *,
+    verbose: bool,
+    runtime: Runtime,
+    stdout: TextIO,
+    stderr: TextIO,
+) -> int:
+    """Dump `database` from the source into the target, keeping the old one.
+
+    The backup pipe copies the existing target database into
+    `{database}_backup_YYYYMMDD_HHMMSS`; the sync pipe then dumps the source
+    database onto the target with `--drop`, and a failure restores the backup
+    first. The signal handler is bound only once the backup database exists on
+    the target: a database with no collections has no backup, so an interrupt
+    during the sync pipe has nothing to restore. Sync progress and errors go
+    to stdout; missing tools and connection failures go to stderr.
+    """
+    if not mongo_status(source_uri, runtime=runtime):
+        stderr.write("❌ Cannot proceed - source connection failed\n")
+        return 1
+    if not mongo_status(target_uri, runtime=runtime):
+        stderr.write("❌ Cannot proceed - target connection failed\n")
+        return 1
+    tools = find_mongo_tools(runtime)
+    if tools is None:
+        stderr.write(_TOOLS_NOT_FOUND)
+        return 1
+
+    backup_db = ""
+    bound = False
+    if _database_exists(tools, target_uri, database, runtime):
+        backup_db = f"{database}_backup_{runtime.now().strftime('%Y%m%d_%H%M%S')}"
+        stdout.write(f"💾 Backing up target database '{database}' to '{backup_db}'...\n")
+        backed_up = runtime.run_pipe(
+            _dump_argv(tools, target_uri, database),
+            _restore_argv(tools, target_uri, drop=False, ns_from=database, ns_to=backup_db),
+            stream=verbose,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        if backed_up.returncode != 0:
+            stdout.write("❌ Failed to backup target database\n")
+            return 1
+        stdout.write(f"✅ Backup created: {backup_db}\n")
+
+        def interrupt() -> int:
+            stdout.write("\n⚠️  MongoDB sync interrupted\n")
+            restore_backup()
+            runtime.signals.bind(None)
+            return 130
+
+        # The target content is now safely preserved; bind interrupt recovery.
+        runtime.signals.bind(interrupt)
+        bound = True
+    else:
+        stdout.write(
+            f"ℹ️  Target database '{database}' does not exist; skipping backup\n"
+        )
+
+    def restore_backup() -> bool:
+        """Restore the backup onto the target; a failed restore keeps it."""
+        restored = runtime.run_pipe(
+            _dump_argv(tools, target_uri, backup_db),
+            _restore_argv(
+                tools, target_uri, drop=True, ns_from=backup_db, ns_to=database
+            ),
+            stream=verbose,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        if restored.returncode != 0:
+            stdout.write(
+                "⚠️  Failed to restore backup. Backup database is still"
+                f" available as '{backup_db}'\n"
+            )
+            return False
+        stdout.write("✅ Backup restored successfully\n")
+        drop_backup(fail_line=f"⚠️  Backup restored, but failed to remove '{backup_db}'")
+        return True
+
+    def drop_backup(*, fail_line: str) -> None:
+        drop_argv, drop_env = mongo_eval_argv(
+            tools.client, target_uri, backup_db, MONGO_DROP_SCRIPT
+        )
+        dropped = runtime.run_command(drop_argv, env=drop_env)
+        if dropped.returncode == 0:
+            stdout.write("✅ Backup removed\n")
+        else:
+            stdout.write(
+                f"{fail_line}\n   You can remove it manually after verifying the sync\n"
+            )
+
+    if not verbose:
+        # The shell port showed a dots spinner here ("sync_dots_start"); the
+        # Runtime surface has no spinner hook, so this line stands in for it
+        # and per-stream progress stays invisible in captured (non-verbose)
+        # mode. Verbose streams the dump|restore output instead.
+        stdout.write("📤 Syncing database\n")
+    synced = runtime.run_pipe(
+        _dump_argv(tools, source_uri, database),
+        _restore_argv(tools, target_uri, drop=True, ns_from=database, ns_to=database),
+        stream=verbose,
+        stdout=stdout,
+        stderr=stderr,
+    )
+    # The sync pipe is over; no further interrupt can restore anything.
+    if bound:
+        runtime.signals.bind(None)
+
+    if synced.returncode == 0:
+        stdout.write("✅ MongoDB synced successfully\n")
+        if backup_db:
+            stdout.write(f"🗑️  Removing backup database '{backup_db}'...\n")
+            drop_backup(fail_line=f"⚠️  Failed to remove backup database '{backup_db}'")
+        return 0
+
+    stdout.write("❌ MongoDB sync failed\n")
+    if backup_db:
+        stdout.write(f"\n🔄 Restoring backup database '{backup_db}'...\n")
+        restore_backup()
+    return 1
