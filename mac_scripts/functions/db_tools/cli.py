@@ -9,6 +9,7 @@ from typing import TextIO
 from .config import ConfigError, SecretsCache, resolve_secrets_file
 from .runtime import Runtime, default_runtime
 from .secrets import SecretsError
+from .tunnels import connect_tunnels, disconnect_tunnels, list_tunnels, test_tunnels
 
 USAGE = """\
 usage: dbt <command> [args]
@@ -33,7 +34,6 @@ def run_cli(
     stderr: TextIO,
     dependencies: Runtime | None = None,
 ) -> int:
-    del dependencies
     if not argv or argv[0] in ("help", "-h", "--help"):
         stdout.write(USAGE)
         return 0
@@ -52,6 +52,30 @@ def run_cli(
         stderr.write(f"{exc}\n")
         return 1
 
-    del raw_secrets
+    runtime = dependencies if dependencies is not None else default_runtime()
+    command, args = argv[0], list(argv[1:])
+    rows = raw_secrets.vps
+    service = args[0] if args else None
+
+    if command in ("connect", "disconnect"):
+        if len(args) > 1:
+            stderr.write(f"unexpected arguments: {' '.join(args[1:])}\n" + USAGE)
+            return 1
+        dispatch = connect_tunnels if command == "connect" else disconnect_tunnels
+        return dispatch(rows, service=service, runtime=runtime, stdout=stdout, stderr=stderr)
+
+    if command in ("list", "ls"):
+        for arg in args:
+            if arg != "--status":
+                stderr.write(f"unknown option: {arg}\n" + USAGE)
+                return 1
+        return list_tunnels(rows, service=None, runtime=runtime, stdout=stdout, stderr=stderr)
+
+    if command == "test":
+        if len(args) > 1:
+            stderr.write(f"unexpected arguments: {' '.join(args[1:])}\n" + USAGE)
+            return 1
+        return test_tunnels(rows, service=service, runtime=runtime, stdout=stdout, stderr=stderr)
+
     stderr.write(f"unknown command: {argv[0]}\n" + USAGE)
     return 1
