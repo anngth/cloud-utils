@@ -69,6 +69,7 @@ class FakeMongo:
     ping_by_host: dict[str, int] = field(default_factory=dict)  # host -> returncode
     list_stdout: str = ALL_BACKUPS
     exists_stdout: str = "true"  # fake answer for MONGO_EXISTS_SCRIPT
+    exists_code: int = 0  # non-zero reads as a failed probe
     pipe_codes: list[int] = field(default_factory=list)  # piped commands, in order
     pipes: list[tuple[list[str], list[str]]] = field(default_factory=list)
     pipe_streams: list[bool] = field(default_factory=list)
@@ -90,7 +91,7 @@ class FakeMongo:
             code = self.ping_by_host.get(mongo_host(argv[1]), self.ping_code)
             return CommandResult(code, "1", "")
         if script == MONGO_EXISTS_SCRIPT:
-            return CommandResult(0, self.exists_stdout, "")
+            return CommandResult(self.exists_code, self.exists_stdout, "")
         raise AssertionError(f"unexpected command: {argv}")
 
     def run_pipe(self, left, right, *, stream: bool = False, **_kwargs):
@@ -717,6 +718,22 @@ def test_exists_false_skips_backup_and_runs_sync() -> None:
     assert signals.bound == []
     assert signals.handler is None
     assert fake.drops() == []
+
+
+def test_probe_failure_fails_closed_before_any_pipe() -> None:
+    """A failed probe must never read as "no backup needed" (fail closed)."""
+    fake = FakeMongo(exists_code=1)
+    code, _out, err, signals = _sync(fake)
+
+    assert code == 1
+    assert fake.pipes == []  # neither the backup nor the sync pipe ran
+    assert "127.0.0.1" in err  # the message names the target host
+    assert "not attempting a sync" in err
+    assert signals.bound == []  # nothing was bound: the sync never started
+    assert fake.drops() == []
+    # Ping source, ping target, failed probe: three commands and no more.
+    assert len(fake.calls) == 3
+    assert fake.envs == [{}, {}, {"DBT_MONGO_DB": "app"}]
 
 
 @pytest.mark.parametrize("verbose", [True, False])

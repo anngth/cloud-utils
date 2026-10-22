@@ -221,14 +221,19 @@ def _restore_argv(
 
 def _database_exists(
     tools: MongoTools, uri: str, database: str, runtime: Runtime
-) -> bool:
+) -> bool | None:
     """The exists script answers on stdout; its last line decides.
 
-    The shell port piped the probe through `tail -1 | grep -q '^true$'`, so a
-    failed or silent probe reads as "no collections" the same way here.
+    Returns None when the probe itself fails: the sync must fail closed
+    instead of reading a failed probe as "no collections", because that
+    reading would let a `--drop` sync destroy target data with no backup.
+    (The zsh port's `tail -1 | grep -q '^true$'` treated a failed probe
+    as "no collections"; that behavior is deliberately not kept.)
     """
     argv, env = mongo_eval_argv(tools.client, uri, database, MONGO_EXISTS_SCRIPT)
     result = runtime.run_command(argv, env=env)
+    if result.returncode != 0:
+        return None
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     return bool(lines) and lines[-1] == "true"
 
@@ -250,8 +255,10 @@ def perform_mongo_sync(
     database onto the target with `--drop`, and a failure restores the backup
     first. The signal handler is bound only once the backup database exists on
     the target: a database with no collections has no backup, so an interrupt
-    during the sync pipe has nothing to restore. Sync progress and errors go
-    to stdout; missing tools and connection failures go to stderr.
+    during the sync pipe has nothing to restore. A failed exists-probe aborts
+    the sync before any pipe runs: dbt must not gamble target data on an
+    unreadable probe. Sync progress and errors go to stdout; missing tools,
+    connection failures, and failed probes go to stderr.
     """
     if not mongo_status(source_uri, runtime=runtime):
         stderr.write("❌ Cannot proceed - source connection failed\n")
@@ -266,7 +273,15 @@ def perform_mongo_sync(
 
     backup_db = ""
     bound = False
-    if _database_exists(tools, target_uri, database, runtime):
+    exists = _database_exists(tools, target_uri, database, runtime)
+    if exists is None:
+        # Fail closed: a failed probe must not read as "no backup needed".
+        stderr.write(
+            f"❌ MongoDB probe failed on host {mongo_host(target_uri)};"
+            " not attempting a sync without a backup probe\n"
+        )
+        return 1
+    if exists:
         backup_db = f"{database}_backup_{runtime.now().strftime('%Y%m%d_%H%M%S')}"
         stdout.write(f"💾 Backing up target database '{database}' to '{backup_db}'...\n")
         backed_up = runtime.run_pipe(
