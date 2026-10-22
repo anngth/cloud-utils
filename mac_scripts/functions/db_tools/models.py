@@ -6,6 +6,17 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
+class RawSecrets:
+    """Raw string rows grouped per secrets array; empty when absent."""
+
+    vps: tuple[str, ...] = ()
+    postgres_sources: tuple[str, ...] = ()
+    postgres_targets: tuple[str, ...] = ()
+    mongo_sources: tuple[str, ...] = ()
+    mongo_targets: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class VpsTunnel:
     name: str
     user: str
