@@ -1,5 +1,8 @@
 import subprocess
 import sys
+from pathlib import Path
+
+import pytest
 
 from shared.process import CommandResult, run_process
 
@@ -25,6 +28,27 @@ def test_run_process_passes_input_without_shell() -> None:
     )
 
     assert result.stdout == "123456"
+
+
+def test_run_process_reads_stdin_from_a_file(tmp_path: Path) -> None:
+    source = tmp_path / "restore.sql"
+    source.write_text("SELECT 1;\nSELECT 2;\n", encoding="utf-8")
+
+    result = run_process(
+        [sys.executable, "-c", "import sys; sys.stdout.write(sys.stdin.read())"],
+        input_file=source,
+        capture=True,
+    )
+
+    assert result == CommandResult(0, "SELECT 1;\nSELECT 2;\n", "")
+
+
+def test_run_process_rejects_input_text_and_input_file_together(tmp_path: Path) -> None:
+    source = tmp_path / "restore.sql"
+    source.write_text("SELECT 1;\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        run_process([sys.executable, "-c", "pass"], input_text="x", input_file=source)
 
 
 def test_captured_process_ignores_nonempty_parent_stdin_like_node() -> None:

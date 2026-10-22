@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import TextIO
 
 from shared.process import CommandResult, run_process
@@ -16,13 +17,16 @@ def run_command(
     *,
     env: Mapping[str, str] | None = None,
     input_text: str | None = None,
+    input_file: str | Path | None = None,
     stream: bool = False,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> CommandResult:
     """Run one child. Capture by default; stream output live when asked."""
     if not stream:
-        return run_process(argv, env=env, input_text=input_text)
+        return run_process(argv, env=env, input_text=input_text, input_file=input_file)
+    if input_file is not None:
+        raise ValueError("input_file requires captured mode")
     stdout_stream = stdout if stdout is not None else sys.stdout
     stderr_stream = stderr if stderr is not None else sys.stderr
     process = subprocess.Popen(

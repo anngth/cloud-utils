@@ -114,12 +114,17 @@ class FakePostgres:
     dump_stdout: str = DEFAULT_DUMP_OUTPUT
     restore_stderr: str = ""  # stderr for psql restores fed through stdin
     inputs: list[str | None] = field(default_factory=list)
+    input_files: list[str | None] = field(default_factory=list)
 
-    def run_command(self, argv, *, env=None, input_text=None, **_kwargs):
+    def run_command(self, argv, *, env=None, input_text=None, input_file=None, **_kwargs):
         self.calls.append(list(argv))
         self.envs.append(dict(env) if env is not None else None)
-        self.inputs.append(input_text)
-        compiled = " ".join(argv) + "\n" + (input_text or "")
+        self.input_files.append(input_file)
+        stdin_text = input_text
+        if stdin_text is None and input_file is not None:
+            stdin_text = Path(input_file).read_text(encoding="utf-8")
+        self.inputs.append(stdin_text)
+        compiled = " ".join(argv) + "\n" + (stdin_text or "")
         for index, (needle, result) in enumerate(self.responses):
             if needle in compiled:
                 self.responses = self.responses[:index] + self.responses[index + 1 :]
@@ -147,10 +152,15 @@ class FakePostgres:
         if query == "SELECT 1;":
             return CommandResult(self.probe_code, "1", "")
         if argv[0] == PG_DUMP:  # dump output has no SQL argument
+            if "-f" in argv:  # the dump went straight into a file
+                Path(argv[argv.index("-f") + 1]).write_text(
+                    self.dump_stdout, encoding="utf-8"
+                )
+                return CommandResult(0, "", "")
             return CommandResult(0, self.dump_stdout, "")
         if argv[0] == PG_RESTORE:
             return CommandResult(0, "", "")
-        if input_text is not None:  # psql restore through stdin
+        if stdin_text is not None:  # psql restore through stdin or a file
             return CommandResult(0, "", self.restore_stderr)
         raise AssertionError(f"unexpected command: {argv}")
 
@@ -561,23 +571,23 @@ def test_existing_target_renamed_created_and_backup_dropped(tmp_path) -> None:
     version_calls = [call for call in fake.calls if call[-1] == "SELECT version();"]
     assert fake.hosts(version_calls) == ["src.example", "t1.example"]
     dump = [call for call in fake.calls if call[0] == PG_DUMP]
-    assert dump == [
-        [
-            PG_DUMP,
-            "-h",
-            "src.example",
-            "-p",
-            "5432",
-            "-U",
-            "svc",
-            "-d",
-            "app",
-            "--no-owner",
-            "--no-acl",
-            "--clean",
-            "--if-exists",
-        ]
+    assert len(dump) == 1
+    assert dump[0][:-2] == [
+        PG_DUMP,
+        "-h",
+        "src.example",
+        "-p",
+        "5432",
+        "-U",
+        "svc",
+        "-d",
+        "app",
+        "--no-owner",
+        "--no-acl",
+        "--clean",
+        "--if-exists",
     ]
+    assert dump[0][-2] == "-f"  # the plain dump went straight into a file
     restored = [index for index, value in enumerate(fake.inputs) if value is not None]
     assert restored == [7]
     assert fake.calls[7] == [PSQL, "-h", "t1.example", "-p", "5432", "-U", "svc", "-d", "app", "-q"]
@@ -639,12 +649,38 @@ def test_version_16_strips_transaction_timeout(tmp_path) -> None:
     assert code == 0
     assert err == ""
     dump = [call for call in fake.calls if call[0] == PG_DUMP][0]
-    assert dump[-4:] == ["--no-owner", "--no-acl", "--clean", "--if-exists"]
+    assert dump[-6:-2] == ["--no-owner", "--no-acl", "--clean", "--if-exists"]
     assert "-Fc" not in dump
+    assert dump[-2] == "-f"
     restored = [index for index, value in enumerate(fake.inputs) if value is not None]
     assert restored == [7]
     assert fake.calls[restored[0]][-1] == "-q"
     assert fake.inputs[restored[0]] == "CREATE TABLE public.items (id int);\n"
+
+
+def test_version_16_restore_streams_through_temp_files(tmp_path, monkeypatch) -> None:
+    """The dump and filtered SQL live in files, never in memory payloads."""
+    removed = _track_unlink(monkeypatch)
+    code, _out, err, fake = _drive(tmp_path, SYNC_ARGV, now=NOW)
+
+    assert code == 0
+    assert err == ""
+    dump = [call for call in fake.calls if call[0] == PG_DUMP][0]
+    dump_path = dump[dump.index("-f") + 1]
+    restore = next(
+        index
+        for index, call in enumerate(fake.calls)
+        if call[0] == PSQL and "-q" in call
+    )
+    sql_path = fake.input_files[restore]
+    assert sql_path is not None
+    # pg_dump wrote into one temp file; psql read the filtered copy of
+    # another, so no argv or stdin payload ever carried the whole dump.
+    assert sql_path != dump_path
+    assert fake.inputs[restore] == "CREATE TABLE public.items (id int);\n"
+    assert {dump_path, sql_path} <= set(removed)
+    assert not Path(dump_path).exists()
+    assert not Path(sql_path).exists()
 
 
 @pytest.mark.parametrize("version_stdout", ["", "PostgreSQL 17.1"])

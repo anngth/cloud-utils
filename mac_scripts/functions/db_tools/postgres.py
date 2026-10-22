@@ -308,6 +308,19 @@ def _major_version(version_text: str) -> str:
     return match.group(1) if match else ""
 
 
+def _strip_transaction_timeout(source_path: str, destination_path: str) -> None:
+    """Copy one plain-SQL dump, dropping `transaction_timeout` statements.
+
+    Line by line, so a multi-GB dump never has to live in memory.
+    """
+    with open(source_path, encoding="utf-8") as source, open(
+        destination_path, "w", encoding="utf-8"
+    ) as destination:
+        for line in source:
+            if "transaction_timeout" not in line:
+                destination.write(line)
+
+
 def perform_postgres_sync(
     source: PostgresSource,
     target: PostgresTarget,
@@ -352,12 +365,10 @@ def perform_postgres_sync(
         *,
         env: dict[str, str],
         database: str = "postgres",
-        input_text: str | None = None,
     ) -> CommandResult:
         return runtime.run_command(
             _psql_argv(tools, url, tail, database=database),
             env=env,
-            input_text=input_text,
         )
 
     def new_dump_file() -> str:
@@ -598,28 +609,40 @@ def perform_postgres_sync(
         restore_error_inner = ""
         try:
             if target_version and int(target_version) <= 16:
-                dump = runtime.run_command(
-                    dump_argv + ["--no-owner", "--no-acl", "--clean", "--if-exists"],
-                    env=src_env,
-                )
-                if dump.returncode != 0:
-                    return dump.returncode or 1
-                lines = [
-                    line
-                    for line in dump.stdout.splitlines()
-                    if "transaction_timeout" not in line
-                ]
-                sql = "\n".join(lines) + "\n" if lines else ""
-                restored = runtime.run_command(
-                    [tools.psql, "-h", tgt.host, "-p", tgt.port, "-U", tgt.user]
-                    + ["-d", tgt_db_name]
-                    + ([] if verbose else ["-q"]),
-                    env=tgt_env,
-                    input_text=sql,
-                )
-                restore_error_inner = restored.stderr
-                if restored.returncode != 0:
-                    return restored.returncode or 1
+                # Plain-SQL dumps stream through temp files: holding the
+                # whole dump in memory would kill the process on a
+                # multi-GB legacy server before psql could roll back.
+                dump_path = new_dump_file()
+                sql_path = new_dump_file()
+                try:
+                    dump = runtime.run_command(
+                        dump_argv
+                        + [
+                            "--no-owner",
+                            "--no-acl",
+                            "--clean",
+                            "--if-exists",
+                            "-f",
+                            dump_path,
+                        ],
+                        env=src_env,
+                    )
+                    if dump.returncode != 0:
+                        return dump.returncode or 1
+                    _strip_transaction_timeout(dump_path, sql_path)
+                    restored = runtime.run_command(
+                        [tools.psql, "-h", tgt.host, "-p", tgt.port, "-U", tgt.user]
+                        + ["-d", tgt_db_name]
+                        + ([] if verbose else ["-q"]),
+                        env=tgt_env,
+                        input_file=sql_path,
+                    )
+                    restore_error_inner = restored.stderr
+                    if restored.returncode != 0:
+                        return restored.returncode or 1
+                finally:
+                    discard(dump_path)
+                    discard(sql_path)
             else:
                 dump_file = new_dump_file()
                 try:
