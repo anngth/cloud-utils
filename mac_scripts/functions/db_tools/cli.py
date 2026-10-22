@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import TextIO
 
+from .config import ConfigError, SecretsCache, resolve_secrets_file
 from .runtime import Runtime, default_runtime
+from .secrets import SecretsError
 
 USAGE = """\
 usage: dbt <command> [args]
@@ -30,9 +33,25 @@ def run_cli(
     stderr: TextIO,
     dependencies: Runtime | None = None,
 ) -> int:
-    del env, dependencies
+    del dependencies
     if not argv or argv[0] in ("help", "-h", "--help"):
         stdout.write(USAGE)
         return 0
+
+    home_text = env.get("HOME", "")
+    home = Path(home_text) if home_text else Path.home()
+    try:
+        secrets_path = resolve_secrets_file(
+            env,
+            home=home,
+            repo_root=Path(__file__).resolve().parents[3],
+            example=Path(__file__).resolve().parent / "secrets.example",
+        )
+        raw_secrets = SecretsCache().load(secrets_path)
+    except (SecretsError, ConfigError) as exc:
+        stderr.write(f"{exc}\n")
+        return 1
+
+    del raw_secrets
     stderr.write(f"unknown command: {argv[0]}\n" + USAGE)
     return 1
