@@ -112,7 +112,6 @@ def _runtime(
     fake: FakeMongo, *, now: datetime | None = None, signals: object = None
 ) -> Runtime:
     signals = signals if signals is not None else SignalHooksStub()
-    handler = getattr(signals, "handler", None)
 
     def run_pipe(*args, **kwargs):
         fake.handler_at_pipe.append(getattr(signals, "handler", None))

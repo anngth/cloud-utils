@@ -66,7 +66,7 @@ def resolve_secrets_file(
 class SecretsCache:
     """Parses a secrets file once per path, reloading when its mtime moves.
 
-    Raises ``ConfigError`` if the file (or a parent component) is missing.
+    Raises ``ConfigError`` if the file is missing or cannot be read.
     """
 
     def __init__(self) -> None:
@@ -78,8 +78,11 @@ class SecretsCache:
         try:
             stat = path.stat()
             text = path.read_text(encoding="utf-8")
-        except (FileNotFoundError, NotADirectoryError) as exc:
-            raise ConfigError(f"secrets file not found: {path}") from exc
+        except OSError as exc:
+            # Missing, unreadable, or not a file: a raw traceback would
+            # leak, so every OS-level read failure becomes a ConfigError
+            # that names the path.
+            raise ConfigError(f"cannot read secrets file {path}: {exc}") from exc
         if (
             self._secrets is not None
             and self._path == path

@@ -175,6 +175,32 @@ def test_secrets_cache_raises_config_error_when_path_vanishes(tmp_path: Path) ->
         cache2.load(path)
 
 
+def test_secrets_cache_raises_config_error_when_path_is_a_directory(
+    tmp_path: Path,
+) -> None:
+    cache = SecretsCache()
+    with pytest.raises(ConfigError) as exc:
+        cache.load(tmp_path)  # a directory can never be the secrets file
+
+    assert str(tmp_path) in str(exc.value)
+
+
+def test_secrets_cache_raises_config_error_when_file_is_unreadable(
+    tmp_path: Path,
+) -> None:
+    secrets = tmp_path / "secrets"
+    secrets.write_text(EMPTY_SECRETS)
+    secrets.chmod(0o000)
+    try:
+        cache = SecretsCache()
+        with pytest.raises(ConfigError) as exc:
+            cache.load(secrets)
+
+        assert str(secrets) in str(exc.value)
+    finally:
+        secrets.chmod(0o644)  # let pytest's cleanup remove the file
+
+
 def test_run_cli_prints_message_and_exits_one_when_secrets_vanish(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
