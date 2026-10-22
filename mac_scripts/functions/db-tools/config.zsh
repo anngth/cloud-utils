@@ -5,7 +5,7 @@
 # Global variables
 typeset -g SSH_TIMEOUT=10
 typeset -g DBT_SECRETS_LOADED="false"
-typeset -g DBT_SECRETS_FILE=""
+typeset -g DBT_SECRETS_FILE="${DBT_SECRETS_FILE:-}"
 typeset -g DBT_SECRETS_MTIME=""
 
 local _dbt_func_dir="$(cd "$(dirname "${(%):-%x}")" && pwd)"

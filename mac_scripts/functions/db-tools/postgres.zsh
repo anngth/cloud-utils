@@ -79,13 +79,14 @@ _parse_postgres_url() {
     local database="${db_part%%[?]*}"
     # If no database in URL, default to postgres
     [[ -z "$database" ]] && database="postgres"
-    
-    # Export variables with prefix
-    eval "${prefix}_user='${user}'"
-    eval "${prefix}_pass='${pass}'"
-    eval "${prefix}_host='${host}'"
-    eval "${prefix}_port='${port}'"
-    eval "${prefix}_database='${database}'"
+
+    # Names are chosen by callers. Values are data and must not be evaluated.
+    [[ "$prefix" =~ '^[A-Za-z_][A-Za-z0-9_]*$' ]] || return 1
+    typeset -g "${prefix}_user"="$user"
+    typeset -g "${prefix}_pass"="$pass"
+    typeset -g "${prefix}_host"="$host"
+    typeset -g "${prefix}_port"="$port"
+    typeset -g "${prefix}_database"="$database"
 }
 
 # Helper function to execute psql command with optional SSL

@@ -91,7 +91,9 @@ _mongo_database_exists() {
         return 1
     fi
 
-    "$mongo_client" "$uri" --quiet --eval "db.getSiblingDB('${database}').getCollectionNames().length > 0" 2>/dev/null | tail -1 | grep -q '^true$'
+    DBT_MONGO_DB="$database" "$mongo_client" "$uri" --quiet \
+        --eval 'db.getSiblingDB(process.env.DBT_MONGO_DB).getCollectionNames().length > 0' \
+        2>/dev/null | tail -1 | grep -q '^true$'
 }
 
 _mongo_drop_database() {
@@ -103,7 +105,8 @@ _mongo_drop_database() {
         return 1
     fi
 
-    "$mongo_client" "$uri" --quiet --eval "db.getSiblingDB('${database}').dropDatabase()" >/dev/null 2>&1
+    DBT_MONGO_DB="$database" "$mongo_client" "$uri" --quiet \
+        --eval 'db.getSiblingDB(process.env.DBT_MONGO_DB).dropDatabase()' >/dev/null 2>&1
 }
 
 clear_mongo_backup_databases() {

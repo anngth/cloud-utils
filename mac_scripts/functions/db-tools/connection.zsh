@@ -36,14 +36,20 @@ parse_config() {
         return 1
     fi
     
-    # Set variables using eval (safe here as we control the variable names)
-    eval "${vps_name_var}='${vps_name}'"
-    eval "${user_var}='${user}'"
-    eval "${ip_var}='${ip}'"
-    eval "${service_name_var}='${service_name}'"
-    eval "${local_port_var}='${local_port}'"
-    eval "${target_host_var}='${target_host}'"
-    eval "${target_port_var}='${target_port}'"
+    # Names are chosen by callers. Field values are data and must not be evaluated.
+    local name value
+    local -a names=(
+        "$vps_name_var" "$user_var" "$ip_var" "$service_name_var"
+        "$local_port_var" "$target_host_var" "$target_port_var"
+    )
+    local -a values=(
+        "$vps_name" "$user" "$ip" "$service_name"
+        "$local_port" "$target_host" "$target_port"
+    )
+    for name value in "${(@)names:^values}"; do
+        [[ "$name" =~ '^[A-Za-z_][A-Za-z0-9_]*$' ]] || return 1
+        typeset -g "$name"="$value"
+    done
     
     return 0
 }
