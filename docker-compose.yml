@@ -60,7 +60,7 @@ services:
       - "traefik.http.routers.dashboard.middlewares=dashboard"
 
   portainer:
-    image: portainer/portainer-ce:latest
+    image: portainer/portainer-ce:2.45.3
     container_name: portainer
     restart: always
     volumes:
@@ -78,7 +78,7 @@ services:
 
   stirling-pdf:
     container_name: spdf
-    image: docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest
+    image: docker.stirlingpdf.com/stirlingtools/stirling-pdf:3.2.1
     volumes:
       - ./StirlingPDF/trainingData:/usr/share/tessdata # Required for extra OCR languages
       - ./StirlingPDF/extraConfigs:/configs
@@ -86,8 +86,9 @@ services:
       - ./StirlingPDF/logs:/logs/
       - ./StirlingPDF/pipeline:/pipeline/
     environment:
-      - DOCKER_ENABLE_SECURITY=false
-      - LANGS=en_GB
+      SECURITY_ENABLELOGIN: "true"
+      SECURITY_INITIALLOGIN_USERNAME: ${STIRLING_INITIAL_USERNAME:?STIRLING_INITIAL_USERNAME is required}
+      SECURITY_INITIALLOGIN_PASSWORD: ${STIRLING_INITIAL_PASSWORD:?STIRLING_INITIAL_PASSWORD is required}
     networks:
       - traefik_network
     labels:
@@ -97,6 +98,8 @@ services:
       - "traefik.http.routers.pdf.tls=true"
       - "traefik.http.routers.pdf.tls.certresolver=cloudflare"
       - "traefik.http.services.pdf.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.pdf-auth.basicauth.users=${STIRLING_EDGE_AUTH:?STIRLING_EDGE_AUTH is required}"
+      - "traefik.http.routers.pdf.middlewares=pdf-auth"
 
   # Connect: ssh -L 5432:localhost:5432 user@host
   # Then: psql -h localhost -p 5432 -U ${POSTGRES16_USER} -d ${POSTGRES16_DB}
@@ -130,7 +133,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES17_DB:-postgres}
       POSTGRES_USER: ${POSTGRES17_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES17_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES17_PASSWORD:?POSTGRES17_PASSWORD is required}
     volumes:
       - postgres17_data:/var/lib/postgresql/data
     ports:
@@ -176,7 +179,9 @@ services:
     image: redis:7
     container_name: redis7
     restart: always
-    command: redis-server --requirepass ${REDIS7_PASSWORD}
+    command: redis-server --requirepass ${REDIS7_PASSWORD:?REDIS7_PASSWORD is required}
+    environment:
+      REDISCLI_AUTH: ${REDIS7_PASSWORD:?REDIS7_PASSWORD is required}
     volumes:
       - redis7_data:/data
     ports:
