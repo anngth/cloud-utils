@@ -8,7 +8,7 @@ from list_cmd import run_list
 from manage import run_add, run_remove
 from messages import fmt
 from parse import parse_argv
-from ui import Ui
+from ui import FG_RESET, Ui, YELLOW
 from update import run_update
 
 
@@ -88,3 +88,21 @@ def main(
     ui.error(fmt("unknown.command", token=parsed.action))
     ui.error(fmt("unknown.hint"))
     return 1
+
+
+def execute(entrypoint=main) -> None:
+    try:
+        code = entrypoint()
+    except KeyboardInterrupt:
+        _exit_cancelled()
+    raise SystemExit(code)
+
+
+def _exit_cancelled() -> None:
+    line = f"\n{YELLOW}■{FG_RESET} {fmt('interrupt.cancelled')}\n"
+    try:
+        sys.stderr.write(line)
+        sys.stderr.flush()
+        sys.stdout.flush()
+    finally:
+        os._exit(130)

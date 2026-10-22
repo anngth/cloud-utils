@@ -1,3 +1,3 @@
-from cli import main
+from cli import execute
 
-raise SystemExit(main())
+execute()

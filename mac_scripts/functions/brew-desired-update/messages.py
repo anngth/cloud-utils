@@ -31,6 +31,7 @@ CATALOG = {
     "exclude.info": "Excluding {n} cask(s): {names}",
     "casks.all_excluded": "All eligible casks were excluded; no cask upgrade.",
     "casks.none_installed": "No casks in list are installed; skipping cask upgrade.",
+    "interrupt.cancelled": "Cancelled.",
 }
 
 

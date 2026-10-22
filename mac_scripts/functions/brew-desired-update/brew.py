@@ -98,13 +98,22 @@ def load_brew_state(runner: BrewRunner, ui=None) -> dict:
     def run_probe(args: list[str]) -> subprocess.CompletedProcess:
         return runner.run(args, log_ui)
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    pool = ThreadPoolExecutor(max_workers=3)
+    interrupted = False
+    try:
         formulas_future = pool.submit(run_probe, ["list", "--formula"])
         casks_future = pool.submit(run_probe, ["list", "--cask", "--full-name"])
         taps_future = pool.submit(run_probe, ["tap"])
         formulas_result = formulas_future.result()
         casks_result = casks_future.result()
         taps_result = taps_future.result()
+    except KeyboardInterrupt:
+        interrupted = True
+        raise
+    finally:
+        # Waiting here joins threads blocked in brew. A second Ctrl+C then
+        # prints another KeyboardInterrupt from ThreadPoolExecutor.shutdown.
+        pool.shutdown(wait=not interrupted, cancel_futures=interrupted)
 
     return {
         "formulas": [_short_name(n) for n in _parse_lines(formulas_result.stdout)],
