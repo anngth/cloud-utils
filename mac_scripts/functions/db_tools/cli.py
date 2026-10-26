@@ -14,6 +14,7 @@ import click
 from click.shell_completion import CompletionItem, ZshComplete
 from shared.selector import SelectorItem, SelectorState, run_selector
 from shared.streams import is_tty
+from shared.ui import BRIGHT_GREEN, GRAY
 
 from .config import ConfigError, load_secrets, resolve_secrets_file
 from .listing import render_listing
@@ -32,6 +33,9 @@ from .secrets import SecretsError
 from .tunnels import connect_tunnels, connection_hint, disconnect_tunnels
 
 _CONTEXT = {"help_option_names": ["-h", "--help"], "max_content_width": 100}
+_CLEAR_SCREEN = "\033[2J\033[H"
+_WHITE = "\033[97m"
+_RESET = "\033[0m"
 _LIST_HINT = "   Use 'dbt sync list' to list available configurations\n"
 _ROW_HELP = "name or 1-based index from `dbt sync list`"
 _POSTGRES_ALIASES = ("postgres", "postgresql", "pg")
@@ -151,10 +155,15 @@ def _pick(title: str, items: Sequence[SelectorItem], app: _App) -> str | None:
     """Arrow-key selection of one item; None when cancelled."""
 
     def render(state: SelectorState) -> None:
-        app.stdout.write(f"\n{title}  (↑/↓ move, Enter select, q cancel)\n\n")
+        # Redraw from the top-left on every key, as gt's selector does; the
+        # selector runs on the alternate screen, so nothing is left behind.
+        app.stdout.write(_CLEAR_SCREEN)
+        app.stdout.write(f"{title}  {GRAY}(↑/↓ move, Enter select, q cancel){_RESET}\n\n")
         for index, item in enumerate(state.items):
-            marker = "▶" if index == state.cursor else " "
-            app.stdout.write(f" {marker} {index + 1}) {item.label}\n")
+            current = index == state.cursor
+            marker = f"{BRIGHT_GREEN}▶{_RESET}" if current else " "
+            color = _WHITE if current else GRAY
+            app.stdout.write(f" {marker} {color}{index + 1}) {item.label}{_RESET}\n")
         app.stdout.flush()
 
     result = run_selector(items, multiple=False, output=app.stdout, render=render)
