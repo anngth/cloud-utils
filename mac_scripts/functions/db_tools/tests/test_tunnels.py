@@ -334,13 +334,33 @@ def test_list_rejects_unknown_option(tmp_path):
     assert err != ""
 
 
-def test_list_status_flag_is_rejected_with_a_hint(tmp_path):
+def test_list_rejects_the_status_flag(tmp_path):
     code, out, err, fake = _drive(tmp_path, ROWS, ["list", "--status"])
 
     assert code == 1
     assert out == ""
     assert fake.calls == []
-    assert "dbt sync list --status" in err
+    assert "--status" in err
+
+
+def test_status_shows_tunnels_then_sync_entries(tmp_path):
+    code, out, err, fake = _drive(
+        tmp_path,
+        ROWS,
+        ["status"],
+        listeners={5432: "42"},
+        commands={42: "ssh -L 5432:db.internal:5432"},
+        etimes={42: "01:02"},
+    )
+
+    assert (code, err) == (0, "")
+    assert all(argv[0] != "ssh" for argv in fake.calls)
+    table, _blank, entries = out.partition("\n\n")
+    assert table.startswith("STATUS")
+    assert "UP      postgres" in table
+    assert "DOWN    redis" in table
+    assert entries.startswith("🐘 PostgreSQL Sources (0):")
+    assert "🎯 MongoDB Targets (0):" in entries
 
 
 def test_listening_pids_parses_lsof_field_output():

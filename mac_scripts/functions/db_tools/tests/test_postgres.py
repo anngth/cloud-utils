@@ -464,10 +464,10 @@ def test_one_failed_target_still_visits_the_next_and_exits_one(tmp_path) -> None
     assert "Dropped" not in out
 
 
-def test_no_postgres_targets_exits_one(tmp_path) -> None:
+def test_no_postgres_targets_returns_zero(tmp_path) -> None:
     code, out, _err, fake = _drive(tmp_path, ["sync", "postgres", "-c"], targets=())
 
-    assert code == 1
+    assert code == 0
     assert fake.calls == []
     assert "No PostgreSQL targets" in out
 

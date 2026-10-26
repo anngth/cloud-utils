@@ -25,9 +25,21 @@ def test_help_exits_zero(argv: list[str]) -> None:
     assert err == ""
 
 
-def test_help_lists_the_config_command() -> None:
+def test_help_lists_every_command() -> None:
     _code, out, _err = run(["help"])
-    assert "config [path]" in out
+    for name in ("config", "connect", "disconnect", "list", "status", "sync", "test"):
+        assert f"\n  {name} " in out
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["sync", "--help"], ["sync", "postgres", "-h"], ["sync", "mongo", "--help"], ["status", "-h"]],
+)
+def test_every_subcommand_has_its_own_help(argv: list[str]) -> None:
+    code, out, err = run(argv)  # no secrets file is needed for help
+    assert (code, err) == (0, "")
+    assert out.startswith("Usage: dbt ")
+    assert "-h, --help" in out
 
 
 def test_unknown_command_exits_one() -> None:
@@ -90,5 +102,5 @@ def test_config_path_prints_only_the_location(tmp_path) -> None:
 def test_config_rejects_other_arguments(tmp_path) -> None:
     code, out, err = _config(tmp_path, ["edit"])
     assert (code, out) == (1, "")
-    assert "unknown option: edit" in err
-    assert "usage: dbt config [path]" in err
+    assert "'edit'" in err
+    assert "Usage: dbt config" in err

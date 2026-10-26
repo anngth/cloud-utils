@@ -981,9 +981,10 @@ def test_sync_mongodb_syncs_the_selected_database(tmp_path) -> None:
     ]
 
 
-def test_sync_mongodb_defaults_to_the_first_database(tmp_path) -> None:
+@pytest.mark.parametrize("alias", ["mongodb", "mongo"])
+def test_sync_mongodb_defaults_to_the_first_database(tmp_path, alias: str) -> None:
     code, _out, err, fake = _drive(
-        tmp_path, ["sync", "mongodb", "-s", "1", "-d", "1"], now=BACKUP_CLOCK
+        tmp_path, ["sync", alias, "-s", "1", "-d", "1"], now=BACKUP_CLOCK
     )
 
     assert code == 0
@@ -1171,12 +1172,12 @@ def test_sync_clear_without_postgres_targets_still_cleans_mongo(tmp_path) -> Non
     assert "No PostgreSQL targets configured" in out
 
 
-def test_sync_clear_without_any_targets_exits_one(tmp_path) -> None:
+def test_sync_clear_without_any_targets_returns_zero(tmp_path) -> None:
     code, out, _err, fake = _drive_all(
         tmp_path, ["sync", "-c"], pg_targets=(), mongo_targets=()
     )
 
-    assert code == 1
+    assert code == 0
     assert fake.calls == []
     assert "No PostgreSQL or MongoDB targets configured" in out
 

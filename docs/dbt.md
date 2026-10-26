@@ -5,19 +5,20 @@ Database tools — `$CLOUD_UTILS_CONFIG_DIR/dbt/secrets.toml`.
 Config paths: [setup.md — Local config](setup.md#local-config).
 
 ```bash
-dbt --help
-dbt config          # show the secrets file, credentials masked
-dbt config path     # only its location (e.g. $EDITOR "$(dbt config path)")
+dbt --help           # every subcommand has its own --help / -h
+dbt config           # show the secrets file, credentials masked
+dbt config path      # only its location (e.g. $EDITOR "$(dbt config path)")
 dbt connect
 dbt list             # tunnels: UP / DOWN / BUSY
+dbt status           # tunnels plus a probe of every database connection
 dbt sync list --status
-dbt sync postgres -s 1 -d 1
-dbt sync mongodb -s 1 -d 1
+dbt sync postgres -s 1 -d 1   # aliases: postgresql, pg
+dbt sync mongodb -s 1 -d 1    # alias: mongo
 dbt sync -c          # clear backup DBs (dry-run: -n)
 dbt sync postgres -c  # postgres only
 ```
 
-- **Clear backups** — removes `<database>_backup_YYYYMMDD_HHMMSS`. Postgres: optional `-d <target>`, `-s <source>`.
+- **Clear backups** — removes `<database>_backup_YYYYMMDD_HHMMSS`. Postgres: optional `-d <target>`, `-s <source>`. No configured target is a notice, not an error (exit 0).
 - **MongoDB sync** — backs up target before restore; rolls back on failure. Needs `mongosh` (the legacy `mongo` shell is not supported).
 - **Ctrl-C during a sync** — the running dump/restore is killed first, then the backup is restored; exit code 130.
 - **`--verbose`** — streams `pg_dump`/`pg_restore`/`mongodump`/`mongorestore` output live; without it a failure still prints the first error lines.
