@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from shared.process import CommandResult
 
+from db_tools import cli
 from db_tools.cli import run_cli
 from db_tools.models import PostgresTarget
 from db_tools.postgres import (
@@ -390,9 +391,8 @@ def test_postgres_status_failed_probe_is_false() -> None:
 
 
 @pytest.mark.parametrize("alias", ["postgres", "postgresql", "pg"])
-@pytest.mark.parametrize("flags", [("-c", "-n"), ("-n", "-c")])
-def test_dry_run_does_not_drop(tmp_path, alias: str, flags: tuple[str, ...]) -> None:
-    code, out, err, fake = _drive(tmp_path, ["sync", alias, *flags])
+def test_dry_run_does_not_drop(tmp_path, alias: str) -> None:
+    code, out, err, fake = _drive(tmp_path, ["clean", alias, "-n"])
 
     assert code == 0
     assert err == ""
@@ -411,7 +411,7 @@ def test_dry_run_does_not_drop(tmp_path, alias: str, flags: tuple[str, ...]) -> 
 
 
 def test_drop_terminates_then_drops_the_quoted_backup(tmp_path) -> None:
-    code, out, err, fake = _drive(tmp_path, ["sync", "postgres", "-c", "-d", "1"])
+    code, out, err, fake = _drive(tmp_path, ["clean", "postgres", "-d", "1"])
 
     assert code == 0
     assert err == ""
@@ -427,7 +427,7 @@ def test_drop_terminates_then_drops_the_quoted_backup(tmp_path) -> None:
 
 
 def test_source_database_scopes_the_listing(tmp_path) -> None:
-    code, _out, err, fake = _drive(tmp_path, ["sync", "postgres", "-c", "-n", "-s", "1"])
+    code, _out, err, fake = _drive(tmp_path, ["clean", "postgres", "-n", "-s", "1"])
 
     assert code == 0
     assert err == ""
@@ -436,7 +436,7 @@ def test_source_database_scopes_the_listing(tmp_path) -> None:
 
 
 def test_destination_limits_cleanup_to_that_target(tmp_path) -> None:
-    code, _out, err, fake = _drive(tmp_path, ["sync", "postgres", "-c", "-n", "-d", "2"])
+    code, _out, err, fake = _drive(tmp_path, ["clean", "postgres", "-n", "-d", "2"])
 
     assert code == 0
     assert err == ""
@@ -444,7 +444,7 @@ def test_destination_limits_cleanup_to_that_target(tmp_path) -> None:
 
 
 def test_cleanup_without_destination_visits_every_target(tmp_path) -> None:
-    code, _out, err, fake = _drive(tmp_path, ["sync", "postgres", "-c", "-n"])
+    code, _out, err, fake = _drive(tmp_path, ["clean", "postgres", "-n"])
 
     assert code == 0
     assert err == ""
@@ -454,7 +454,7 @@ def test_cleanup_without_destination_visits_every_target(tmp_path) -> None:
 def test_one_failed_target_still_visits_the_next_and_exits_one(tmp_path) -> None:
     code, out, err, fake = _drive(
         tmp_path,
-        ["sync", "postgres", "-c", "-n"],
+        ["clean", "postgres", "-n"],
         list_fail_hosts=frozenset({"t2.example"}),
     )
 
@@ -465,7 +465,7 @@ def test_one_failed_target_still_visits_the_next_and_exits_one(tmp_path) -> None
 
 
 def test_no_postgres_targets_returns_zero(tmp_path) -> None:
-    code, out, _err, fake = _drive(tmp_path, ["sync", "postgres", "-c"], targets=())
+    code, out, _err, fake = _drive(tmp_path, ["clean", "postgres"], targets=())
 
     assert code == 0
     assert fake.calls == []
@@ -481,7 +481,7 @@ def test_cleanup_never_unlinks_files(tmp_path, monkeypatch) -> None:
     keeper = tmp_path / "pg_dump.bin"
     keeper.write_text("x", encoding="utf-8")
 
-    code, _out, err, _fake = _drive(tmp_path, ["sync", "postgres", "-c", "-d", "1"])
+    code, _out, err, _fake = _drive(tmp_path, ["clean", "postgres", "-d", "1"])
 
     assert code == 0
     assert err == ""
@@ -489,20 +489,31 @@ def test_cleanup_never_unlinks_files(tmp_path, monkeypatch) -> None:
 
 
 def test_source_index_out_of_range_exits_one_without_psql(tmp_path) -> None:
-    code, _out, err, fake = _drive(tmp_path, ["sync", "postgres", "-c", "-s", "2"])
+    code, _out, err, fake = _drive(tmp_path, ["clean", "postgres", "-s", "2"])
 
     assert code == 1
     assert fake.calls == []
-    assert "Invalid PostgreSQL source index" in err
+    assert "Unknown PostgreSQL source: 2" in err
+    assert "Available sources: 1) prod" in err
 
 
-@pytest.mark.parametrize("argv", [["-db", "1"], ["-c", "-n", "-db", "1"]])
-def test_database_flag_is_accepted_and_ignored(tmp_path, argv: list[str]) -> None:
-    code, _out, err, fake = _drive(tmp_path, ["sync", "postgres", *argv, "-c", "-n"])
+def test_clean_scopes_by_source_and_target_name(tmp_path) -> None:
+    code, _out, err, fake = _drive(
+        tmp_path, ["clean", "postgres", "-n", "--from", "prod", "--to", "two"]
+    )
 
     assert code == 0
-    assert err == "ℹ️  -db is ignored for PostgreSQL; the source row names the database\n"
-    assert fake.hosts(fake.listings()) == ["t1.example", "t2.example"]
+    assert err == ""
+    assert fake.hosts(fake.listings()) == ["t2.example"]
+    assert [call[-1] for call in fake.listings()] == [SCOPED_QUERY]
+
+
+def test_clean_rejects_from_and_to_for_mongodb(tmp_path) -> None:
+    code, _out, err, fake = _drive(tmp_path, ["clean", "mongodb", "--to", "one"])
+
+    assert code == 1
+    assert fake.calls == []
+    assert "--from/--to only apply to PostgreSQL" in err
 
 
 @pytest.mark.parametrize(
@@ -1308,15 +1319,98 @@ def test_sync_out_of_range_index_exits_one_without_psql(tmp_path, argset) -> Non
     assert fake.calls == []
 
 
-def test_database_flag_is_still_accepted_and_ignored(tmp_path) -> None:
-    code, _out, err, fake = _drive(
-        tmp_path, [*SYNC_ARGV, "-db", "2"], now=NOW
+def test_database_flag_is_rejected_for_postgres(tmp_path) -> None:
+    code, _out, err, fake = _drive(tmp_path, [*SYNC_ARGV, "--db", "2"], now=NOW)
+
+    assert code == 1
+    assert "No such option" in err
+    assert fake.calls == []
+
+
+def test_sync_accepts_row_names(tmp_path) -> None:
+    code, out, err, fake = _drive(
+        tmp_path, ["sync", "postgres", "--from", "prod", "--to", "one"], now=NOW
     )
 
     assert code == 0
-    assert err == "ℹ️  -db is ignored for PostgreSQL; the source row names the database\n"
-    dump = next(call for call in fake.calls if call[0] == PG_DUMP)
-    assert dump[dump.index("-d") + 1] == "app"
+    assert err == ""
+    assert [call for call in fake.calls if call[0] == PG_DUMP]
+    assert "  To: one → Database: app\n" in out
+    assert "  Backup: app_backup_YYYYMMDD_HHMMSS (renamed, dropped on success)\n" in out
+
+
+def test_sync_unknown_name_lists_the_choices(tmp_path) -> None:
+    code, _out, err, fake = _drive(
+        tmp_path, ["sync", "postgres", "--from", "prod", "--to", "three"]
+    )
+
+    assert code == 1
+    assert fake.calls == []
+    assert "Unknown PostgreSQL target: three" in err
+    assert "Available targets: 1) one, 2) two" in err
+
+
+def test_sync_dry_run_prints_the_plan_and_changes_nothing(tmp_path) -> None:
+    code, out, err, fake = _drive(tmp_path, [*SYNC_ARGV, "-n"], targets=SUPABASE_TARGETS)
+
+    assert (code, err) == (0, "")
+    assert fake.calls == []
+    assert "  To: one → Database: postgres\n" in out
+    assert "  Backup: a temporary dump file" in out
+    assert out.endswith("Dry run: nothing was changed\n")
+
+
+def test_sync_without_target_outside_a_terminal_explains(tmp_path) -> None:
+    code, _out, err, fake = _drive(tmp_path, ["sync", "postgres", "--from", "prod"])
+
+    assert code == 1
+    assert fake.calls == []
+    assert "--to is required outside a terminal" in err
+    assert "dbt sync list" in err
+
+
+def test_sync_in_a_terminal_picks_the_rows_and_asks_before_overwriting(
+    tmp_path, monkeypatch
+) -> None:
+    picked: list[str] = []
+    questions: list[str] = []
+
+    def pick(title, items, _app):
+        picked.append(title)
+        return items[0].value
+
+    def confirm(question):
+        questions.append(question)
+        return True
+
+    monkeypatch.setattr(cli._App, "interactive", property(lambda _self: True))
+    monkeypatch.setattr(cli, "_pick", pick)
+    monkeypatch.setattr(cli, "_confirm", confirm)
+    code, _out, err, fake = _drive(tmp_path, ["sync", "postgres"], now=NOW)
+
+    assert (code, err) == (0, "")
+    assert picked == ["Select the PostgreSQL target", "Select the PostgreSQL source"]
+    assert questions == ["Overwrite database 'app' on 'one' with 'app' from 'prod'?"]
+    assert [call for call in fake.calls if call[0] == PG_DUMP]
+
+
+def test_sync_declined_confirmation_cancels(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cli._App, "interactive", property(lambda _self: True))
+    monkeypatch.setattr(cli, "_confirm", lambda _question: False)
+    code, out, _err, fake = _drive(tmp_path, SYNC_ARGV, now=NOW)
+
+    assert code == 1
+    assert fake.calls == []
+    assert out.endswith("Cancelled\n")
+
+
+def test_sync_yes_skips_the_confirmation(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cli._App, "interactive", property(lambda _self: True))
+    monkeypatch.setattr(cli, "_confirm", lambda _q: (_ for _ in ()).throw(AssertionError("asked")))
+    code, _out, err, fake = _drive(tmp_path, [*SYNC_ARGV, "-y"], now=NOW)
+
+    assert (code, err) == (0, "")
+    assert [call for call in fake.calls if call[0] == PG_DUMP]
 
 
 @pytest.mark.parametrize(

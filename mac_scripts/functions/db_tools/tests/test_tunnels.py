@@ -354,20 +354,22 @@ def test_status_shows_tunnels_then_sync_entries(tmp_path):
     )
 
     assert (code, err) == (0, "")
-    table, _blank, entries = out.partition("\n\n")
-    header, up_row, mongo_row, redis_row = table.splitlines()
-    assert header.startswith("STATUS") and header.endswith("UPTIME    SSH")
-    assert up_row.startswith("UP      postgres") and up_row.endswith("01:02     -")
-    assert mongo_row.startswith("DOWN    mongo") and mongo_row.endswith("-         ok")
-    assert redis_row.startswith("DOWN    redis") and redis_row.endswith("-         ok")
+    tunnels, _blank, entries = out.partition("\n\n")
+    assert tunnels.splitlines() == [
+        "🔀 Tunnels (3):",
+        "  🟢 1) a: postgres | :5432 -> db.internal:5432  me@10.0.0.1 | UP 01:02",
+        "  🔴 2) a: mongo | :27017 -> db.internal:27017  me@10.0.0.1 | DOWN (ssh ok)",
+        "  🔴 3) b: redis | :6379 -> db.internal:6379  me@10.0.0.2 | DOWN (ssh ok)",
+    ]
     # only DOWN rows get the SSH preflight, once per host; the UP row is skipped
     assert fake.preflights() == [
         [*_PREFLIGHT, "me@10.0.0.1", "exit"],
         [*_PREFLIGHT, "me@10.0.0.2", "exit"],
     ]
     assert fake.tunnel_opens() == []
-    assert entries.startswith("🐘 PostgreSQL Sources (0):")
+    assert entries.startswith("🐘 PostgreSQL Sources (0):\n  (none)\n")
     assert "🎯 MongoDB Targets (0):" in entries
+    assert "Probing" not in out  # nothing to probe, so no waiting notice
 
 
 def test_status_reports_a_failed_ssh_login_once_per_host(tmp_path):
@@ -377,7 +379,7 @@ def test_status_reports_a_failed_ssh_login_once_per_host(tmp_path):
 
     assert code == 0
     rows = out.partition("\n\n")[0].splitlines()[1:]
-    assert [row.split()[-1] for row in rows] == ["failed"] * 4
+    assert all(row.endswith("| DOWN (ssh failed)") for row in rows) and len(rows) == 4
     assert fake.preflights() == [
         [*_PREFLIGHT, "me@10.0.0.1", "exit"],
         [*_PREFLIGHT, "me@10.0.0.2", "exit"],
@@ -388,7 +390,8 @@ def test_list_never_runs_ssh(tmp_path):
     _code, out, _err, fake = _drive(tmp_path, ROWS, ["list"])
 
     assert all(argv[0] != "ssh" for argv in fake.calls)
-    assert "SSH" not in out.splitlines()[0]
+    assert "ssh" not in out
+    assert "| DOWN\n" in out
 
 
 def test_listening_pids_parses_lsof_field_output():

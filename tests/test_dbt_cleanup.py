@@ -134,11 +134,11 @@ def test_invalid_postgres_index_returns_one_without_psql(tmp_path: Path) -> None
 
     assert code == 1
     assert fake.calls == []
-    assert "Invalid PostgreSQL source index" in err
+    assert "Unknown PostgreSQL source: 2" in err
 
 
 def test_dry_run_lists_postgres_backups_without_dropping_them(tmp_path: Path) -> None:
-    code, out, err, fake = _drive(tmp_path, ["sync", "postgres", "-c", "-n"])
+    code, out, err, fake = _drive(tmp_path, ["clean", "postgres", "-n"])
 
     assert code == 0
     assert err == ""
@@ -152,7 +152,7 @@ def test_dry_run_lists_postgres_backups_without_dropping_them(tmp_path: Path) ->
 def test_postgres_cleanup_quotes_backup_names_in_drop_statements(
     tmp_path: Path,
 ) -> None:
-    code, _out, _err, fake = _drive(tmp_path, ["sync", "postgres", "-c"])
+    code, _out, _err, fake = _drive(tmp_path, ["clean", "postgres"])
 
     assert code == 0
     assert DROP_SQL in [call[-1] for call in fake.calls]

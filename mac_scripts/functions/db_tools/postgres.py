@@ -125,17 +125,48 @@ def find_postgres_tools(runtime: Runtime) -> PostgresTools | None:
     return None
 
 
-def postgres_status(url: str, *, runtime: Runtime, database: str = "postgres") -> bool | None:
-    """`SELECT 1` on `database`; None when no client is installed."""
+def postgres_status(
+    url: str,
+    *,
+    runtime: Runtime,
+    database: str = "postgres",
+    connect_timeout: int | None = None,
+) -> bool | None:
+    """`SELECT 1` on `database`; None when no client is installed.
+
+    `connect_timeout` (seconds) replaces the sync default for a quick probe;
+    a `PGCONNECT_TIMEOUT` in the environment still wins.
+    """
     tools = find_postgres_tools(runtime)
     if tools is None:
         return None
     parsed = parse_postgres_url(url)
     result = runtime.run_command(
         _psql_argv(tools, parsed, ["-t", "-c", "SELECT 1;"], database=database),
-        env=_child_env(parsed),
+        env=_child_env(parsed, connect_timeout=connect_timeout),
     )
     return result.returncode == 0
+
+
+@dataclass(frozen=True, slots=True)
+class PostgresSyncPlan:
+    """What a sync would do to the target, decided before anything runs."""
+
+    target_database: str
+    uses_dump_file: bool
+
+    @property
+    def backup(self) -> str:
+        if self.uses_dump_file:
+            return "a temporary dump file (the public schema is wiped, then restored)"
+        return f"{self.target_database}_backup_YYYYMMDD_HHMMSS (renamed, dropped on success)"
+
+
+def plan_postgres_sync(source: PostgresSource, target: PostgresTarget) -> PostgresSyncPlan:
+    """Supabase and `postgres` targets are restored into `postgres` via a dump file."""
+    tgt = parse_postgres_url(target.url)
+    uses_dump_file = "supabase" in tgt.host.lower() or tgt.database == "postgres"
+    return PostgresSyncPlan("postgres" if uses_dump_file else source.database, uses_dump_file)
 
 
 def clear_postgres_backups(
@@ -247,11 +278,12 @@ def _connection_argv(url: PostgresUrl, database: str) -> list[str]:
     return ["-h", url.host, "-p", url.port, "-U", url.user, "-w", "-d", database]
 
 
-def _child_env(url: PostgresUrl) -> dict[str, str]:
+def _child_env(url: PostgresUrl, *, connect_timeout: int | None = None) -> dict[str, str]:
     """PGPASSWORD and PGCONNECT_TIMEOUT always, PGSSLMODE only for require."""
+    timeout = str(connect_timeout) if connect_timeout is not None else _CONNECT_TIMEOUT
     env = {
         "PGPASSWORD": url.password,
-        "PGCONNECT_TIMEOUT": os.environ.get("PGCONNECT_TIMEOUT") or _CONNECT_TIMEOUT,
+        "PGCONNECT_TIMEOUT": os.environ.get("PGCONNECT_TIMEOUT") or timeout,
     }
     if url.sslmode_require:
         env["PGSSLMODE"] = "require"
@@ -350,6 +382,7 @@ class _PostgresSync:
         hint: Callable[[str, int], str] | None = None,
     ) -> None:
         self.source = source
+        self.target_name = target.name
         self.tools = tools
         self.verbose = verbose
         self.runtime = runtime
@@ -360,10 +393,9 @@ class _PostgresSync:
         self.tgt = parse_postgres_url(target.url)
         self.src_env = _child_env(self.src)
         self.tgt_env = _child_env(self.tgt)
-        self.uses_dump_file = (
-            "supabase" in self.tgt.host.lower() or self.tgt.database == "postgres"
-        )
-        self.tgt_db_name = "postgres" if self.uses_dump_file else source.database
+        plan = plan_postgres_sync(source, target)
+        self.uses_dump_file = plan.uses_dump_file
+        self.tgt_db_name = plan.target_database
         self.backup_db = ""
         self.backup_file = ""
         self.restore_error = ""
@@ -715,6 +747,9 @@ class _PostgresSync:
                 self.stdout.write(f"   Error: {message}\n")
             if self.backup_db:
                 self.stdout.write(f"\n💾 Backup database '{self.backup_db}' kept for safety\n")
+                self.stdout.write(
+                    f"   Remove it later with: dbt clean postgres --to {self.target_name}\n"
+                )
             if self.backup_file:
                 self.stdout.write(f"\n💾 Backup file kept for safety: {self.backup_file}\n")
             return 1

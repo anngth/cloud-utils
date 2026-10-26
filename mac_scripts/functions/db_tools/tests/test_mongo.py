@@ -535,7 +535,7 @@ def test_sync_list_prints_mongo_sections_with_1_based_indexes(tmp_path, alias: s
     assert "🎯 MongoDB Targets (2):" in out
     assert "  1) one | 127.0.0.1" in out
     assert "  2) two | t2.example" in out
-    assert "(No MongoDB targets configured)" not in out
+    assert "🎯 MongoDB Targets (0)" not in out
 
 
 def test_sync_list_persists_postgres_sections_and_no_client_calls(tmp_path) -> None:
@@ -544,7 +544,7 @@ def test_sync_list_persists_postgres_sections_and_no_client_calls(tmp_path) -> N
     assert code == 0
     assert fake.calls == []
     assert "🐘 PostgreSQL Sources (0):" in out
-    assert "  (No PostgreSQL sources configured)" in out
+    assert "🐘 PostgreSQL Sources (0):\n  (none)\n" in out
 
 
 def test_sync_list_status_pings_each_source_and_target(tmp_path) -> None:
@@ -553,9 +553,9 @@ def test_sync_list_status_pings_each_source_and_target(tmp_path) -> None:
     assert code == 0
     assert err == ""
     uris = (
-        "mongodb://user:secret@cluster.example/?retryWrites=true&serverSelectionTimeoutMS=5000",
-        "mongodb://user:secret@127.0.0.1:27017/?serverSelectionTimeoutMS=5000",
-        "mongodb://user:secret@t2.example:27017/?serverSelectionTimeoutMS=5000",
+        "mongodb://user:secret@cluster.example/?retryWrites=true&serverSelectionTimeoutMS=3000",
+        "mongodb://user:secret@127.0.0.1:27017/?serverSelectionTimeoutMS=3000",
+        "mongodb://user:secret@t2.example:27017/?serverSelectionTimeoutMS=3000",
     )
     # probes run concurrently, so only the set of calls is fixed
     assert sorted(fake.calls) == sorted(
@@ -964,7 +964,7 @@ def test_interrupt_without_backup_signals_nothing_to_restore() -> None:
 def test_sync_mongodb_syncs_the_selected_database(tmp_path) -> None:
     code, _out, err, fake = _drive(
         tmp_path,
-        ["sync", "mongodb", "-s", "1", "-d", "1", "-db", "2"],
+        ["sync", "mongodb", "-s", "1", "-d", "1", "--db", "logs"],
         now=BACKUP_CLOCK,
     )
 
@@ -995,12 +995,13 @@ def test_sync_mongodb_defaults_to_the_first_database(tmp_path, alias: str) -> No
 
 def test_sync_mongodb_database_index_out_of_range_exits_one_without_ping(tmp_path) -> None:
     code, _out, err, fake = _drive(
-        tmp_path, ["sync", "mongodb", "-s", "1", "-d", "1", "-db", "3"]
+        tmp_path, ["sync", "mongodb", "-s", "1", "-d", "1", "--db", "3"]
     )
 
     assert code == 1
     assert fake.calls == []  # no ping, no probe
-    assert "Invalid MongoDB database index: 3" in err
+    assert "Unknown MongoDB database: 3" in err
+    assert "Available databases: app, logs" in err
 
 
 @pytest.mark.parametrize(
@@ -1130,8 +1131,8 @@ def _mongo_list_index(fake: FakeAll) -> int:
     )
 
 
-def test_sync_clear_lists_postgres_backups_before_mongo(tmp_path) -> None:
-    code, _out, err, fake = _drive_all(tmp_path, ["sync", "-c"])
+def test_clean_lists_postgres_backups_before_mongo(tmp_path) -> None:
+    code, _out, err, fake = _drive_all(tmp_path, ["clean"])
 
     assert code == 0
     assert err == ""
@@ -1144,16 +1145,17 @@ def test_sync_clear_lists_postgres_backups_before_mongo(tmp_path) -> None:
     assert "left(datname" not in query
 
 
-def test_sync_clear_with_clear_backups_spelling(tmp_path) -> None:
-    code, _out, _err, fake = _drive_all(tmp_path, ["sync", "--clear-backups"])
+def test_clean_mongodb_runs_only_the_mongo_half(tmp_path) -> None:
+    code, _out, _err, fake = _drive_all(tmp_path, ["clean", "mongo"])
 
     assert code == 0
     assert _mongo_list_index(fake) >= 0
+    assert not any(argv[0] == PSQL for argv in fake.calls)
 
 
-def test_sync_clear_runs_mongo_after_postgres_failure(tmp_path) -> None:
+def test_clean_runs_mongo_after_postgres_failure(tmp_path) -> None:
     code, _out, err, fake = _drive_all(
-        tmp_path, ["sync", "-c"], pg_list_fail_hosts=frozenset({"pgt.example"})
+        tmp_path, ["clean"], pg_list_fail_hosts=frozenset({"pgt.example"})
     )
 
     assert code == 1
@@ -1161,8 +1163,8 @@ def test_sync_clear_runs_mongo_after_postgres_failure(tmp_path) -> None:
     assert "Failed to list" in err
 
 
-def test_sync_clear_without_postgres_targets_still_cleans_mongo(tmp_path) -> None:
-    code, out, err, fake = _drive_all(tmp_path, ["sync", "-c"], pg_targets=())
+def test_clean_without_postgres_targets_still_cleans_mongo(tmp_path) -> None:
+    code, out, err, fake = _drive_all(tmp_path, ["clean"], pg_targets=())
 
     assert code == 0
     assert err == ""
@@ -1172,9 +1174,9 @@ def test_sync_clear_without_postgres_targets_still_cleans_mongo(tmp_path) -> Non
     assert "No PostgreSQL targets configured" in out
 
 
-def test_sync_clear_without_any_targets_returns_zero(tmp_path) -> None:
+def test_clean_without_any_targets_returns_zero(tmp_path) -> None:
     code, out, _err, fake = _drive_all(
-        tmp_path, ["sync", "-c"], pg_targets=(), mongo_targets=()
+        tmp_path, ["clean"], pg_targets=(), mongo_targets=()
     )
 
     assert code == 0
@@ -1182,16 +1184,16 @@ def test_sync_clear_without_any_targets_returns_zero(tmp_path) -> None:
     assert "No PostgreSQL or MongoDB targets configured" in out
 
 
-def test_sync_clear_without_mongo_targets_returns_zero(tmp_path) -> None:
-    code, _out, _err, fake = _drive_all(tmp_path, ["sync", "-c"], mongo_targets=())
+def test_clean_without_mongo_targets_returns_zero(tmp_path) -> None:
+    code, _out, _err, fake = _drive_all(tmp_path, ["clean"], mongo_targets=())
 
     assert code == 0
     assert _pg_list_index(fake) >= 0
     assert not any(argv[0] == MONGOSH for argv in fake.calls)
 
 
-def test_sync_clear_applies_dry_run_to_both_halves(tmp_path) -> None:
-    code, out, err, fake = _drive_all(tmp_path, ["sync", "-c", "-n"])
+def test_clean_applies_dry_run_to_both_halves(tmp_path) -> None:
+    code, out, err, fake = _drive_all(tmp_path, ["clean", "-n"])
 
     assert code == 0
     assert err == ""

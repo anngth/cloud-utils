@@ -27,7 +27,7 @@ def test_help_exits_zero(argv: list[str]) -> None:
 
 def test_help_lists_every_command() -> None:
     _code, out, _err = run(["help"])
-    names = ("config", "connect", "disconnect", "list", "status", "sync")
+    names = ("clean", "completion", "config", "connect", "disconnect", "list", "status", "sync")
     nested = ("sync list", "sync postgres", "sync mongodb")  # the group's commands, one level in
     for name in names + nested:
         assert f"\n  {name} " in out
@@ -86,13 +86,13 @@ def test_config_shows_every_section_with_credentials_masked(tmp_path) -> None:
     assert code == 0
     assert err == ""
     assert out.startswith(f"Secrets file: {tmp_path / 'secrets.toml'}\n")
-    assert "🔀 Tunnels (1):\n  1) a: me@10.0.0.1  postgres  :5432 -> db.internal:5432\n" in out
-    assert "🐘 PostgreSQL sources (1):\n  1) prod → app  postgresql://***@h:5432/app\n" in out
+    assert "🔀 Tunnels (1):\n  1) a: postgres | :5432 -> db.internal:5432  me@10.0.0.1\n" in out
+    assert "🐘 PostgreSQL Sources (1):\n  1) prod → app | postgresql://***@h:5432/app\n" in out
     assert (
-        "🎯 PostgreSQL targets (1):\n  1) one  postgresql://***@t.example:5432/postgres\n" in out
+        "🎯 PostgreSQL Targets (1):\n  1) one | postgresql://***@t.example:5432/postgres\n" in out
     )
-    assert "🍃 MongoDB sources (1):\n  1) m → app,logs  mongodb://***@h:27017\n" in out
-    assert "🎯 MongoDB targets (0):\n  (none)\n" in out
+    assert "🍃 MongoDB Sources (1):\n  1) m → app,logs | mongodb://***@h:27017\n" in out
+    assert "🎯 MongoDB Targets (0):\n  (none)\n" in out
     assert "s3cr3t" not in out
     assert "pw@" not in out
 
@@ -103,7 +103,22 @@ def test_config_path_prints_only_the_location(tmp_path) -> None:
 
 
 def test_config_rejects_other_arguments(tmp_path) -> None:
-    code, out, err = _config(tmp_path, ["edit"])
+    code, out, err = _config(tmp_path, ["frob"])
     assert (code, out) == (1, "")
-    assert "'edit'" in err
+    assert "'frob'" in err
     assert "Usage: dbt config" in err
+
+
+def test_config_edit_opens_the_file_in_the_editor(tmp_path, monkeypatch) -> None:
+    opened: list[object] = []
+    monkeypatch.setattr(cli, "_edit", opened.append)
+    code, out, err = _config(tmp_path, ["edit"])
+    assert (code, out, err) == (0, "", "")
+    assert opened == [tmp_path / "secrets.toml"]
+
+
+def test_completion_prints_the_zsh_script() -> None:
+    code, out, err = run(["completion", "zsh"])
+    assert (code, err) == (0, "")
+    assert "_DBT_COMPLETE=zsh_complete dbt" in out
+    assert "compdef" in out

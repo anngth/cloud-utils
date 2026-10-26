@@ -9,7 +9,7 @@ from __future__ import annotations
 import signal
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TextIO
+from typing import Literal, TextIO
 
 from .models import VpsTunnel
 from .runtime import Runtime
@@ -329,23 +329,25 @@ def disconnect_tunnels(
     return 1 if failed else 0
 
 
-def list_tunnels(
-    configured: Sequence[VpsTunnel],
-    *,
-    runtime: Runtime,
-    stdout: TextIO,
-    stderr: TextIO,
-    ssh_check: bool = False,
-) -> int:
-    """Show a status table for every tunnel row.
+@dataclass(frozen=True, slots=True)
+class TunnelState:
+    """One tunnel row with what currently listens on its local port."""
 
-    Without `ssh_check` no SSH call is made. With it, every DOWN row gets an
-    SSH column saying whether the preflight to its host succeeds (once per
-    user@host), so a DOWN tunnel can be told apart from a broken SSH login.
+    tunnel: VpsTunnel
+    status: Literal["UP", "DOWN", "BUSY"]
+    uptime: str = ""  # `ps etime` of our ssh, UP only
+    ssh: str = ""  # "ok" / "failed" from the SSH preflight, DOWN rows with `ssh_check` only
+
+
+def tunnel_states(
+    configured: Sequence[VpsTunnel], *, runtime: Runtime, ssh_check: bool = False
+) -> list[TunnelState]:
+    """Probe every tunnel row locally (one `lsof` snapshot, one `ps` per pid).
+
+    Without `ssh_check` no SSH call is made. With it, every DOWN row also gets
+    the SSH preflight result for its host (once per user@host), so a tunnel
+    that is merely closed can be told apart from a broken SSH login.
     """
-    tunnels = _select(configured, None)
-    if not tunnels:
-        return _nothing_configured(stdout)
     listeners = _Listeners(runtime)
     preflights: dict[tuple[str, str], str] = {}
 
@@ -356,31 +358,17 @@ def list_tunnels(
             preflights[key] = "ok" if result.returncode == 0 else "failed"
         return preflights[key]
 
-    stdout.write(
-        f"{'STATUS':<8}{'SERVICE':<20}{'LOCAL':<8}{'TARGET':<26}"
-        f"{'VIA':<10}{'IP':<18}{'UPTIME':<10}" + ("SSH\n" if ssh_check else "\n")
-    )
-    for tunnel in tunnels:
+    states: list[TunnelState] = []
+    for tunnel in _select(configured, None):
         state = listeners.state(tunnel.local_port)
-        ssh = "-"
         if state.listens and state.ours and state.pid is not None:
-            status = "UP"
-            uptime = _uptime(runtime, state.pid)
+            states.append(TunnelState(tunnel, "UP", uptime=_uptime(runtime, state.pid)))
         elif state.listens:
-            status = "BUSY"
-            uptime = "-"
+            states.append(TunnelState(tunnel, "BUSY"))
         else:
-            status = "DOWN"
-            uptime = "-"
-            if ssh_check:
-                ssh = ssh_result(tunnel)
-        target = f"{tunnel.target_host}:{tunnel.target_port}"
-        stdout.write(
-            f"{status:<8}{tunnel.service:<20}{f':{tunnel.local_port}':<8}"
-            f"{target:<26}{tunnel.name:<10}{tunnel.host:<18}"
-            + (f"{uptime:<10}{ssh}\n" if ssh_check else f"{uptime}\n")
-        )
-    return 0
+            ssh = ssh_result(tunnel) if ssh_check else ""
+            states.append(TunnelState(tunnel, "DOWN", ssh=ssh))
+    return states
 
 
 def _uptime(runtime: Runtime, pid: int) -> str:

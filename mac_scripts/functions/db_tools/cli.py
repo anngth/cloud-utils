@@ -6,31 +6,36 @@ import contextlib
 import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from functools import partial
 from pathlib import Path
-from typing import NoReturn, TextIO
+from typing import NoReturn, Protocol, TextIO
 
 import click
+from click.shell_completion import CompletionItem, ZshComplete
+from shared.selector import SelectorItem, SelectorState, run_selector
+from shared.streams import is_tty
 
 from .config import ConfigError, load_secrets, resolve_secrets_file
-from .models import MongoTarget, PostgresTarget, Secrets, VpsTunnel
-from .mongo import clear_mongo_backups, mongo_host, mongo_status, perform_mongo_sync
-from .postgres import (
-    clear_postgres_backups,
-    parse_postgres_url,
-    perform_postgres_sync,
-    postgres_status,
+from .listing import render_listing
+from .models import (
+    MongoSource,
+    MongoTarget,
+    PostgresSource,
+    PostgresTarget,
+    Secrets,
+    VpsTunnel,
 )
+from .mongo import clear_mongo_backups, perform_mongo_sync
+from .postgres import clear_postgres_backups, perform_postgres_sync, plan_postgres_sync
 from .runtime import Interrupted, Runtime, default_runtime
-from .secrets import SecretsError, redact
-from .tunnels import connect_tunnels, connection_hint, disconnect_tunnels, list_tunnels
+from .secrets import SecretsError
+from .tunnels import connect_tunnels, connection_hint, disconnect_tunnels
 
 _CONTEXT = {"help_option_names": ["-h", "--help"], "max_content_width": 100}
-_MAX_PROBES = 8
 _LIST_HINT = "   Use 'dbt sync list' to list available configurations\n"
-_INDEX_HELP = "1-based index from `dbt sync list`"
+_ROW_HELP = "name or 1-based index from `dbt sync list`"
+_POSTGRES_ALIASES = ("postgres", "postgresql", "pg")
+_MONGO_ALIASES = ("mongodb", "mongo")
 
 
 class _Fatal(click.ClickException):
@@ -71,6 +76,11 @@ class _App:
     @property
     def secrets_path(self) -> Path:
         return self.load()[0]
+
+    @property
+    def interactive(self) -> bool:
+        """True when a prompt or a selector can be shown."""
+        return is_tty(sys.stdin) and is_tty(self.stdout)
 
 
 class _Group(click.Group):
@@ -134,6 +144,135 @@ def run_cli(
     return int(result or 0)
 
 
+# --- interaction hooks (module level so tests can replace them) ---------------------
+
+
+def _pick(title: str, items: Sequence[SelectorItem], app: _App) -> str | None:
+    """Arrow-key selection of one item; None when cancelled."""
+
+    def render(state: SelectorState) -> None:
+        app.stdout.write(f"\n{title}  (↑/↓ move, Enter select, q cancel)\n\n")
+        for index, item in enumerate(state.items):
+            marker = "▶" if index == state.cursor else " "
+            app.stdout.write(f" {marker} {index + 1}) {item.label}\n")
+        app.stdout.flush()
+
+    result = run_selector(items, multiple=False, output=app.stdout, render=render)
+    return result.selected[0] if result.kind == "submit" and result.selected else None
+
+
+def _confirm(question: str) -> bool:
+    return bool(click.confirm(question, default=False))
+
+
+def _edit(path: Path) -> None:
+    click.edit(filename=str(path))
+
+
+# --- row selection ----------------------------------------------------------------
+
+
+class _Named(Protocol):
+    @property
+    def name(self) -> str: ...
+
+
+def _select[T: _Named](items: Sequence[T], text: str, kind: str, stderr: TextIO) -> T | None:
+    """The entry named `text`, or at that 1-based index; None after an error message."""
+    names = [item.name for item in items]
+    if text in names:
+        return items[names.index(text)]
+    try:
+        index = int(text)
+    except ValueError:
+        index = 0
+    if not 1 <= index <= len(items):
+        stderr.write(f"❌ Error: Unknown {kind}: {text}\n")
+        choices = ", ".join(f"{i}) {name}" for i, name in enumerate(names, start=1)) or "none"
+        stderr.write(f"   Available {kind.rsplit(' ', 1)[-1]}s: {choices}\n")
+        return None
+    return items[index - 1]
+
+
+def _choose[T: _Named](
+    items: Sequence[T],
+    text: str | None,
+    *,
+    kind: str,
+    flag: str,
+    label: Callable[[T], str],
+    app: _App,
+) -> T | None:
+    """Resolve `text` (name or index); when absent, pick interactively or explain."""
+    if text is not None:
+        return _select(items, text, kind, app.stderr)
+    if not items:
+        app.stderr.write(f"❌ Error: No {kind} configured\n")
+        return None
+    if not app.interactive:
+        app.stderr.write(f"❌ Error: {flag} is required outside a terminal\n" + _LIST_HINT)
+        return None
+    options = [SelectorItem(label(item), item.name) for item in items]
+    chosen = _pick(f"Select the {kind}", options, app)
+    if chosen is None:
+        app.stderr.write("Cancelled\n")
+        return None
+    return _select(items, chosen, kind, app.stderr)
+
+
+def _select_mongo_database(names: Sequence[str], text: str, stderr: TextIO) -> str | None:
+    """A database of the source row, by name or 1-based index."""
+    if text in names:
+        return text
+    try:
+        index = int(text)
+    except ValueError:
+        index = 0
+    if not 1 <= index <= len(names):
+        stderr.write(f"❌ Error: Unknown MongoDB database: {text}\n")
+        stderr.write(f"   Available databases: {', '.join(names)}\n")
+        return None
+    return names[index - 1]
+
+
+def _complete_rows(attribute: str) -> Callable[..., list[CompletionItem]]:
+    """Shell completion of `--from`/`--to` with the names in the secrets file."""
+
+    def complete(ctx: click.Context, _param: object, incomplete: str) -> list[CompletionItem]:
+        app = ctx.find_object(_App)
+        if app is None:
+            return []
+        try:
+            rows = getattr(app.secrets, attribute)
+        except click.ClickException:
+            return []
+        return [CompletionItem(row.name) for row in rows if row.name.startswith(incomplete)]
+
+    return complete
+
+
+def _source_option(attribute: str) -> Callable[[Callable[..., int]], Callable[..., int]]:
+    return click.option(
+        "-s",
+        "--source",
+        "--from",
+        "source",
+        help=f"Source row ({_ROW_HELP}).",
+        shell_complete=_complete_rows(attribute),
+    )
+
+
+def _target_option(attribute: str) -> Callable[[Callable[..., int]], Callable[..., int]]:
+    return click.option(
+        "-d",
+        "--destination",
+        "--to",
+        "target",
+        help=f"Target row ({_ROW_HELP}).",
+        shell_complete=_complete_rows(attribute),
+    )
+
+
 # --- top level ------------------------------------------------------------------
 
 
@@ -157,13 +296,28 @@ def help_command(ctx: click.Context) -> int:
     return 0
 
 
-@dbt.command("config", short_help="Show the secrets file, credentials masked.")
-@click.argument("what", type=click.Choice(["path"]), required=False)
+@dbt.command("config", short_help="Show the secrets file, credentials masked; `path`, `edit`.")
+@click.argument("what", type=click.Choice(["path", "edit"]), required=False)
 @click.pass_obj
 def config_command(app: _App, what: str | None) -> int:
-    """Show the secrets file, credentials masked; `path` prints only its location."""
-    return _config_cli(
-        app.secrets, path=app.secrets_path, only_path=what == "path", stdout=app.stdout
+    """Show the secrets file with credentials masked.
+
+    `dbt config path` prints only its location; `dbt config edit` opens it in $EDITOR.
+    """
+    if what == "path":
+        app.stdout.write(f"{app.secrets_path}\n")
+        return 0
+    if what == "edit":
+        _edit(app.secrets_path)
+        return 0
+    app.stdout.write(f"Secrets file: {app.secrets_path}\n\n")
+    return render_listing(
+        app.secrets,
+        runtime=app.runtime,
+        stdout=app.stdout,
+        detail="url",
+        tunnel_status=False,
+        probe=False,
     )
 
 
@@ -195,31 +349,135 @@ def disconnect_command(app: _App, service: str | None) -> int:
     )
 
 
-@dbt.command("list", short_help="Show every tunnel: UP, DOWN or BUSY (alias: ls).")
+@dbt.command("list", short_help="Show tunnels (UP/DOWN/BUSY) and every sync row (alias: ls).")
 @click.pass_obj
 def list_command(app: _App) -> int:
-    """Show every tunnel and whether it is UP, DOWN or BUSY (alias: ls)."""
-    return list_tunnels(
-        app.secrets.tunnels, runtime=app.runtime, stdout=app.stdout, stderr=app.stderr
+    """Show every tunnel with its local state and every database row with its index.
+
+    No network call is made; `dbt status` adds the connection probes.
+    """
+    return render_listing(
+        app.secrets,
+        runtime=app.runtime,
+        stdout=app.stdout,
+        detail="host",
+        tunnel_status=True,
+        probe=False,
     )
 
 
-@dbt.command("status", short_help="Tunnel status with SSH check, then probe every database.")
+@dbt.command("status", short_help="Like list, plus an SSH check on DOWN tunnels and DB probes.")
 @click.pass_obj
 def status_command(app: _App) -> int:
     """Show tunnel status (DOWN rows get an SSH check) and probe every database."""
-    tunnels_code = list_tunnels(
-        app.secrets.tunnels,
+    return render_listing(
+        app.secrets,
+        runtime=app.runtime,
+        stdout=app.stdout,
+        detail="host",
+        tunnel_status=True,
+        probe=True,
+        ssh_check=True,
+    )
+
+
+@dbt.command("completion", short_help="Print the shell completion script.")
+@click.argument("shell", type=click.Choice(["zsh"]))
+@click.pass_context
+def completion_command(ctx: click.Context, shell: str) -> int:
+    """Print the completion script; add `eval "$(dbt completion zsh)"` to ~/.zshrc."""
+    assert ctx.parent is not None
+    click.echo(ZshComplete(ctx.parent.command, {}, "dbt", "_DBT_COMPLETE").source())
+    return 0
+
+
+# --- clean ------------------------------------------------------------------------
+
+
+@dbt.command("clean", short_help="Delete `*_backup_*` databases on the targets (-n lists only).")
+@click.argument("engine", type=click.Choice([*_POSTGRES_ALIASES, *_MONGO_ALIASES]), required=False)
+@click.option("-n", "--dry-run", is_flag=True, help="List the backups without dropping them.")
+@_source_option("postgres_sources")
+@_target_option("postgres_targets")
+@click.pass_obj
+def clean_command(
+    app: _App, engine: str | None, dry_run: bool, source: str | None, target: str | None
+) -> int:
+    """Delete the `<database>_backup_YYYYMMDD_HHMMSS` databases a sync left behind.
+
+    Without ENGINE every PostgreSQL target is cleaned, then every MongoDB
+    target. `--from` limits the PostgreSQL cleanup to one source database
+    and `--to` to one target.
+    """
+    postgres = engine is None or engine in _POSTGRES_ALIASES
+    mongo = engine is None or engine in _MONGO_ALIASES
+    if (source or target) and not postgres:
+        raise click.UsageError("--from/--to only apply to PostgreSQL")
+    secrets = app.secrets
+    if not (postgres and secrets.postgres_targets) and not (mongo and secrets.mongo_targets):
+        engines = " or ".join(
+            name for name, on in (("PostgreSQL", postgres), ("MongoDB", mongo)) if on
+        )
+        app.stdout.write(f"ℹ️  No {engines} targets configured\n")
+        return 0
+
+    app.stdout.write("\n🧹 Backup Cleanup\n")
+    app.stdout.write("=================\n")
+    failed = False
+    if postgres:
+        code = _clean_postgres(app, source, target, dry_run=dry_run)
+        failed = failed or code == 1
+        if code == 2:
+            return 1
+    if mongo:
+        if secrets.mongo_targets:
+            app.stdout.write(f"  MongoDB targets: {len(secrets.mongo_targets)}\n\n")
+            failed = (
+                clear_mongo_backups(
+                    secrets.mongo_targets,
+                    dry_run=dry_run,
+                    runtime=app.runtime,
+                    stdout=app.stdout,
+                    stderr=app.stderr,
+                )
+                != 0
+            ) or failed
+        else:
+            app.stdout.write("ℹ️  No MongoDB targets configured\n")
+    return 1 if failed else 0
+
+
+def _clean_postgres(app: _App, source: str | None, target: str | None, *, dry_run: bool) -> int:
+    """0 ok, 1 a target failed, 2 a bad selection (nothing ran)."""
+    secrets = app.secrets
+    source_database: str | None = None
+    if source is not None:
+        row = _select(secrets.postgres_sources, source, "PostgreSQL source", app.stderr)
+        if row is None:
+            return 2
+        source_database = row.database
+    if target is not None:
+        chosen = _select(secrets.postgres_targets, target, "PostgreSQL target", app.stderr)
+        if chosen is None:
+            return 2
+        targets = [chosen]
+    else:
+        targets = list(secrets.postgres_targets)
+    if not targets:
+        app.stdout.write("ℹ️  No PostgreSQL targets configured\n\n")
+        return 0
+    label = targets[0].name if target is not None else f"all PostgreSQL targets ({len(targets)})"
+    app.stdout.write(f"  PostgreSQL: {label}\n")
+    scope = f"{source_database}_backup_*" if source_database else "*_backup_YYYYMMDD_HHMMSS"
+    app.stdout.write(f"  Scope: {scope}\n\n")
+    return clear_postgres_backups(
+        targets,
+        source_database=source_database,
+        dry_run=dry_run,
         runtime=app.runtime,
         stdout=app.stdout,
         stderr=app.stderr,
-        ssh_check=True,
     )
-    app.stdout.write("\n")
-    sync_code = _print_sync_configs(
-        app.secrets, status=True, runtime=app.runtime, stdout=app.stdout, stderr=app.stderr
-    )
-    return 1 if tunnels_code or sync_code else 0
 
 
 # --- sync -----------------------------------------------------------------------
@@ -228,498 +486,215 @@ def status_command(app: _App) -> int:
 @dbt.group(
     "sync",
     cls=_Group,
-    short_help="Sync PostgreSQL/MongoDB databases, or clean their backups.",
     aliases={"ls": "list", "postgresql": "postgres", "pg": "postgres", "mongo": "mongodb"},
-    invoke_without_command=True,
+    short_help="Sync a PostgreSQL or MongoDB database onto a target.",
 )
-@click.option(
-    "-c",
-    "--clear-backups",
-    is_flag=True,
-    help="Delete backup databases on every target: PostgreSQL first, then MongoDB.",
-)
-@click.option(
-    "-n", "--dry-run", is_flag=True, help="With -c: list the backups without dropping them."
-)
-@click.pass_context
-def sync_group(ctx: click.Context, clear_backups: bool, dry_run: bool) -> int:
-    """Sync PostgreSQL or MongoDB databases, or clean up their backups."""
-    if ctx.invoked_subcommand is not None:
-        if clear_backups or dry_run:
-            raise click.UsageError(
-                f"put -c/-n after the sync type: dbt sync {ctx.invoked_subcommand} -c [-n]", ctx
-            )
-        return 0
-    if not clear_backups:
-        raise click.UsageError("missing sync type: postgres, mongodb or list (or -c)", ctx)
-    app: _App = ctx.obj
-    return _clear_backups_cli(
-        app.secrets, dry_run=dry_run, runtime=app.runtime, stdout=app.stdout, stderr=app.stderr
-    )
+def sync_group() -> int:
+    """Sync a PostgreSQL or MongoDB database onto a target (backups: `dbt clean`)."""
+    return 0
 
 
-@sync_group.command("list")
+@sync_group.command("list", short_help="Show the sync rows with their indexes (alias: ls).")
 @click.option("--status", is_flag=True, help="Probe every connection.")
 @click.pass_obj
 def sync_list_command(app: _App, status: bool) -> int:
-    """Show sync entries with their indexes (alias: ls)."""
-    return _print_sync_configs(
-        app.secrets, status=status, runtime=app.runtime, stdout=app.stdout, stderr=app.stderr
+    """Show every source and target with the index `--from`/`--to` accept."""
+    return render_listing(
+        app.secrets,
+        runtime=app.runtime,
+        stdout=app.stdout,
+        detail="host",
+        tunnel_status=False,
+        probe=status,
     )
 
 
+def _sync_options(
+    source_attribute: str, target_attribute: str
+) -> Callable[[Callable[..., int]], Callable[..., int]]:
+    """`--from`, `--to`, `-y`, `-n`, `-v`: the options both sync commands share."""
+    options: list[Callable[[Callable[..., int]], Callable[..., int]]] = [
+        _source_option(source_attribute),
+        _target_option(target_attribute),
+        click.option("-y", "--yes", is_flag=True, help="Do not ask for confirmation."),
+        click.option("-n", "--dry-run", is_flag=True, help="Show what would happen and stop."),
+        click.option("-v", "--verbose", is_flag=True, help="Stream the client output."),
+    ]
+
+    def decorate(function: Callable[..., int]) -> Callable[..., int]:
+        for option in reversed(options):
+            function = option(function)
+        return function
+
+    return decorate
+
+
 @sync_group.command(
-    "postgres", short_help="Sync a PostgreSQL database onto a target, or clean backups."
+    "postgres", short_help="Sync a PostgreSQL database onto a target (aliases: postgresql, pg)."
 )
-@click.option("-s", "--source", help=f"Source row ({_INDEX_HELP}).")
-@click.option("-d", "--destination", help=f"Target row ({_INDEX_HELP}).")
-@click.option("-db", "--database", "database", help="Ignored: the source row names the database.")
-@click.option(
-    "-c", "--clear-backups", is_flag=True, help="Delete `*_backup_*` databases instead of syncing."
-)
-@click.option(
-    "-n", "--dry-run", is_flag=True, help="With -c: list the backups without dropping them."
-)
-@click.option("-v", "--verbose", is_flag=True, help="Stream pg_dump/pg_restore output.")
+@_sync_options("postgres_sources", "postgres_targets")
 @click.pass_obj
 def sync_postgres_command(
     app: _App,
     source: str | None,
-    destination: str | None,
-    database: str | None,
-    clear_backups: bool,
+    target: str | None,
+    yes: bool,
     dry_run: bool,
     verbose: bool,
 ) -> int:
-    """Sync a PostgreSQL database onto a target, or clean its backups (aliases: postgresql, pg).
+    """Sync a PostgreSQL database onto a target.
 
-    The target keeps the old database as `<name>_backup_YYYYMMDD_HHMMSS`;
-    `-c` drops those (scoped with -s/-d), `-n` only lists them.
+    The target keeps its old database as `<name>_backup_YYYYMMDD_HHMMSS`
+    until the sync succeeds (see `dbt clean`). Without --from/--to a
+    terminal gets a picker; a script must pass them.
     """
-    if database is not None:
-        app.stderr.write("ℹ️  -db is ignored for PostgreSQL; the source row names the database\n")
-    if clear_backups:
-        return _clear_postgres_backups_cli(
-            source,
-            destination,
-            dry_run=dry_run,
-            secrets=app.secrets,
-            runtime=app.runtime,
-            stdout=app.stdout,
-            stderr=app.stderr,
-        )
-    return _postgres_sync_cli(
+    secrets = app.secrets
+    chosen_target = _choose(
+        secrets.postgres_targets,
+        target,
+        kind="PostgreSQL target",
+        flag="--to",
+        label=_postgres_target_label,
+        app=app,
+    )
+    if chosen_target is None:
+        return 1
+    chosen_source = _choose(
+        secrets.postgres_sources,
         source,
-        destination,
+        kind="PostgreSQL source",
+        flag="--from",
+        label=_postgres_source_label,
+        app=app,
+    )
+    if chosen_source is None:
+        return 1
+    plan = plan_postgres_sync(chosen_source, chosen_target)
+    app.stdout.write("\n🐘 PostgreSQL Sync\n")
+    app.stdout.write("==================\n")
+    app.stdout.write(f"  From: {chosen_source.name} → Database: {chosen_source.database}\n")
+    app.stdout.write(f"  To: {chosen_target.name} → Database: {plan.target_database}\n")
+    app.stdout.write(f"  Backup: {plan.backup}\n")
+    app.stdout.write("\n")
+    if dry_run:
+        app.stdout.write("Dry run: nothing was changed\n")
+        return 0
+    if not yes and app.interactive:
+        question = (
+            f"Overwrite database '{plan.target_database}' on '{chosen_target.name}'"
+            f" with '{chosen_source.database}' from '{chosen_source.name}'?"
+        )
+        if not _confirm(question):
+            app.stdout.write("Cancelled\n")
+            return 1
+    return perform_postgres_sync(
+        chosen_source,
+        chosen_target,
         verbose=verbose,
-        secrets=app.secrets,
         runtime=app.runtime,
         stdout=app.stdout,
         stderr=app.stderr,
+        hint=_connection_hint(secrets.tunnels, app.runtime),
     )
 
 
 @sync_group.command("mongodb", short_help="Sync a MongoDB database onto a target (alias: mongo).")
-@click.option("-s", "--source", help=f"Source row ({_INDEX_HELP}).")
-@click.option("-d", "--destination", help=f"Target row ({_INDEX_HELP}).")
-@click.option(
-    "-db", "--database", "database", help="Database of the source row (1-based index, default 1)."
-)
-@click.option("-v", "--verbose", is_flag=True, help="Stream mongodump/mongorestore output.")
+@_sync_options("mongo_sources", "mongo_targets")
+@click.option("--db", "database", help="Database of the source row (name or index, default 1).")
 @click.pass_obj
 def sync_mongodb_command(
-    app: _App, source: str | None, destination: str | None, database: str | None, verbose: bool
+    app: _App,
+    source: str | None,
+    target: str | None,
+    yes: bool,
+    dry_run: bool,
+    verbose: bool,
+    database: str | None,
 ) -> int:
-    """Sync a MongoDB database onto a target (alias: mongo).
+    """Sync a MongoDB database onto a target.
 
-    The target keeps the old database as `<name>_backup_YYYYMMDD_HHMMSS`
-    and is restored from it when the sync fails.
+    The target keeps its old database as `<name>_backup_YYYYMMDD_HHMMSS`
+    and is restored from it when the sync fails. Without --from/--to a
+    terminal gets a picker; a script must pass them.
     """
-    return _mongo_sync_cli(
+    secrets = app.secrets
+    chosen_target = _choose(
+        secrets.mongo_targets,
+        target,
+        kind="MongoDB target",
+        flag="--to",
+        label=_mongo_target_label,
+        app=app,
+    )
+    if chosen_target is None:
+        return 1
+    chosen_source = _choose(
+        secrets.mongo_sources,
         source,
-        destination,
-        database,
+        kind="MongoDB source",
+        flag="--from",
+        label=_mongo_source_label,
+        app=app,
+    )
+    if chosen_source is None:
+        return 1
+    chosen_database = _select_mongo_database(
+        chosen_source.databases, database if database is not None else "1", app.stderr
+    )
+    if chosen_database is None:
+        return 1
+
+    app.stdout.write("\n🍃 MongoDB Sync\n")
+    app.stdout.write("==================\n")
+    app.stdout.write(f"  From: {chosen_source.name} → Database: {chosen_database}\n")
+    app.stdout.write(f"  To: {chosen_target.name} → Database: {chosen_database}\n")
+    app.stdout.write(
+        f"  Backup: {chosen_database}_backup_YYYYMMDD_HHMMSS when the target already has it\n"
+    )
+    app.stdout.write("\n")
+    if dry_run:
+        app.stdout.write("Dry run: nothing was changed\n")
+        return 0
+    if not yes and app.interactive:
+        question = (
+            f"Overwrite database '{chosen_database}' on '{chosen_target.name}'"
+            f" from '{chosen_source.name}'?"
+        )
+        if not _confirm(question):
+            app.stdout.write("Cancelled\n")
+            return 1
+    return perform_mongo_sync(
+        chosen_source.uri,
+        chosen_database,
+        chosen_target.uri,
         verbose=verbose,
-        secrets=app.secrets,
         runtime=app.runtime,
         stdout=app.stdout,
         stderr=app.stderr,
+        hint=_connection_hint(secrets.tunnels, app.runtime),
     )
 
 
-# --- secrets rows ---------------------------------------------------------------
+def _postgres_source_label(source: PostgresSource) -> str:
+    return f"{source.name} → {source.database}"
 
 
-def _select[T](items: Sequence[T], text: str, kind: str, stderr: TextIO) -> T | None:
-    """The entry at a 1-based index, or None after an error message."""
-    try:
-        index = int(text)
-    except ValueError:
-        index = 0
-    if not 1 <= index <= len(items):
-        stderr.write(f"❌ Error: Invalid {kind} index: {text}\n")
-        stderr.write(f"   Available {kind.rsplit(' ', 1)[-1]}s: 1-{len(items)}\n")
-        return None
-    return items[index - 1]
+def _postgres_target_label(target: PostgresTarget) -> str:
+    return target.name
 
 
-def _status_icon(status: bool | None) -> str:
-    if status is None:
-        return "⚪ "
-    return "🟢 " if status else "🔴 "
+def _mongo_source_label(source: MongoSource) -> str:
+    return f"{source.name} → {','.join(source.databases)}"
 
 
-# --- sync list ------------------------------------------------------------------
-
-
-def _print_sync_configs(
-    secrets: Secrets,
-    *,
-    status: bool,
-    runtime: Runtime,
-    stdout: TextIO,
-    stderr: TextIO,
-) -> int:
-    """Show sync entries with 1-based indexes; --status probes every entry at once."""
-    sources = secrets.postgres_sources
-    targets = secrets.postgres_targets
-    mongo_sources = secrets.mongo_sources
-    mongo_targets = secrets.mongo_targets
-
-    probes: list[Callable[[], bool | None]] = []
-    if status:
-        probes += [
-            partial(postgres_status, s.url, runtime=runtime, database=s.database)
-            for s in sources
-        ]
-        probes += [partial(postgres_status, t.url, runtime=runtime) for t in targets]
-        probes += [partial(mongo_status, s.uri, runtime=runtime) for s in mongo_sources]
-        probes += [partial(mongo_status, t.uri, runtime=runtime) for t in mongo_targets]
-    results = iter(_probe_all(probes))
-    counts: dict[bool | None, int] = {True: 0, False: 0, None: 0}
-
-    def mark() -> str:
-        if not status:
-            return ""
-        result = next(results)
-        counts[result] += 1
-        return _status_icon(result)
-
-    stdout.write(f"🐘 PostgreSQL Sources ({len(sources)}):\n")
-    for index, source in enumerate(sources, start=1):
-        host = parse_postgres_url(source.url).host
-        stdout.write(f"  {mark()}{index}) {source.name} → {source.database} | {host}\n")
-    if not sources:
-        stdout.write("  (No PostgreSQL sources configured)\n")
-
-    stdout.write(f"\n🎯 PostgreSQL Targets ({len(targets)}):\n")
-    for index, target in enumerate(targets, start=1):
-        url = parse_postgres_url(target.url)
-        ssl = "require" if url.sslmode_require else "disable"
-        stdout.write(f"  {mark()}{index}) {target.name} | {url.host} [SSL: {ssl}]\n")
-    if not targets:
-        stdout.write("  (No PostgreSQL targets configured)\n")
-
-    stdout.write(f"\n🍃 MongoDB Sources ({len(mongo_sources)}):\n")
-    for index, msource in enumerate(mongo_sources, start=1):
-        stdout.write(
-            f"  {mark()}{index}) {msource.name} → {','.join(msource.databases)}"
-            f" | {mongo_host(msource.uri)}\n"
-        )
-    if not mongo_sources:
-        stdout.write("  (No MongoDB sources configured)\n")
-
-    stdout.write(f"\n🎯 MongoDB Targets ({len(mongo_targets)}):\n")
-    for index, mtarget in enumerate(mongo_targets, start=1):
-        stdout.write(f"  {mark()}{index}) {mtarget.name} | {mongo_host(mtarget.uri)}\n")
-    if not mongo_targets:
-        stdout.write("  (No MongoDB targets configured)\n")
-
-    stdout.write("\n")
-    if status and probes:
-        summary = f"Summary: 🟢 {counts[True]} connected  |  🔴 {counts[False]} disconnected"
-        if counts[None]:
-            summary += f"  |  ⚪ {counts[None]} unknown (client not installed)"
-        stdout.write(summary + "\n")
-    return 0
-
-
-def _probe_all(probes: Sequence[Callable[[], bool | None]]) -> list[bool | None]:
-    """Run every probe concurrently; results keep the probes' order."""
-    if not probes:
-        return []
-    with ThreadPoolExecutor(max_workers=min(len(probes), _MAX_PROBES)) as pool:
-        return list(pool.map(lambda probe: probe(), probes))
+def _mongo_target_label(target: MongoTarget) -> str:
+    return target.name
 
 
 def _connection_hint(
     tunnels: Sequence[VpsTunnel], runtime: Runtime
 ) -> Callable[[str, int], str]:
     return lambda host, port: connection_hint(tunnels, host, port, runtime=runtime)
-
-
-# --- sync postgres --------------------------------------------------------------
-
-
-def _postgres_sync_cli(
-    source_text: str | None,
-    destination_text: str | None,
-    *,
-    verbose: bool,
-    secrets: Secrets,
-    runtime: Runtime,
-    stdout: TextIO,
-    stderr: TextIO,
-) -> int:
-    if destination_text is None:
-        stderr.write("❌ Error: PostgreSQL sync requires --destination\n" + _LIST_HINT)
-        return 1
-    if source_text is None:
-        stderr.write("❌ Error: PostgreSQL sync requires --source\n" + _LIST_HINT)
-        return 1
-    destination = _select(
-        secrets.postgres_targets,
-        destination_text,
-        "PostgreSQL destination",
-        stderr,
-    )
-    if destination is None:
-        return 1
-    source = _select(
-        secrets.postgres_sources,
-        source_text,
-        "PostgreSQL source",
-        stderr,
-    )
-    if source is None:
-        return 1
-    stdout.write("\n🐘 PostgreSQL Sync\n")
-    stdout.write("==================\n")
-    stdout.write(f"  From: {source.name} → Database: {source.database}\n")
-    stdout.write(f"  To: {destination.name}\n")
-    stdout.write("\n")
-    return perform_postgres_sync(
-        source,
-        destination,
-        verbose=verbose,
-        runtime=runtime,
-        stdout=stdout,
-        stderr=stderr,
-        hint=_connection_hint(secrets.tunnels, runtime),
-    )
-
-
-def _clear_postgres_backups_cli(
-    source_text: str | None,
-    destination_text: str | None,
-    *,
-    dry_run: bool,
-    secrets: Secrets,
-    runtime: Runtime,
-    stdout: TextIO,
-    stderr: TextIO,
-) -> int:
-    source_database: str | None = None
-    if source_text is not None:
-        source = _select(
-            secrets.postgres_sources,
-            source_text,
-            "PostgreSQL source",
-            stderr,
-        )
-        if source is None:
-            return 1
-        source_database = source.database
-
-    if destination_text is not None:
-        target = _select(
-            secrets.postgres_targets,
-            destination_text,
-            "PostgreSQL destination",
-            stderr,
-        )
-        if target is None:
-            return 1
-        destinations = [target]
-    else:
-        destinations = list(secrets.postgres_targets)
-        if not destinations:
-            stdout.write("ℹ️  No PostgreSQL targets configured\n")
-            return 0
-
-    stdout.write("\n🧹 PostgreSQL Backup Cleanup\n")
-    stdout.write("============================\n")
-    if destination_text is not None:
-        stdout.write(f"  Target: {destinations[0].name}\n")
-    else:
-        stdout.write(f"  Target: all PostgreSQL targets ({len(destinations)})\n")
-    if source_database:
-        stdout.write(f"  Scope: {source_database}_backup_*\n")
-    else:
-        stdout.write("  Scope: *_backup_YYYYMMDD_HHMMSS\n")
-    stdout.write("\n")
-    return clear_postgres_backups(
-        destinations,
-        source_database=source_database,
-        dry_run=dry_run,
-        runtime=runtime,
-        stdout=stdout,
-        stderr=stderr,
-    )
-
-
-# --- sync mongodb ---------------------------------------------------------------
-
-
-def _mongo_sync_cli(
-    source_text: str | None,
-    destination_text: str | None,
-    database_text: str | None,
-    *,
-    verbose: bool,
-    secrets: Secrets,
-    runtime: Runtime,
-    stdout: TextIO,
-    stderr: TextIO,
-) -> int:
-    if destination_text is None:
-        stderr.write("❌ Error: MongoDB sync requires --destination\n" + _LIST_HINT)
-        return 1
-    if source_text is None:
-        stderr.write("❌ Error: MongoDB sync requires --source\n" + _LIST_HINT)
-        return 1
-
-    source = _select(
-        secrets.mongo_sources, source_text, "MongoDB source", stderr
-    )
-    if source is None:
-        return 1
-    target = _select(
-        secrets.mongo_targets,
-        destination_text,
-        "MongoDB destination",
-        stderr,
-    )
-    if target is None:
-        return 1
-    database = _select_mongo_database(
-        source.databases, database_text if database_text is not None else "1", stderr
-    )
-    if database is None:
-        return 1
-
-    stdout.write("\n🍃 MongoDB Sync\n")
-    stdout.write("==================\n")
-    stdout.write(f"  From: {source.name} → Database: {database}\n")
-    stdout.write(f"  To: {target.name}\n")
-    stdout.write("\n")
-    return perform_mongo_sync(
-        source.uri,
-        database,
-        target.uri,
-        verbose=verbose,
-        runtime=runtime,
-        stdout=stdout,
-        stderr=stderr,
-        hint=_connection_hint(secrets.tunnels, runtime),
-    )
-
-
-def _select_mongo_database(names: Sequence[str], text: str, stderr: TextIO) -> str | None:
-    """1-based index into the source's database list."""
-    try:
-        index = int(text)
-    except ValueError:
-        index = 0
-    if not 1 <= index <= len(names):
-        stderr.write(f"❌ Error: Invalid MongoDB database index: {text}\n")
-        stderr.write(f"   Available databases: 1-{len(names)}\n")
-        return None
-    return names[index - 1]
-
-
-# --- sync -c --------------------------------------------------------------------
-
-
-def _clear_backups_cli(
-    secrets: Secrets,
-    *,
-    dry_run: bool,
-    runtime: Runtime,
-    stdout: TextIO,
-    stderr: TextIO,
-) -> int:
-    """`sync -c [-n]`: clean Postgres targets, then Mongo targets."""
-    targets: Sequence[PostgresTarget] = secrets.postgres_targets
-    mongo_targets: Sequence[MongoTarget] = secrets.mongo_targets
-    if not targets and not mongo_targets:
-        stdout.write("ℹ️  No PostgreSQL or MongoDB targets configured\n")
-        return 0
-
-    stdout.write("\n🧹 Backup Cleanup\n")
-    stdout.write("=================\n")
-    stdout.write(f"  PostgreSQL targets: {len(targets)}\n")
-    stdout.write(f"  MongoDB targets: {len(mongo_targets)}\n")
-    stdout.write("\n")
-    # An engine with no targets is a notice; the other still runs.
-    postgres_code = 0
-    if targets:
-        postgres_code = clear_postgres_backups(
-            targets,
-            source_database=None,
-            dry_run=dry_run,
-            runtime=runtime,
-            stdout=stdout,
-            stderr=stderr,
-        )
-    else:
-        stdout.write("ℹ️  No PostgreSQL targets configured\n\n")
-    mongo_code = 0
-    if mongo_targets:
-        mongo_code = clear_mongo_backups(
-            mongo_targets, dry_run=dry_run, runtime=runtime, stdout=stdout, stderr=stderr
-        )
-    else:
-        stdout.write("ℹ️  No MongoDB targets configured\n")
-    return 1 if postgres_code or mongo_code else 0
-
-
-# --- config ----------------------------------------------------------------------
-
-
-def _config_cli(secrets: Secrets, *, path: Path, only_path: bool, stdout: TextIO) -> int:
-    """`dbt config` shows the file with credentials masked; `dbt config path` only its path."""
-    if only_path:
-        stdout.write(f"{path}\n")
-        return 0
-
-    stdout.write(f"Secrets file: {path}\n")
-    sections: list[tuple[str, list[str]]] = [
-        (
-            "🔀 Tunnels",
-            [
-                f"{t.name}: {t.user}@{t.host}  {t.service}"
-                f"  :{t.local_port} -> {t.target_host}:{t.target_port}"
-                for t in secrets.tunnels
-            ],
-        ),
-        (
-            "🐘 PostgreSQL sources",
-            [f"{s.name} → {s.database}  {redact(s.url)}" for s in secrets.postgres_sources],
-        ),
-        ("🎯 PostgreSQL targets", [f"{t.name}  {redact(t.url)}" for t in secrets.postgres_targets]),
-        (
-            "🍃 MongoDB sources",
-            [f"{s.name} → {','.join(s.databases)}  {redact(s.uri)}" for s in secrets.mongo_sources],
-        ),
-        ("🎯 MongoDB targets", [f"{t.name}  {redact(t.uri)}" for t in secrets.mongo_targets]),
-    ]
-    for title, lines in sections:
-        stdout.write(f"\n{title} ({len(lines)}):\n")
-        stdout.writelines(f"  {index}) {line}\n" for index, line in enumerate(lines, start=1))
-        if not lines:
-            stdout.write("  (none)\n")
-    return 0
 
 
 def main() -> NoReturn:

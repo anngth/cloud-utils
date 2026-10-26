@@ -32,7 +32,7 @@ MONGO_PING_SCRIPT = "db.adminCommand('ping')"
 _BACKUP_NAME = re.compile(r"^[^\s/\\.\"$*<>:|?]+_backup_[0-9]{8}_[0-9]{6}$")
 
 _CLIENT_NAMES = ("mongosh",)
-_SERVER_SELECTION_TIMEOUT = "serverSelectionTimeoutMS=5000"
+_SERVER_SELECTION_TIMEOUT_MS = 5000
 
 _TOOLS_NOT_FOUND = (
     "❌ Error: MongoDB client tools not found (dbt needs mongosh; the legacy"
@@ -79,21 +79,24 @@ def mongo_port(uri: str) -> int:
     return int(port) if port.isdigit() else 27017
 
 
-def with_server_selection_timeout(uri: str) -> str:
-    """Add a 5s server-selection timeout unless the URI already sets one."""
+def with_server_selection_timeout(
+    uri: str, timeout_ms: int = _SERVER_SELECTION_TIMEOUT_MS
+) -> str:
+    """Add a server-selection timeout (5s by default) unless the URI sets one."""
     if "serverselectiontimeoutms=" in uri.lower():
         return uri
+    timeout = f"serverSelectionTimeoutMS={timeout_ms}"
     scheme, sep, rest = uri.partition("://")
     if not sep:
         return uri
     credentials, at, endpoint = rest.rpartition("@")
     if "?" in endpoint:
         base, query = endpoint.split("?", 1)
-        query = f"{query}&{_SERVER_SELECTION_TIMEOUT}" if query else _SERVER_SELECTION_TIMEOUT
+        query = f"{query}&{timeout}" if query else timeout
         endpoint = f"{base}?{query}"
     else:
         slash = "" if "/" in endpoint else "/"
-        endpoint = f"{endpoint}{slash}?{_SERVER_SELECTION_TIMEOUT}"
+        endpoint = f"{endpoint}{slash}?{timeout}"
     return f"{scheme}://{credentials}{at}{endpoint}"
 
 
@@ -132,20 +135,31 @@ def find_mongo_tools(runtime: Runtime) -> MongoTools | None:
 
 
 def mongo_eval_argv(
-    client: str, uri: str, database: str | None, script: str
+    client: str,
+    uri: str,
+    database: str | None,
+    script: str,
+    *,
+    timeout_ms: int = _SERVER_SELECTION_TIMEOUT_MS,
 ) -> tuple[list[str], dict[str, str]]:
     """Build one `--eval` invocation; the database rides in env only."""
-    argv = [client, with_server_selection_timeout(uri), "--quiet", "--eval", script]
+    argv = [client, with_server_selection_timeout(uri, timeout_ms), "--quiet", "--eval", script]
     env = {} if database is None else {"DBT_MONGO_DB": database}
     return argv, env
 
 
-def mongo_status(uri: str, *, runtime: Runtime) -> bool | None:
-    """Ping with the fixed script; None when mongosh is not installed."""
+def mongo_status(uri: str, *, runtime: Runtime, timeout_ms: int | None = None) -> bool | None:
+    """Ping with the fixed script; None when mongosh is not installed.
+
+    `timeout_ms` replaces the default server-selection timeout for a quick probe.
+    """
     client = _find_client(runtime)
     if client is None:
         return None
-    argv, env = mongo_eval_argv(client, uri, None, MONGO_PING_SCRIPT)
+    argv, env = mongo_eval_argv(
+        client, uri, None, MONGO_PING_SCRIPT,
+        timeout_ms=timeout_ms if timeout_ms is not None else _SERVER_SELECTION_TIMEOUT_MS,
+    )
     return runtime.run_command(argv, env=env).returncode == 0
 
 
