@@ -18,7 +18,7 @@ from typing import TextIO
 from shared.process import CommandResult
 
 from .models import PostgresSource, PostgresTarget
-from .runtime import Runtime
+from .runtime import Runtime, run_with_interrupts
 
 _BACKUP_SUFFIX = "_backup_[0-9]{8}_[0-9]{6}$"
 _LIBPQ_BIN = "/opt/homebrew/opt/libpq/bin"
@@ -302,6 +302,17 @@ def _first_error_line(stderr_text: str) -> str:
     return ""
 
 
+def _error_lines(stderr_text: str, limit: int) -> list[str]:
+    lines = [line.strip() for line in stderr_text.splitlines() if line.strip()]
+    return lines[:limit]
+
+
+# Servers up to 16 reject this GUC; only statements go, never COPY data.
+_TRANSACTION_TIMEOUT_LINE = re.compile(
+    rb"^\s*(?:SET|ALTER\s+(?:DATABASE|ROLE)\b[^\n]*?\bSET)\s+transaction_timeout\b"
+)
+
+
 def _major_version(version_text: str) -> str:
     """Return the client/server major number, `""` when unreadable."""
     match = re.search(r"PostgreSQL\s+(\d+)", version_text)
@@ -309,15 +320,10 @@ def _major_version(version_text: str) -> str:
 
 
 def _strip_transaction_timeout(source_path: str, destination_path: str) -> None:
-    """Copy one plain-SQL dump, dropping `transaction_timeout` statements.
-
-    Line by line, so a multi-GB dump never has to live in memory.
-    """
-    with open(source_path, encoding="utf-8") as source, open(
-        destination_path, "w", encoding="utf-8"
-    ) as destination:
+    """Copy a plain-SQL dump without `transaction_timeout` statements (bytes, streamed)."""
+    with open(source_path, "rb") as source, open(destination_path, "wb") as destination:
         for line in source:
-            if "transaction_timeout" not in line:
+            if _TRANSACTION_TIMEOUT_LINE.match(line) is None:
                 destination.write(line)
 
 
@@ -332,14 +338,31 @@ def perform_postgres_sync(
 ) -> int:
     """Restore `source.database` onto the target, keeping the old one.
 
-    The signal handler is bound only once the target content is safely
-    preserved and unbound again before this function returns. Sync
-    progress and errors go to stdout; missing client tools go to stderr.
+    The rollback handler is bound only once the target is preserved and
+    runs only after an interrupted dump/restore is dead.
     """
     tools = find_postgres_tools(runtime)
     if tools is None:
         stderr.write(_TOOLS_NOT_FOUND)
         return 1
+    return run_with_interrupts(
+        runtime,
+        lambda: _sync(
+            source, target, tools, verbose=verbose, runtime=runtime, stdout=stdout, stderr=stderr
+        ),
+    )
+
+
+def _sync(
+    source: PostgresSource,
+    target: PostgresTarget,
+    tools: PostgresTools,
+    *,
+    verbose: bool,
+    runtime: Runtime,
+    stdout: TextIO,
+    stderr: TextIO,
+) -> int:
     src = parse_postgres_url(source.url)
     tgt = parse_postgres_url(target.url)
     src_env = _child_env(src)
@@ -384,6 +407,21 @@ def perform_postgres_sync(
         if message:
             stdout.write(f"   Error: {message}\n")
 
+    def stream_command(argv: Sequence[str], **kwargs: object) -> CommandResult:
+        return runtime.run_command(
+            argv, stream=verbose, stdout=stdout, stderr=stderr, **kwargs
+        )
+
+    def report_step_failure(step: str, result: CommandResult, limit: int) -> None:
+        stdout.write(f"❌ {step} failed (exit code {result.returncode})\n")
+        lines = _error_lines(result.stderr, limit)
+        if lines:
+            stdout.write(f"   {step} errors:\n")
+            for line in lines:
+                stdout.write(f"     {line}\n")
+        if not verbose:
+            stdout.write("   Run again with --verbose for the full output\n")
+
     def report_dump_backup(ok: bool, error_text: str, dump_file: str) -> None:
         if ok:
             stdout.write("✅ Dump backup restored successfully\n")
@@ -397,15 +435,12 @@ def perform_postgres_sync(
             if message:
                 stdout.write(f"   Error: {message}\n")
 
-    def unbind() -> None:
-        runtime.signals.bind(None)
-
     def restore_dump_backup(database: str, backup_file: str) -> tuple[bool, str]:
         """Best effort: wipe the public schema, then pg_restore the file."""
         cleanup = psql(tgt, ["-c", _SCHEMA_SQL], env=tgt_env, database=database)
         if cleanup.returncode != 0:
             return False, cleanup.stderr
-        restore = runtime.run_command(
+        restore = stream_command(
             [tools.pg_restore]
             + (["--verbose"] if verbose else [])
             + [
@@ -461,7 +496,6 @@ def perform_postgres_sync(
             stdout.write(f"🔄 Restoring backup database '{backup_db}'...\n")
             drop_database(tgt_db_name)
             report_backup_database(backup_db, rename_two_way(backup_db, tgt_db_name))
-            unbind()
             return 130
 
         return handler
@@ -472,7 +506,6 @@ def perform_postgres_sync(
             stdout.write("🔄 Restoring dump backup...\n")
             ok, error_text = restore_dump_backup(tgt_db_name, backup_file)
             report_dump_backup(ok, error_text, backup_file)
-            unbind()
             return 130
 
         return handler
@@ -510,7 +543,6 @@ def perform_postgres_sync(
         if renamed.returncode != 0:
             stdout.write(f"❌ Failed to backup existing database '{tgt_db_name}'\n")
             report_error(renamed)
-            unbind()
             return None
         # The target is now safely preserved; bind interrupt recovery.
         runtime.signals.bind(interrupt_restore_backup_database(backup_db))
@@ -530,7 +562,6 @@ def perform_postgres_sync(
             if backup_db:
                 stdout.write("🔄 Attempting to restore backup...\n")
                 report_backup_database(backup_db, rename_two_way(backup_db, tgt_db_name))
-            unbind()
             return 1
         return 0
 
@@ -540,7 +571,7 @@ def perform_postgres_sync(
             f"💾 Backing up target database '{tgt_db_name}' before schema cleanup...\n"
         )
         backup_file = new_dump_file()
-        backed = runtime.run_command(
+        backed = stream_command(
             [tools.pg_dump]
             + (["-v"] if verbose else [])
             + [
@@ -564,7 +595,6 @@ def perform_postgres_sync(
             stdout.write("❌ Failed to backup target database before cleanup\n")
             report_error(backed)
             discard(backup_file)
-            unbind()
             return None
         runtime.signals.bind(interrupt_restore_dump_file(backup_file))
         stdout.write("✅ Backup file created\n")
@@ -581,7 +611,6 @@ def perform_postgres_sync(
             stdout.write("🔄 Restoring dump backup...\n")
             ok, error_text = restore_dump_backup(tgt_db_name, backup_file)
             report_dump_backup(ok, error_text, backup_file)
-            unbind()
             return None
         return backup_file
 
@@ -598,9 +627,7 @@ def perform_postgres_sync(
             stdout.write(f"   Source version: PostgreSQL {source_version}\n")
         if target_version:
             stdout.write(f"   Target version: PostgreSQL {target_version}\n")
-        # The shell port showed a dots spinner during the dump and restore;
-        # the Runtime surface has no spinner hook, so progress stays
-        # invisible in captured (non-stream) mode.
+        # No spinner: without --verbose the dump/restore is silent.
         dump_argv = (
             [tools.pg_dump]
             + (["-v"] if verbose else [])
@@ -615,7 +642,7 @@ def perform_postgres_sync(
                 dump_path = new_dump_file()
                 sql_path = new_dump_file()
                 try:
-                    dump = runtime.run_command(
+                    dump = stream_command(
                         dump_argv
                         + [
                             "--no-owner",
@@ -628,9 +655,10 @@ def perform_postgres_sync(
                         env=src_env,
                     )
                     if dump.returncode != 0:
+                        report_step_failure("Dump", dump, limit=5)
                         return dump.returncode or 1
                     _strip_transaction_timeout(dump_path, sql_path)
-                    restored = runtime.run_command(
+                    restored = stream_command(
                         [tools.psql, "-h", tgt.host, "-p", tgt.port, "-U", tgt.user]
                         + ["-d", tgt_db_name]
                         + ([] if verbose else ["-q"]),
@@ -639,6 +667,7 @@ def perform_postgres_sync(
                     )
                     restore_error_inner = restored.stderr
                     if restored.returncode != 0:
+                        report_step_failure("Restore", restored, limit=10)
                         return restored.returncode or 1
                 finally:
                     discard(dump_path)
@@ -646,12 +675,13 @@ def perform_postgres_sync(
             else:
                 dump_file = new_dump_file()
                 try:
-                    dump = runtime.run_command(
+                    dump = stream_command(
                         dump_argv + ["-Fc", "-f", dump_file], env=src_env
                     )
                     if dump.returncode != 0:
+                        report_step_failure("Dump", dump, limit=5)
                         return dump.returncode or 1
-                    restored = runtime.run_command(
+                    restored = stream_command(
                         [tools.pg_restore]
                         + (["--verbose"] if verbose else [])
                         + [
@@ -673,6 +703,7 @@ def perform_postgres_sync(
                     )
                     restore_error_inner = restored.stderr
                     if restored.returncode != 0:
+                        report_step_failure("Restore", restored, limit=10)
                         return restored.returncode or 1
                 finally:
                     discard(dump_file)
@@ -690,7 +721,6 @@ def perform_postgres_sync(
             stdout.write("\n🔄 Restoring backup database...\n")
             drop_database(tgt_db_name)
             report_backup_database(backup_db, rename_two_way(backup_db, tgt_db_name))
-        unbind()
         return 1
 
     def finish_sync() -> int:
@@ -712,7 +742,6 @@ def perform_postgres_sync(
                 stdout.write(f"\n💾 Backup database '{backup_db}' kept for safety\n")
             if backup_file:
                 stdout.write(f"\n💾 Backup file kept for safety: {backup_file}\n")
-            unbind()
             return 1
         stdout.write(f"✅ '{source.database}' synced successfully to '{tgt_db_name}'\n")
         stdout.write(f"   Tables: {table_count}\n")
@@ -728,7 +757,6 @@ def perform_postgres_sync(
                 ),
                 env=tgt_env,
             )
-        unbind()
         return 0
 
     backup_db = ""

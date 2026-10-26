@@ -1,15 +1,25 @@
-"""Child process helpers for dbt. Every command is an argv list."""
+"""Child process helpers for dbt. Every command is an argv list.
+
+``env`` is layered over ``os.environ`` so children keep PATH and ``PG*``.
+"""
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import IO, TextIO
 
 from shared.process import CommandResult, run_process
+
+
+def child_env(overrides: Mapping[str, str] | None) -> dict[str, str] | None:
+    if overrides is None:
+        return None
+    return {**os.environ, **overrides}
 
 
 def run_command(
@@ -22,24 +32,74 @@ def run_command(
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> CommandResult:
-    """Run one child. Capture by default; stream output live when asked."""
+    """Run one child. Capture by default; in stream mode stderr is tee'd."""
     if not stream:
-        return run_process(argv, env=env, input_text=input_text, input_file=input_file)
-    if input_file is not None:
-        raise ValueError("input_file requires captured mode")
+        return run_process(argv, env=child_env(env), input_text=input_text, input_file=input_file)
+    if input_text is not None and input_file is not None:
+        raise ValueError("input_text and input_file are mutually exclusive")
     stdout_stream = stdout if stdout is not None else sys.stdout
     stderr_stream = stderr if stderr is not None else sys.stderr
-    process = subprocess.Popen(
-        list(argv),
-        env=None if env is None else dict(env),
-        stdin=subprocess.PIPE if input_text is not None else None,
-        stdout=stdout_stream,
-        stderr=stderr_stream,
-        text=True,
-        shell=False,
-    )
-    process.communicate(input_text)
-    return CommandResult(process.returncode or 0)
+    source: IO[bytes] | None = None
+    if input_file is not None:
+        source = open(input_file, "rb")  # noqa: SIM115
+    try:
+        process = subprocess.Popen(
+            list(argv),
+            env=child_env(env),
+            stdin=source if source is not None else subprocess.PIPE if input_text is not None else None,
+            stdout=stdout_stream,
+            stderr=subprocess.PIPE,
+            text=True,
+            shell=False,
+        )
+        assert process.stderr is not None
+        tee = _Tee(process.stderr, stderr_stream)
+        tee.start()
+        try:
+            if input_text is not None:
+                assert process.stdin is not None
+                try:
+                    process.stdin.write(input_text)
+                    process.stdin.close()
+                except BrokenPipeError:  # pragma: no cover
+                    pass
+            process.wait()
+        except BaseException:
+            _kill_children(process)
+            raise
+        finally:
+            tee.join()
+    finally:
+        if source is not None:
+            source.close()
+    return CommandResult(process.returncode or 0, "", tee.text())
+
+
+class _Tee(threading.Thread):
+    """Copies a pipe to a stream line by line, keeping the text."""
+
+    def __init__(self, pipe: IO[str], sink: TextIO) -> None:
+        super().__init__(daemon=True)
+        self._pipe = pipe
+        self._sink = sink
+        self._chunks: list[str] = []
+
+    def run(self) -> None:
+        try:
+            for line in self._pipe:
+                self._chunks.append(line)
+                self._sink.write(line)
+                self._sink.flush()
+        except (OSError, ValueError):  # pragma: no cover
+            pass
+        finally:
+            try:
+                self._pipe.close()
+            except (OSError, ValueError):  # pragma: no cover
+                pass
+
+    def text(self) -> str:
+        return "".join(self._chunks)
 
 
 def run_pipe(
@@ -80,7 +140,7 @@ def _run_pipe_captured(
 ) -> CommandResult:
     left_child = subprocess.Popen(
         list(left),
-        env=None if left_env is None else dict(left_env),
+        env=child_env(left_env),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -88,7 +148,7 @@ def _run_pipe_captured(
     )
     right_child = subprocess.Popen(
         list(right),
-        env=None if right_env is None else dict(right_env),
+        env=child_env(right_env),
         stdin=left_child.stdout,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -120,9 +180,7 @@ def _run_pipe_captured(
         drain.join()
         left_child.wait()
     except BaseException:
-        # A bound interrupt handler raised SystemExit mid-communicate:
-        # no child may outlive the pipe it was killed out of. The daemon
-        # drain thread unblocks on its own once the left child is reaped.
+        # Interrupted mid-pipe: no child may outlive it.
         _kill_children(left_child, right_child)
         raise
     finally:
@@ -148,7 +206,7 @@ def _run_pipe_live(
     stderr_stream = stderr if stderr is not None else sys.stderr
     left_child = subprocess.Popen(
         list(left),
-        env=None if left_env is None else dict(left_env),
+        env=child_env(left_env),
         stdout=subprocess.PIPE,
         stderr=stderr_stream,
         text=True,
@@ -156,7 +214,7 @@ def _run_pipe_live(
     )
     right_child = subprocess.Popen(
         list(right),
-        env=None if right_env is None else dict(right_env),
+        env=child_env(right_env),
         stdin=left_child.stdout,
         stdout=stdout_stream,
         stderr=stderr_stream,
@@ -169,9 +227,7 @@ def _run_pipe_live(
         left_code = left_child.wait()
         right_code = right_child.wait()
     except BaseException:
-        # A bound interrupt handler raised SystemExit mid-wait: no child
-        # may outlive the pipe. The stdout/stderr streams belong to the
-        # caller and must not be closed here.
+        # Interrupted mid-pipe: no child may outlive it. Streams are the caller's.
         _kill_children(left_child, right_child)
         raise
     return CommandResult(left_code or right_code, "", "")

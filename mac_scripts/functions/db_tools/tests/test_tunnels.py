@@ -434,10 +434,24 @@ def test_disconnect_off_when_port_not_listening(tmp_path):
 def test_is_our_tunnel():
     from db_tools.tunnels import is_our_tunnel
 
-    assert is_our_tunnel("ssh -L 54321:db:5432", 5432) is True
+    assert is_our_tunnel("ssh -L 5432:db:5432", 5432) is True
+    assert is_our_tunnel("/usr/bin/ssh -f -N -L 5432:db.internal:5432 me@host", 5432) is True
+    assert is_our_tunnel("ssh -L5432:db:5432 me@host", 5432) is True  # glued form
+    assert is_our_tunnel("ssh -L 127.0.0.1:5432:db:5432 me@host", 5432) is True  # bind addr
+    assert is_our_tunnel("ssh -L 27017:db:27017 -L 5432:db:5432 me@host", 5432) is True
     assert is_our_tunnel("psql -L 5432:db:5432", 5432) is False
     assert is_our_tunnel("ssh -N me@host", 5432) is False
     assert is_our_tunnel("", 5432) is False
+
+
+def test_is_our_tunnel_matches_the_local_port_exactly() -> None:
+    from db_tools.tunnels import is_our_tunnel
+
+    assert is_our_tunnel("ssh -L 15432:db:15432 me@host", 5432) is False
+    assert is_our_tunnel("ssh -L 54321:db:5432 me@host", 5432) is False  # remote port
+    assert is_our_tunnel("ssh -L 5433:db:5432 me@host", 5432) is False
+    assert is_our_tunnel("ssh -L", 5432) is False
+    assert is_our_tunnel("ssh -L garbage me@host", 5432) is False
 
 
 def test_parse_vps_row():

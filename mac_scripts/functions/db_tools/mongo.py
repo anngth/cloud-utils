@@ -1,19 +1,22 @@
 """Mongo host parsing, client discovery, status, and backup cleanup.
 
-Every mongosh/mongo call is an argv list. A database name never enters
-the `--eval` script text: it travels only in the child's DBT_MONGO_DB
+Every mongosh call is an argv list. A database name never enters the
+`--eval` script text: it travels only in the child's DBT_MONGO_DB
 environment variable, which the fixed scripts read via
-`process.env.DBT_MONGO_DB`.
+`process.env.DBT_MONGO_DB`, a Node API: only `mongosh` is supported.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TextIO
 
+from shared.process import CommandResult
+
 from .models import MongoSource, MongoTarget
-from .runtime import Runtime
+from .runtime import Runtime, run_with_interrupts
 
 MONGO_EXISTS_SCRIPT = (
     "db.getSiblingDB(process.env.DBT_MONGO_DB).getCollectionNames().length > 0"
@@ -25,10 +28,14 @@ MONGO_LIST_SCRIPT = (
 )
 MONGO_PING_SCRIPT = "db.adminCommand('ping')"
 
-_CLIENT_NAMES = ("mongosh", "mongo")
+# Cleanup drops only names of this shape, whatever else mongosh prints.
+_BACKUP_NAME = re.compile(r"^[^\s/\\.\"$*<>:|?]+_backup_[0-9]{8}_[0-9]{6}$")
+
+_CLIENT_NAMES = ("mongosh",)
 
 _TOOLS_NOT_FOUND = (
-    "❌ Error: MongoDB client tools not found\n"
+    "❌ Error: MongoDB client tools not found (dbt needs mongosh; the legacy"
+    " mongo shell is not supported)\n"
     "   Install mongosh: brew install mongosh\n"
     "   Install mongodump and mongorestore: brew install database-tools\n"
     "   Then ensure mongosh, mongodump, and mongorestore are available on PATH\n"
@@ -78,7 +85,6 @@ def parse_mongo_target_row(row: str) -> MongoTarget | None:
 
 
 def _find_client(runtime: Runtime) -> str | None:
-    """`mongosh` wins over the legacy `mongo` shell."""
     for name in _CLIENT_NAMES:
         path = runtime.which(name)
         if path is not None:
@@ -164,6 +170,10 @@ def _clear_target(
         return False
 
     backups = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
+    skipped = [line for line in backups if _BACKUP_NAME.match(line) is None]
+    backups = [line for line in backups if _BACKUP_NAME.match(line) is not None]
+    for line in skipped:
+        stderr.write(f"ignored non-backup output line: {line}\n")
     if not backups:
         stdout.write("✅ No MongoDB backup databases found\n")
         return True
@@ -253,12 +263,9 @@ def perform_mongo_sync(
     The backup pipe copies the existing target database into
     `{database}_backup_YYYYMMDD_HHMMSS`; the sync pipe then dumps the source
     database onto the target with `--drop`, and a failure restores the backup
-    first. The signal handler is bound only once the backup database exists on
-    the target: a database with no collections has no backup, so an interrupt
-    during the sync pipe has nothing to restore. A failed exists-probe aborts
-    the sync before any pipe runs: dbt must not gamble target data on an
-    unreadable probe. Sync progress and errors go to stdout; missing tools,
-    connection failures, and failed probes go to stderr.
+    first. The rollback handler is bound only once the backup exists and
+    runs only after an interrupted pipe is dead. A failed exists-probe
+    aborts before any pipe runs.
     """
     if not mongo_status(source_uri, runtime=runtime):
         stderr.write("❌ Cannot proceed - source connection failed\n")
@@ -270,9 +277,41 @@ def perform_mongo_sync(
     if tools is None:
         stderr.write(_TOOLS_NOT_FOUND)
         return 1
+    return run_with_interrupts(
+        runtime,
+        lambda: _sync(
+            tools,
+            source_uri,
+            database,
+            target_uri,
+            verbose=verbose,
+            runtime=runtime,
+            stdout=stdout,
+            stderr=stderr,
+        ),
+    )
 
+
+def _sync(
+    tools: MongoTools,
+    source_uri: str,
+    database: str,
+    target_uri: str,
+    *,
+    verbose: bool,
+    runtime: Runtime,
+    stdout: TextIO,
+    stderr: TextIO,
+) -> int:
     backup_db = ""
     bound = False
+
+    def report_pipe_failure(result: CommandResult) -> None:
+        message = _first_error_line(result.stderr)
+        if message:
+            stdout.write(f"   Error: {message}\n")
+        elif not verbose:
+            stdout.write("   Run again with --verbose for the full output\n")
     exists = _database_exists(tools, target_uri, database, runtime)
     if exists is None:
         # Fail closed: a failed probe must not read as "no backup needed".
@@ -293,13 +332,13 @@ def perform_mongo_sync(
         )
         if backed_up.returncode != 0:
             stdout.write("❌ Failed to backup target database\n")
+            report_pipe_failure(backed_up)
             return 1
         stdout.write(f"✅ Backup created: {backup_db}\n")
 
         def interrupt() -> int:
             stdout.write("\n⚠️  MongoDB sync interrupted\n")
             restore_backup()
-            runtime.signals.bind(None)
             return 130
 
         # The target content is now safely preserved; bind interrupt recovery.
@@ -326,6 +365,7 @@ def perform_mongo_sync(
                 "⚠️  Failed to restore backup. Backup database is still"
                 f" available as '{backup_db}'\n"
             )
+            report_pipe_failure(restored)
             return False
         stdout.write("✅ Backup restored successfully\n")
         drop_backup(fail_line=f"⚠️  Backup restored, but failed to remove '{backup_db}'")
@@ -368,6 +408,7 @@ def perform_mongo_sync(
         return 0
 
     stdout.write("❌ MongoDB sync failed\n")
+    report_pipe_failure(synced)
     if backup_db:
         stdout.write(f"\n🔄 Restoring backup database '{backup_db}'...\n")
         restore_backup()

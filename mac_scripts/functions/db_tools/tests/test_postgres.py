@@ -23,7 +23,8 @@ from db_tools.postgres import (
     quote_identifier,
     quote_literal,
 )
-from db_tools.runtime import Runtime, SignalHooks
+from db_tools.postgres import _strip_transaction_timeout
+from db_tools.runtime import Interrupted, Runtime, SignalHooks
 from shared.process import CommandResult
 
 PSQL = "/usr/bin/psql"
@@ -115,11 +116,13 @@ class FakePostgres:
     restore_stderr: str = ""  # stderr for psql restores fed through stdin
     inputs: list[str | None] = field(default_factory=list)
     input_files: list[str | None] = field(default_factory=list)
+    streams: list[bool] = field(default_factory=list)
 
-    def run_command(self, argv, *, env=None, input_text=None, input_file=None, **_kwargs):
+    def run_command(self, argv, *, env=None, input_text=None, input_file=None, **kwargs):
         self.calls.append(list(argv))
         self.envs.append(dict(env) if env is not None else None)
         self.input_files.append(input_file)
+        self.streams.append(bool(kwargs.get("stream", False)))
         stdin_text = input_text
         if stdin_text is None and input_file is not None:
             stdin_text = Path(input_file).read_text(encoding="utf-8")
@@ -735,6 +738,142 @@ def test_verbose_sets_debug_flags_and_omits_qs(tmp_path, version_stdout) -> None
         assert [value for value in fake.inputs if value is not None] == []
 
 
+@pytest.mark.parametrize("version_stdout", ["PostgreSQL 16.4", "PostgreSQL 17.1"])
+def test_verbose_streams_the_dump_and_restore_live(tmp_path, version_stdout) -> None:
+    code, _out, _err, fake = _drive(
+        tmp_path, [*SYNC_ARGV, "-v"], now=NOW, version_stdout=version_stdout
+    )
+
+    assert code == 0
+    streamed = [call[0] for call, stream in zip(fake.calls, fake.streams) if stream]
+    assert PG_DUMP in streamed
+    assert PG_RESTORE in streamed or any(
+        call[0] == PSQL and stream and "-c" not in call
+        for call, stream in zip(fake.calls, fake.streams)
+    )
+    assert not any(
+        stream for call, stream in zip(fake.calls, fake.streams) if "-c" in call
+    )
+
+
+def test_without_verbose_nothing_streams(tmp_path) -> None:
+    code, _out, _err, fake = _drive(tmp_path, SYNC_ARGV, now=NOW)
+
+    assert code == 0
+    assert fake.streams == [False] * len(fake.calls)
+
+
+def test_supabase_verbose_streams_the_target_backup_dump(tmp_path) -> None:
+    code, _out, _err, fake = _drive(
+        tmp_path, [*SYNC_ARGV, "-v"], now=NOW, targets=SUPABASE_TARGETS, version_stdout=""
+    )
+
+    assert code == 0
+    dumps = [stream for call, stream in zip(fake.calls, fake.streams) if call[0] == PG_DUMP]
+    assert dumps == [True, True]
+
+
+def test_dump_failure_prints_the_cause_and_exit_code(tmp_path) -> None:
+    code, out, _err, _fake = _drive(
+        tmp_path,
+        SYNC_ARGV,
+        now=NOW,
+        responses=(
+            (
+                "usr/bin/pg_dump",
+                CommandResult(2, "", "pg_dump: error: connection failed\npg_dump: detail: no route\n"),
+            ),
+        ),
+    )
+
+    assert code == 1
+    assert "Dump failed (exit code 2)" in out
+    assert "pg_dump: error: connection failed" in out
+    assert "pg_dump: detail: no route" in out
+    assert "Run again with --verbose" in out
+    assert out.index("Dump failed") < out.index("Restoring backup database")
+
+
+def test_restore_failure_prints_the_cause(tmp_path) -> None:
+    code, out, _err, _fake = _drive(
+        tmp_path,
+        SYNC_ARGV,
+        now=NOW,
+        responses=(("-q", CommandResult(3, "", "psql: error: broken pipe")),),
+    )
+
+    assert code == 1
+    assert "Restore failed (exit code 3)" in out
+    assert "psql: error: broken pipe" in out
+
+
+def test_custom_format_restore_failure_prints_the_cause(tmp_path) -> None:
+    code, out, _err, _fake = _drive(
+        tmp_path,
+        SYNC_ARGV,
+        now=NOW,
+        version_stdout="PostgreSQL 17.1",
+        responses=(("usr/bin/pg_restore", CommandResult(1, "", "pg_restore: error: boom")),),
+    )
+
+    assert code == 1
+    assert "Restore failed (exit code 1)" in out
+    assert "pg_restore: error: boom" in out
+
+
+def test_verbose_failure_does_not_point_at_verbose_again(tmp_path) -> None:
+    code, out, _err, _fake = _drive(
+        tmp_path,
+        [*SYNC_ARGV, "-v"],
+        now=NOW,
+        responses=(("usr/bin/pg_dump", CommandResult(1, "", "pg_dump: error: x")),),
+    )
+
+    assert code == 1
+    assert "Dump failed" in out
+    assert "Run again with --verbose" not in out
+
+
+# --- transaction_timeout filter --------------------------------------------------
+
+
+def _strip(tmp_path, data: bytes) -> bytes:
+    source = tmp_path / "dump.sql"
+    target = tmp_path / "filtered.sql"
+    source.write_bytes(data)
+    _strip_transaction_timeout(str(source), str(target))
+    return target.read_bytes()
+
+
+def test_strip_removes_only_transaction_timeout_statements(tmp_path) -> None:
+    data = (
+        b"SET statement_timeout = 0;\n"
+        b"SET transaction_timeout = 0;\n"
+        b"  SET transaction_timeout = 0;\n"
+        b"ALTER DATABASE app SET transaction_timeout = 100;\n"
+        b"ALTER ROLE svc SET transaction_timeout TO '1min';\n"
+        b"CREATE TABLE public.items (id int);\n"
+    )
+    assert _strip(tmp_path, data) == (
+        b"SET statement_timeout = 0;\nCREATE TABLE public.items (id int);\n"
+    )
+
+
+def test_strip_keeps_copy_data_that_mentions_transaction_timeout(tmp_path) -> None:
+    data = (
+        b"COPY public.notes (id, body) FROM stdin;\n"
+        b"1\tplease raise transaction_timeout on prod\n"
+        b"2\tSET transaction_timeout is what the docs say\n"
+        b"\\.\n"
+    )
+    assert _strip(tmp_path, data) == data
+
+
+def test_strip_passes_non_utf8_bytes_through_unchanged(tmp_path) -> None:
+    data = b"SET transaction_timeout = 0;\nINSERT INTO t VALUES ('caf\xe9');\n"
+    assert _strip(tmp_path, data) == b"INSERT INTO t VALUES ('caf\xe9');\n"
+
+
 def test_restore_error_keeps_backup_and_exits_one(tmp_path) -> None:
     code, out, err, fake = _drive(
         tmp_path,
@@ -948,9 +1087,10 @@ def test_interrupt_after_rename_restores_and_exits_130(tmp_path) -> None:
 
     def run_command(argv, **kwargs):
         joined = " ".join(argv)
-        if joined.startswith(PG_DUMP) and signals.handler is not None and not triggered:
+        if joined.startswith(PG_DUMP) and not triggered:
             triggered.append(True)
-            raise SystemExit(signals.handler())
+            assert signals.handler is not None
+            raise Interrupted()
         if "ALTER DATABASE" in joined:
             handlers_seen.append(signals.handler)
         return base(argv, **kwargs)
@@ -967,38 +1107,34 @@ def test_interrupt_after_rename_restores_and_exits_130(tmp_path) -> None:
         signals=signals,
     )
 
-    with pytest.raises(SystemExit) as exc:
-        run_cli(
-            SYNC_ARGV,
-            env={"DBT_SECRETS_FILE": str(path)},
-            stdout=out,
-            stderr=err,
-            dependencies=runtime,
-        )
+    code = run_cli(
+        SYNC_ARGV,
+        env={"DBT_SECRETS_FILE": str(path)},
+        stdout=out,
+        stderr=err,
+        dependencies=runtime,
+    )
 
-    assert exc.value.code == 130
+    assert code == 130
     assert handlers_seen[0] is None  # nothing bound when the rename runs
-    assert handlers_seen[-1] is not None
+    assert handlers_seen[-1] is None  # unbound before the rollback
+    assert "PostgreSQL sync interrupted" in out.getvalue()
     assert fake.calls[-2][-1] == SYNC_DROP_NEW_SQL
     assert fake.calls[-1][-1] == SYNC_RENAME_BACK_SQL
     assert [call for call in fake.calls if call[0] == PG_RESTORE] == []
     assert signals.handler is None
 
 
-def test_interrupt_after_supabase_dump_restores_file(tmp_path) -> None:
+def test_interrupt_before_rollback_is_armed_propagates(tmp_path) -> None:
     path = tmp_path / "dbt_secrets"
-    _write_secrets(path, SOURCES, SUPABASE_TARGETS)
-    fake = FakePostgres(version_stdout="")
-    out, err = io.StringIO(), io.StringIO()
+    _write_secrets(path, SOURCES, TARGETS)
+    fake = FakePostgres()
     signals = _StubSignals()
-    triggered: list[bool] = []
     base = fake.run_command
 
     def run_command(argv, **kwargs):
-        joined = " ".join(argv)
-        if "DROP SCHEMA" in joined and signals.handler is not None and not triggered:
-            triggered.append(True)
-            raise SystemExit(signals.handler())
+        if argv[-1] == SYNC_EXISTS_SQL:
+            raise Interrupted()
         return base(argv, **kwargs)
 
     runtime = Runtime(
@@ -1013,16 +1149,91 @@ def test_interrupt_after_supabase_dump_restores_file(tmp_path) -> None:
         signals=signals,
     )
 
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(Interrupted):
         run_cli(
             SYNC_ARGV,
             env={"DBT_SECRETS_FILE": str(path)},
-            stdout=out,
-            stderr=err,
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
             dependencies=runtime,
         )
+    assert not any(call[-1].startswith("ALTER DATABASE") for call in fake.calls)
+    assert signals.handler is None
 
-    assert exc.value.code == 130
+
+def test_unexpected_error_mid_sync_leaves_no_handler_bound(tmp_path) -> None:
+    path = tmp_path / "dbt_secrets"
+    _write_secrets(path, SOURCES, TARGETS)
+    fake = FakePostgres()
+    signals = _StubSignals()
+    base = fake.run_command
+
+    def run_command(argv, **kwargs):
+        if argv[0] == PG_DUMP:
+            raise OSError("disk full")
+        return base(argv, **kwargs)
+
+    runtime = Runtime(
+        run_command=run_command,
+        run_pipe=lambda *_args, **_kwargs: CommandResult(0, "", ""),
+        which=lambda name: fake.which.get(name),
+        path_exists=lambda value: value in fake.files,
+        process_alive=lambda _pid: False,
+        signal=lambda _pid, _signum: True,
+        sleep=lambda _seconds: None,
+        now=lambda: NOW,
+        signals=signals,
+    )
+
+    with pytest.raises(OSError):
+        run_cli(
+            SYNC_ARGV,
+            env={"DBT_SECRETS_FILE": str(path)},
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            dependencies=runtime,
+        )
+    assert signals.handler is None
+
+
+def test_interrupt_after_supabase_dump_restores_file(tmp_path) -> None:
+    path = tmp_path / "dbt_secrets"
+    _write_secrets(path, SOURCES, SUPABASE_TARGETS)
+    fake = FakePostgres(version_stdout="")
+    out, err = io.StringIO(), io.StringIO()
+    signals = _StubSignals()
+    triggered: list[bool] = []
+    base = fake.run_command
+
+    def run_command(argv, **kwargs):
+        joined = " ".join(argv)
+        if "DROP SCHEMA" in joined and not triggered:
+            triggered.append(True)
+            assert signals.handler is not None
+            raise Interrupted()
+        return base(argv, **kwargs)
+
+    runtime = Runtime(
+        run_command=run_command,
+        run_pipe=lambda *_args, **_kwargs: CommandResult(0, "", ""),
+        which=lambda name: fake.which.get(name),
+        path_exists=lambda value: value in fake.files,
+        process_alive=lambda _pid: False,
+        signal=lambda _pid, _signum: True,
+        sleep=lambda _seconds: None,
+        now=lambda: NOW,
+        signals=signals,
+    )
+
+    code = run_cli(
+        SYNC_ARGV,
+        env={"DBT_SECRETS_FILE": str(path)},
+        stdout=out,
+        stderr=err,
+        dependencies=runtime,
+    )
+
+    assert code == 130
     dump_argv = [call for call in fake.calls if call[0] == PG_DUMP][0]
     dump_file = dump_argv[dump_argv.index("-f") + 1]
     restore = [call for call in fake.calls if call[0] == PG_RESTORE][-1]

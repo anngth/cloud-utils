@@ -7,32 +7,48 @@ import shutil
 import signal
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from shared.process import CommandResult
 
-from .process import run_pipe, run_command
+from .process import run_command, run_pipe
+
+_MANAGED_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+
+
+class Interrupted(BaseException):
+    """SIGINT/SIGTERM raised out of a child wait, after the child is killed.
+
+    A BaseException so no ``except Exception`` can swallow it.
+    """
+
+    def __init__(self, signum: int = signal.SIGINT) -> None:
+        super().__init__(signum)
+        self.signum = signum
 
 
 @dataclass
 class SignalHooks:
     handler: Callable[[], int] | None = None
+    _previous: dict[int, object] = field(default_factory=dict, repr=False)
 
     def bind(self, handler: Callable[[], int] | None) -> None:
-        """Install handler() on SIGINT/SIGTERM, or restore SIG_DFL for None."""
+        """Install the OS hook, or restore the handlers it displaced."""
         self.handler = handler
         if handler is None:
-            signal.signal(signal.SIGINT, signal.SIG_DFL)
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            for signum, previous in self._previous.items():
+                signal.signal(signum, previous)  # type: ignore[arg-type]
+            self._previous.clear()
             return
-        signal.signal(signal.SIGINT, self._dispose)
-        signal.signal(signal.SIGTERM, self._dispose)
+        if not self._previous:
+            for signum in _MANAGED_SIGNALS:
+                self._previous[signum] = signal.getsignal(signum)
+                signal.signal(signum, self._dispose)
 
-    def _dispose(self, _signum: int, _frame: object) -> None:
-        handler = self.handler
-        raise SystemExit(130 if handler is None else handler())
+    def _dispose(self, signum: int, _frame: object) -> None:
+        raise Interrupted(signum)
 
 
 @dataclass
@@ -46,6 +62,24 @@ class Runtime:
     sleep: Callable[[float], None]
     now: Callable[[], datetime]
     signals: SignalHooks
+
+
+def run_with_interrupts(runtime: Runtime, body: Callable[[], int]) -> int:
+    """Run ``body``; on Interrupted, unbind and run the rollback handler.
+
+    No handler bound means nothing to roll back: the interrupt re-raises.
+    """
+    try:
+        return body()
+    except Interrupted:
+        handler = runtime.signals.handler
+        if handler is None:
+            raise
+        runtime.signals.bind(None)
+        return handler()
+    finally:
+        if runtime.signals.handler is not None:
+            runtime.signals.bind(None)
 
 
 def _path_exists(value: str) -> bool:

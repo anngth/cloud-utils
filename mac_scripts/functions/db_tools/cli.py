@@ -32,7 +32,7 @@ from .postgres import (
     perform_postgres_sync,
     postgres_status,
 )
-from .runtime import Runtime, default_runtime
+from .runtime import Interrupted, Runtime, default_runtime
 from .secrets import SecretsError
 from .tunnels import connect_tunnels, disconnect_tunnels, list_tunnels, test_tunnels
 
@@ -483,46 +483,53 @@ def _clear_backups_cli(
 
     targets: list[PostgresTarget] = []
     for row in raw_secrets.postgres_targets:
-        target = parse_postgres_target_row(row)
-        if target is None:
+        pg_target = parse_postgres_target_row(row)
+        if pg_target is None:
             stderr.write(f"skipped invalid row: {row}\n")
         else:
-            targets.append(target)
-    if not targets:
-        stdout.write("ℹ️  No PostgreSQL targets configured\n")
-        return 1
+            targets.append(pg_target)
 
     mongo_targets: list[MongoTarget] = []
     for row in raw_secrets.mongo_targets:
-        target = parse_mongo_target_row(row)
-        if target is None:
+        mongo_target = parse_mongo_target_row(row)
+        if mongo_target is None:
             stderr.write(f"skipped invalid row: {row}\n")
         else:
-            mongo_targets.append(target)
+            mongo_targets.append(mongo_target)
+
+    if not targets and not mongo_targets:
+        stdout.write("ℹ️  No PostgreSQL or MongoDB targets configured\n")
+        return 1
 
     stdout.write("\n🧹 Backup Cleanup\n")
     stdout.write("=================\n")
     stdout.write(f"  PostgreSQL targets: {len(targets)}\n")
     stdout.write(f"  MongoDB targets: {len(mongo_targets)}\n")
     stdout.write("\n")
-    postgres_code = clear_postgres_backups(
-        targets,
-        source_database=None,
-        dry_run=dry_run,
-        runtime=runtime,
-        stdout=stdout,
-        stderr=stderr,
-    )
-    if not mongo_targets:
+    # An engine with no targets is a notice; the other still runs.
+    postgres_code = 0
+    if targets:
+        postgres_code = clear_postgres_backups(
+            targets,
+            source_database=None,
+            dry_run=dry_run,
+            runtime=runtime,
+            stdout=stdout,
+            stderr=stderr,
+        )
+    else:
+        stdout.write("ℹ️  No PostgreSQL targets configured\n\n")
+    mongo_code = 0
+    if mongo_targets:
+        mongo_code = clear_mongo_backups(
+            mongo_targets,
+            dry_run=dry_run,
+            runtime=runtime,
+            stdout=stdout,
+            stderr=stderr,
+        )
+    else:
         stdout.write("ℹ️  No MongoDB targets configured\n")
-        return 1 if postgres_code else 0
-    mongo_code = clear_mongo_backups(
-        mongo_targets,
-        dry_run=dry_run,
-        runtime=runtime,
-        stdout=stdout,
-        stderr=stderr,
-    )
     return 1 if postgres_code or mongo_code else 0
 
 
@@ -625,9 +632,12 @@ def _select_targets(
 
 
 def main() -> NoReturn:
-    raise SystemExit(
-        run_cli(sys.argv[1:], env=os.environ, stdout=sys.stdout, stderr=sys.stderr)
-    )
+    try:
+        code = run_cli(sys.argv[1:], env=os.environ, stdout=sys.stdout, stderr=sys.stderr)
+    except (KeyboardInterrupt, Interrupted):
+        sys.stderr.write("\nInterrupted\n")
+        code = 130
+    raise SystemExit(code)
 
 
 if __name__ == "__main__":

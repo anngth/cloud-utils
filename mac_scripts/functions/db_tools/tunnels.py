@@ -58,14 +58,34 @@ def _parse_port(text: str) -> int | None:
 
 
 def is_our_tunnel(command: str, port: int) -> bool:
-    """True when `ssh`, then `-L`, then the decimal port appear in order."""
-    ssh_index = command.find("ssh")
-    if ssh_index == -1:
+    """True when an `ssh` command has a `-L` forward whose local port is `port`."""
+    tokens = command.split()
+    if not tokens or tokens[0].rsplit("/", 1)[-1] != "ssh":
         return False
-    forward_index = command.find("-L", ssh_index)
-    if forward_index == -1:
-        return False
-    return str(port) in command[forward_index:]
+    for index, token in enumerate(tokens[1:], start=1):
+        if token == "-L":
+            if index + 1 >= len(tokens):
+                return False
+            spec = tokens[index + 1]
+        elif token.startswith("-L"):
+            spec = token[2:]
+        else:
+            continue
+        if _forward_local_port(spec) == port:
+            return True
+    return False
+
+
+def _forward_local_port(spec: str) -> int | None:
+    """Local port of a `[bind:]local:host:remote` forward spec, or None."""
+    parts = spec.split(":")
+    if len(parts) == 3:
+        local = parts[0]
+    elif len(parts) == 4:
+        local = parts[1]
+    else:
+        return None
+    return int(local) if local.isdigit() else None
 
 
 @dataclass(frozen=True, slots=True)

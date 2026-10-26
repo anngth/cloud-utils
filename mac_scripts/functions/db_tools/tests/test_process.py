@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from db_tools.process import run_pipe
+from db_tools.process import run_command, run_pipe
 
 # 200 KB is far beyond the 64 KB macOS pipe buffer: the left child can
 # only finish if its stderr is drained while the right child still runs.
@@ -135,3 +135,87 @@ def test_interrupt_mid_pipe_kills_both_children(tmp_path: Path, stream: bool) ->
     )
 
     assert result.returncode == 0, result.stderr
+
+
+# --- environment and streaming ---------------------------------------------------
+
+
+def test_run_command_env_is_layered_on_the_parent_environment(monkeypatch) -> None:
+    monkeypatch.setenv("DBT_TEST_INHERITED", "from-parent")
+    result = run_command(
+        ["sh", "-c", 'printf "%s|%s|%s" "$DBT_TEST_INHERITED" "$DBT_TEST_OVERRIDE" "$PATH"'],
+        env={"DBT_TEST_OVERRIDE": "from-dbt"},
+    )
+
+    inherited, override, path = result.stdout.split("|")
+    assert (inherited, override) == ("from-parent", "from-dbt")
+    assert path != ""
+
+
+def test_run_command_env_overrides_win_over_the_parent(monkeypatch) -> None:
+    monkeypatch.setenv("PGPASSWORD", "parent-secret")
+    result = run_command(["sh", "-c", 'printf "%s" "$PGPASSWORD"'], env={"PGPASSWORD": "dbt"})
+    assert result.stdout == "dbt"
+
+
+def test_run_pipe_env_is_layered_on_the_parent_environment(monkeypatch) -> None:
+    monkeypatch.setenv("DBT_TEST_INHERITED", "from-parent")
+    result = run_pipe(
+        ["sh", "-c", 'printf "%s|%s" "$DBT_TEST_INHERITED" "$DBT_TEST_LEFT"'],
+        ["sh", "-c", 'cat; printf "|%s" "$DBT_TEST_RIGHT"'],
+        left_env={"DBT_TEST_LEFT": "left"},
+        right_env={"DBT_TEST_RIGHT": "right"},
+    )
+    assert result.stdout == "from-parent|left|right"
+
+
+def test_stream_mode_tees_stderr_to_the_sink_and_the_result(tmp_path: Path) -> None:
+    with open(tmp_path / "out", "w+", encoding="utf-8") as out, open(
+        tmp_path / "err", "w+", encoding="utf-8"
+    ) as err:
+        result = run_command(
+            ["sh", "-c", "echo progress >&2; echo payload; echo warn >&2; exit 3"],
+            stream=True,
+            stdout=out,
+            stderr=err,
+        )
+        out.seek(0)
+        err.seek(0)
+        assert out.read() == "payload\n"
+        assert err.read() == "progress\nwarn\n"
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert result.stderr == "progress\nwarn\n"
+
+
+def test_stream_mode_reads_stdin_from_an_input_file(tmp_path: Path) -> None:
+    sql = tmp_path / "restore.sql"
+    sql.write_text("line one\nline two\n", encoding="utf-8")
+    with open(tmp_path / "out", "w+", encoding="utf-8") as out, open(
+        tmp_path / "err", "w+", encoding="utf-8"
+    ) as err:
+        result = run_command(
+            ["sh", "-c", "wc -l | tr -d ' '"],
+            stream=True,
+            input_file=sql,
+            stdout=out,
+            stderr=err,
+        )
+        out.seek(0)
+        assert out.read() == "2\n"
+    assert result.returncode == 0
+
+
+def test_stream_mode_feeds_input_text(tmp_path: Path) -> None:
+    with open(tmp_path / "out", "w+", encoding="utf-8") as out, open(
+        tmp_path / "err", "w+", encoding="utf-8"
+    ) as err:
+        result = run_command(["cat"], stream=True, input_text="hello", stdout=out, stderr=err)
+        out.seek(0)
+        assert out.read() == "hello"
+    assert result.returncode == 0
+
+
+def test_stream_mode_rejects_both_input_forms() -> None:
+    with pytest.raises(ValueError):
+        run_command(["cat"], stream=True, input_text="x", input_file="/dev/null")

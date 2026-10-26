@@ -23,8 +23,9 @@ from db_tools.mongo import (
     mongo_status,
     parse_mongo_source_row,
     parse_mongo_target_row,
+    perform_mongo_sync,
 )
-from db_tools.runtime import Runtime, SignalHooks
+from db_tools.runtime import Interrupted, Runtime, SignalHooks
 from shared.process import CommandResult
 
 MONGOSH = "/usr/local/bin/mongosh"
@@ -71,6 +72,7 @@ class FakeMongo:
     exists_stdout: str = "true"  # fake answer for MONGO_EXISTS_SCRIPT
     exists_code: int = 0  # non-zero reads as a failed probe
     pipe_codes: list[int] = field(default_factory=list)  # piped commands, in order
+    pipe_stderr: str = ""
     pipes: list[tuple[list[str], list[str]]] = field(default_factory=list)
     pipe_streams: list[bool] = field(default_factory=list)
     handler_at_pipe: list[object] = field(default_factory=list)
@@ -98,7 +100,7 @@ class FakeMongo:
         self.pipes.append((list(left), list(right)))
         self.pipe_streams.append(stream)
         code = self.pipe_codes.pop(0) if self.pipe_codes else 0
-        return CommandResult(code, "", "")
+        return CommandResult(code, "", self.pipe_stderr if code else "")
 
     def drops(self) -> list[tuple[list[str], str]]:
         pairs = []
@@ -219,11 +221,9 @@ def test_find_mongo_tools_prefers_mongosh_over_mongo() -> None:
     )
 
 
-def test_find_mongo_tools_falls_back_to_legacy_mongo() -> None:
+def test_find_mongo_tools_ignores_the_legacy_mongo_shell() -> None:
     fake = FakeMongo(which={"mongo": MONGO, "mongodump": MONGODUMP, "mongorestore": MONGORESTORE})
-    tools = find_mongo_tools(_runtime(fake))
-    assert tools is not None
-    assert tools.client == MONGO
+    assert find_mongo_tools(_runtime(fake)) is None
 
 
 @pytest.mark.parametrize(
@@ -324,10 +324,26 @@ def test_mongo_status_missing_client_counts_as_connected() -> None:
     assert fake.calls == []
 
 
-def test_mongo_status_uses_legacy_mongo_when_mongosh_is_absent() -> None:
+def test_mongo_status_never_runs_the_legacy_mongo_shell() -> None:
     fake = FakeMongo(which={"mongo": MONGO})
     assert mongo_status("mongodb://u:p@h:27017", runtime=_runtime(fake)) is True
-    assert fake.calls[0][0] == MONGO
+    assert fake.calls == []
+
+
+def test_cleanup_without_mongosh_names_the_legacy_shell_as_unsupported() -> None:
+    fake = FakeMongo(which={"mongo": MONGO, "mongodump": MONGODUMP, "mongorestore": MONGORESTORE})
+    out, err = io.StringIO(), io.StringIO()
+    code = clear_mongo_backups(
+        _targets("mongodb://user:secret@127.0.0.1:27017"),
+        dry_run=True,
+        runtime=_runtime(fake),
+        stdout=out,
+        stderr=err,
+    )
+
+    assert code == 1
+    assert fake.calls == []
+    assert "legacy mongo shell is not supported" in err.getvalue()
 
 
 # --- secret row parsing --------------------------------------------------------
@@ -406,6 +422,48 @@ def test_real_clear_drops_every_backup_via_env_name() -> None:
     drop_argv, _database = fake.drops()[0]
     assert drop_argv[-1] == MONGO_DROP_SCRIPT
     assert "Summary: dropped 2, failed 0" in out.getvalue()
+
+
+def test_cleanup_drops_only_lines_shaped_like_backup_names() -> None:
+    fake = FakeMongo(
+        list_stdout=(
+            "Warning: deprecated option in use\n"
+            f"{BACKUP_NAME}\n"
+            "admin\n"
+            "app_backup_2026_bad\n"
+            f"{NO_DATABASE}\n"
+        )
+    )
+    out, err = io.StringIO(), io.StringIO()
+    code = clear_mongo_backups(
+        _targets("mongodb://user:secret@127.0.0.1:27017"),
+        dry_run=False,
+        runtime=_runtime(fake),
+        stdout=out,
+        stderr=err,
+    )
+
+    assert code == 0
+    assert [database for _argv, database in fake.drops()] == [BACKUP_NAME, NO_DATABASE]
+    assert "ignored non-backup output line: admin" in err.getvalue()
+    assert "ignored non-backup output line: Warning: deprecated" in err.getvalue()
+    assert "admin" not in out.getvalue()
+
+
+def test_cleanup_with_only_non_backup_output_drops_nothing() -> None:
+    fake = FakeMongo(list_stdout="Warning: something\nadmin\n")
+    out, err = io.StringIO(), io.StringIO()
+    code = clear_mongo_backups(
+        _targets("mongodb://user:secret@127.0.0.1:27017"),
+        dry_run=False,
+        runtime=_runtime(fake),
+        stdout=out,
+        stderr=err,
+    )
+
+    assert code == 0
+    assert fake.drops() == []
+    assert "No MongoDB backup databases found" in out.getvalue()
 
 
 def test_one_failed_drop_still_visits_the_next_and_exits_one() -> None:
@@ -598,9 +656,6 @@ def _sync_runtime(fake: FakeMongo, *, now: datetime = BACKUP_CLOCK):
 
 
 def _sync(fake: FakeMongo, *, verbose: bool = False):
-    # Imported here: on RED `perform_mongo_sync` does not exist yet.
-    from db_tools.mongo import perform_mongo_sync
-
     runtime, signals = _sync_runtime(fake)
     out, err = io.StringIO(), io.StringIO()
     code = perform_mongo_sync(
@@ -798,6 +853,87 @@ def test_failed_backup_drop_warns_but_exits_zero() -> None:
     assert code == 0
     assert SYNC_BACKUP in out
     assert "⚠️" in out
+
+
+def test_backup_pipe_failure_prints_the_cause() -> None:
+    fake = FakeMongo(pipe_codes=[1], pipe_stderr="Failed: error connecting to db server\n")
+    code, out, _err, _signals = _sync(fake)
+
+    assert code == 1
+    assert "Failed to backup target database" in out
+    assert "Error: Failed: error connecting to db server" in out
+
+
+def test_sync_pipe_failure_prints_the_cause_before_restoring() -> None:
+    fake = FakeMongo(pipe_codes=[0, 1], pipe_stderr="2026-10-26 Failed: not authorized\n")
+    code, out, _err, _signals = _sync(fake)
+
+    assert code == 1
+    assert "MongoDB sync failed" in out
+    assert "Error: 2026-10-26 Failed: not authorized" in out
+    assert out.index("Error: 2026-10-26") < out.index("Restoring backup database")
+
+
+def test_restore_pipe_failure_prints_the_cause() -> None:
+    fake = FakeMongo(pipe_codes=[0, 1, 1], pipe_stderr="Failed: restore broke\n")
+    code, out, _err, _signals = _sync(fake)
+
+    assert code == 1
+    assert "Failed to restore backup" in out
+    assert out.count("Error: Failed: restore broke") == 2
+
+
+def test_pipe_failure_without_captured_stderr_points_at_verbose() -> None:
+    fake = FakeMongo(pipe_codes=[1])
+    code, out, _err, _signals = _sync(fake)
+
+    assert code == 1
+    assert "Run again with --verbose" in out
+
+
+def test_interrupt_during_sync_pipe_restores_after_the_pipe_unwound() -> None:
+    fake = FakeMongo()
+    runtime, signals = _sync_runtime(fake)
+    base = runtime.run_pipe
+    order: list[str] = []
+
+    def run_pipe(left, right, **kwargs):
+        order.append(right[-1])
+        if len(fake.pipes) == 1:  # the sync pipe
+            fake.pipes.append((list(left), list(right)))
+            raise Interrupted()
+        return base(left, right, **kwargs)
+
+    runtime.run_pipe = run_pipe
+    out = io.StringIO()
+    code = perform_mongo_sync(
+        SOURCE_URI, "app", TARGET_URI, verbose=False,
+        runtime=runtime, stdout=out, stderr=io.StringIO(),
+    )
+
+    assert code == 130
+    assert order == [f"--nsTo={SYNC_BACKUP}.*", "--nsTo=app.*", "--nsTo=app.*"]
+    assert "MongoDB sync interrupted" in out.getvalue()
+    assert "Backup restored successfully" in out.getvalue()
+    # Unbound before the restore ran.
+    assert signals.bound[-1] is None
+    assert signals.handler is None
+
+
+def test_interrupt_before_any_backup_propagates_with_nothing_bound() -> None:
+    fake = FakeMongo(exists_stdout="false")
+    runtime, signals = _sync_runtime(fake)
+
+    def run_pipe(*_args, **_kwargs):
+        raise Interrupted()
+
+    runtime.run_pipe = run_pipe
+    with pytest.raises(Interrupted):
+        perform_mongo_sync(
+            SOURCE_URI, "app", TARGET_URI, verbose=False,
+            runtime=runtime, stdout=io.StringIO(), stderr=io.StringIO(),
+        )
+    assert signals.bound == []
 
 
 def test_signal_handler_restores_backup_and_returns_130() -> None:
@@ -1042,11 +1178,25 @@ def test_sync_clear_runs_mongo_after_postgres_failure(tmp_path) -> None:
     assert "Failed to list" in err
 
 
-def test_sync_clear_without_postgres_targets_exits_one_without_mongosh(tmp_path) -> None:
-    code, _out, _err, fake = _drive_all(tmp_path, ["sync", "-c"], pg_targets=())
+def test_sync_clear_without_postgres_targets_still_cleans_mongo(tmp_path) -> None:
+    code, out, err, fake = _drive_all(tmp_path, ["sync", "-c"], pg_targets=())
+
+    assert code == 0
+    assert err == ""
+    assert not any(argv[0] == PSQL for argv in fake.calls)
+    assert _mongo_list_index(fake) >= 0
+    assert [database for _argv, database in fake.drops()] == [BACKUP_NAME, NO_DATABASE] * 2
+    assert "No PostgreSQL targets configured" in out
+
+
+def test_sync_clear_without_any_targets_exits_one(tmp_path) -> None:
+    code, out, _err, fake = _drive_all(
+        tmp_path, ["sync", "-c"], pg_targets=(), mongo_targets=()
+    )
 
     assert code == 1
-    assert fake.calls == []  # no psql and no mongosh
+    assert fake.calls == []
+    assert "No PostgreSQL or MongoDB targets configured" in out
 
 
 def test_sync_clear_without_mongo_targets_returns_zero(tmp_path) -> None:
