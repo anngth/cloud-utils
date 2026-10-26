@@ -27,8 +27,11 @@ def test_help_exits_zero(argv: list[str]) -> None:
 
 def test_help_lists_every_command() -> None:
     _code, out, _err = run(["help"])
-    for name in ("config", "connect", "disconnect", "list", "status", "sync", "test"):
+    names = ("config", "connect", "disconnect", "list", "status", "sync")
+    nested = ("sync list", "sync postgres", "sync mongodb")  # the group's commands, one level in
+    for name in names + nested:
         assert f"\n  {name} " in out
+    assert "\n  test " not in out
 
 
 @pytest.mark.parametrize(

@@ -10,7 +10,7 @@ dbt config           # show the secrets file, credentials masked
 dbt config path      # only its location (e.g. $EDITOR "$(dbt config path)")
 dbt connect
 dbt list             # tunnels: UP / DOWN / BUSY
-dbt status           # tunnels plus a probe of every database connection
+dbt status           # tunnels (DOWN rows get an SSH check) plus a probe of every database
 dbt sync list --status
 dbt sync postgres -s 1 -d 1   # aliases: postgresql, pg
 dbt sync mongodb -s 1 -d 1    # alias: mongo

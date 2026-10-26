@@ -25,13 +25,7 @@ from .postgres import (
 )
 from .runtime import Interrupted, Runtime, default_runtime
 from .secrets import SecretsError, redact
-from .tunnels import (
-    connect_tunnels,
-    connection_hint,
-    disconnect_tunnels,
-    list_tunnels,
-    test_tunnels,
-)
+from .tunnels import connect_tunnels, connection_hint, disconnect_tunnels, list_tunnels
 
 _CONTEXT = {"help_option_names": ["-h", "--help"], "max_content_width": 100}
 _MAX_PROBES = 8
@@ -89,6 +83,26 @@ class _Group(click.Group):
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         return super().get_command(ctx, self.aliases.get(cmd_name, cmd_name))
 
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        """List the commands and, one level in, the commands of each nested group."""
+        rows: list[tuple[str, click.Command]] = []
+        for name in self.list_commands(ctx):
+            command = self.get_command(ctx, name)
+            if command is None or command.hidden:
+                continue
+            rows.append((name, command))
+            if isinstance(command, click.Group):
+                nested = click.Context(command, info_name=name, parent=ctx)
+                for sub_name in command.list_commands(nested):
+                    sub_command = command.get_command(nested, sub_name)
+                    if sub_command is not None and not sub_command.hidden:
+                        rows.append((f"{name} {sub_name}", sub_command))
+        if not rows:
+            return
+        limit = formatter.width - 6 - max(len(name) for name, _ in rows)
+        with formatter.section("Commands"):
+            formatter.write_dl([(name, cmd.get_short_help_str(limit)) for name, cmd in rows])
+
 
 def run_cli(
     argv: Sequence[str],
@@ -143,7 +157,7 @@ def help_command(ctx: click.Context) -> int:
     return 0
 
 
-@dbt.command("config")
+@dbt.command("config", short_help="Show the secrets file, credentials masked.")
 @click.argument("what", type=click.Choice(["path"]), required=False)
 @click.pass_obj
 def config_command(app: _App, what: str | None) -> int:
@@ -153,7 +167,7 @@ def config_command(app: _App, what: str | None) -> int:
     )
 
 
-@dbt.command("connect")
+@dbt.command("connect", short_help="Open the SSH tunnels; SERVICE filters by name or port.")
 @click.argument("service", required=False)
 @click.pass_obj
 def connect_command(app: _App, service: str | None) -> int:
@@ -167,7 +181,7 @@ def connect_command(app: _App, service: str | None) -> int:
     )
 
 
-@dbt.command("disconnect")
+@dbt.command("disconnect", short_help="Close the SSH tunnels dbt started.")
 @click.argument("service", required=False)
 @click.pass_obj
 def disconnect_command(app: _App, service: str | None) -> int:
@@ -181,21 +195,7 @@ def disconnect_command(app: _App, service: str | None) -> int:
     )
 
 
-@dbt.command("test")
-@click.argument("service", required=False)
-@click.pass_obj
-def test_command(app: _App, service: str | None) -> int:
-    """Check SSH access to the hosts used by the tunnels."""
-    return test_tunnels(
-        app.secrets.tunnels,
-        service=service,
-        runtime=app.runtime,
-        stdout=app.stdout,
-        stderr=app.stderr,
-    )
-
-
-@dbt.command("list")
+@dbt.command("list", short_help="Show every tunnel: UP, DOWN or BUSY (alias: ls).")
 @click.pass_obj
 def list_command(app: _App) -> int:
     """Show every tunnel and whether it is UP, DOWN or BUSY (alias: ls)."""
@@ -204,12 +204,16 @@ def list_command(app: _App) -> int:
     )
 
 
-@dbt.command("status")
+@dbt.command("status", short_help="Tunnel status with SSH check, then probe every database.")
 @click.pass_obj
 def status_command(app: _App) -> int:
-    """Show tunnel status and probe every database connection."""
+    """Show tunnel status (DOWN rows get an SSH check) and probe every database."""
     tunnels_code = list_tunnels(
-        app.secrets.tunnels, runtime=app.runtime, stdout=app.stdout, stderr=app.stderr
+        app.secrets.tunnels,
+        runtime=app.runtime,
+        stdout=app.stdout,
+        stderr=app.stderr,
+        ssh_check=True,
     )
     app.stdout.write("\n")
     sync_code = _print_sync_configs(
@@ -224,6 +228,7 @@ def status_command(app: _App) -> int:
 @dbt.group(
     "sync",
     cls=_Group,
+    short_help="Sync PostgreSQL/MongoDB databases, or clean their backups.",
     aliases={"ls": "list", "postgresql": "postgres", "pg": "postgres", "mongo": "mongodb"},
     invoke_without_command=True,
 )
@@ -263,7 +268,9 @@ def sync_list_command(app: _App, status: bool) -> int:
     )
 
 
-@sync_group.command("postgres")
+@sync_group.command(
+    "postgres", short_help="Sync a PostgreSQL database onto a target, or clean backups."
+)
 @click.option("-s", "--source", help=f"Source row ({_INDEX_HELP}).")
 @click.option("-d", "--destination", help=f"Target row ({_INDEX_HELP}).")
 @click.option("-db", "--database", "database", help="Ignored: the source row names the database.")
@@ -312,7 +319,7 @@ def sync_postgres_command(
     )
 
 
-@sync_group.command("mongodb")
+@sync_group.command("mongodb", short_help="Sync a MongoDB database onto a target (alias: mongo).")
 @click.option("-s", "--source", help=f"Source row ({_INDEX_HELP}).")
 @click.option("-d", "--destination", help=f"Target row ({_INDEX_HELP}).")
 @click.option(

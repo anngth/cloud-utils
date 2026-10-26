@@ -1,4 +1,4 @@
-"""SSH tunnels for dbt: connect, disconnect, list, and test.
+"""SSH tunnels for dbt: connect, disconnect, and list.
 
 Every external command is an argv list; no shell and no `timeout` binary.
 Port liveness is checked per port with `lsof` and `ps`, never by a callback.
@@ -335,19 +335,34 @@ def list_tunnels(
     runtime: Runtime,
     stdout: TextIO,
     stderr: TextIO,
+    ssh_check: bool = False,
 ) -> int:
-    """Show a status table for every tunnel row; makes no SSH call."""
+    """Show a status table for every tunnel row.
+
+    Without `ssh_check` no SSH call is made. With it, every DOWN row gets an
+    SSH column saying whether the preflight to its host succeeds (once per
+    user@host), so a DOWN tunnel can be told apart from a broken SSH login.
+    """
     tunnels = _select(configured, None)
     if not tunnels:
         return _nothing_configured(stdout)
     listeners = _Listeners(runtime)
+    preflights: dict[tuple[str, str], str] = {}
+
+    def ssh_result(tunnel: VpsTunnel) -> str:
+        key = (tunnel.user, tunnel.host)
+        if key not in preflights:
+            result = runtime.run_command(_preflight_argv(tunnel.user, tunnel.host))
+            preflights[key] = "ok" if result.returncode == 0 else "failed"
+        return preflights[key]
 
     stdout.write(
         f"{'STATUS':<8}{'SERVICE':<20}{'LOCAL':<8}{'TARGET':<26}"
-        f"{'VIA':<10}{'IP':<18}UPTIME\n"
+        f"{'VIA':<10}{'IP':<18}{'UPTIME':<10}" + ("SSH\n" if ssh_check else "\n")
     )
     for tunnel in tunnels:
         state = listeners.state(tunnel.local_port)
+        ssh = "-"
         if state.listens and state.ours and state.pid is not None:
             status = "UP"
             uptime = _uptime(runtime, state.pid)
@@ -357,10 +372,13 @@ def list_tunnels(
         else:
             status = "DOWN"
             uptime = "-"
+            if ssh_check:
+                ssh = ssh_result(tunnel)
         target = f"{tunnel.target_host}:{tunnel.target_port}"
         stdout.write(
             f"{status:<8}{tunnel.service:<20}{f':{tunnel.local_port}':<8}"
-            f"{target:<26}{tunnel.name:<10}{tunnel.host:<18}{uptime}\n"
+            f"{target:<26}{tunnel.name:<10}{tunnel.host:<18}"
+            + (f"{uptime:<10}{ssh}\n" if ssh_check else f"{uptime}\n")
         )
     return 0
 
@@ -368,41 +386,3 @@ def list_tunnels(
 def _uptime(runtime: Runtime, pid: int) -> str:
     result = runtime.run_command(["ps", "-p", str(pid), "-o", "etime="])
     return result.stdout.strip() or "-"
-
-
-def test_tunnels(
-    configured: Sequence[VpsTunnel],
-    *,
-    service: str | None,
-    runtime: Runtime,
-    stdout: TextIO,
-    stderr: TextIO,
-) -> int:
-    """Run the SSH preflight once per distinct (name, user, host)."""
-    tunnels = _select(configured, service)
-    if service is not None and not tunnels:
-        return _no_match(service, stderr)
-    if not tunnels:
-        return _nothing_configured(stdout)
-
-    hosts: list[tuple[str, str, str]] = []
-    seen: set[tuple[str, str, str]] = set()
-    for tunnel in tunnels:
-        key = (tunnel.name, tunnel.user, tunnel.host)
-        if key not in seen:
-            seen.add(key)
-            hosts.append(key)
-
-    failed = 0
-    for name, user, host in hosts:
-        stdout.write(f"Testing {name} {host}... ")
-        if runtime.run_command(_preflight_argv(user, host)).returncode == 0:
-            stdout.write("ok\n")
-        else:
-            stdout.write("failed\n")
-            failed += 1
-    if failed:
-        stdout.write(f"SSH test: {failed}/{len(hosts)} hosts failed\n")
-    else:
-        stdout.write(f"SSH test: all {len(hosts)} hosts reachable\n")
-    return 1 if failed else 0

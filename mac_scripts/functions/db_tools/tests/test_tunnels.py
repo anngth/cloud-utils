@@ -354,13 +354,41 @@ def test_status_shows_tunnels_then_sync_entries(tmp_path):
     )
 
     assert (code, err) == (0, "")
-    assert all(argv[0] != "ssh" for argv in fake.calls)
     table, _blank, entries = out.partition("\n\n")
-    assert table.startswith("STATUS")
-    assert "UP      postgres" in table
-    assert "DOWN    redis" in table
+    header, up_row, mongo_row, redis_row = table.splitlines()
+    assert header.startswith("STATUS") and header.endswith("UPTIME    SSH")
+    assert up_row.startswith("UP      postgres") and up_row.endswith("01:02     -")
+    assert mongo_row.startswith("DOWN    mongo") and mongo_row.endswith("-         ok")
+    assert redis_row.startswith("DOWN    redis") and redis_row.endswith("-         ok")
+    # only DOWN rows get the SSH preflight, once per host; the UP row is skipped
+    assert fake.preflights() == [
+        [*_PREFLIGHT, "me@10.0.0.1", "exit"],
+        [*_PREFLIGHT, "me@10.0.0.2", "exit"],
+    ]
+    assert fake.tunnel_opens() == []
     assert entries.startswith("🐘 PostgreSQL Sources (0):")
     assert "🎯 MongoDB Targets (0):" in entries
+
+
+def test_status_reports_a_failed_ssh_login_once_per_host(tmp_path):
+    code, out, _err, fake = _drive(
+        tmp_path, [*ROWS, REPLICA_ROW], ["status"], preflight_code=1
+    )
+
+    assert code == 0
+    rows = out.partition("\n\n")[0].splitlines()[1:]
+    assert [row.split()[-1] for row in rows] == ["failed"] * 4
+    assert fake.preflights() == [
+        [*_PREFLIGHT, "me@10.0.0.1", "exit"],
+        [*_PREFLIGHT, "me@10.0.0.2", "exit"],
+    ]
+
+
+def test_list_never_runs_ssh(tmp_path):
+    _code, out, _err, fake = _drive(tmp_path, ROWS, ["list"])
+
+    assert all(argv[0] != "ssh" for argv in fake.calls)
+    assert "SSH" not in out.splitlines()[0]
 
 
 def test_listening_pids_parses_lsof_field_output():
@@ -378,35 +406,6 @@ def test_listening_pids_parses_lsof_field_output():
 
 
 # --- test ---------------------------------------------------------------------
-
-
-def test_test_dedupes_hosts(tmp_path):
-    code, _out, _err, fake = _drive(tmp_path, ROWS, ["test"])
-
-    assert code == 0
-    assert fake.preflights() == [
-        [*_PREFLIGHT, "me@10.0.0.1", "exit"],
-        [*_PREFLIGHT, "me@10.0.0.2", "exit"],
-    ]
-
-
-def test_test_one_failed_host_exits_one(tmp_path):
-    code, out, _err, fake = _drive(tmp_path, ROWS, ["test"], preflight_code=1)
-
-    assert code == 1
-    assert "failed" in out
-    assert len(fake.preflights()) == 2
-
-
-def test_test_rejects_the_file_when_a_tunnel_entry_is_invalid(tmp_path):
-    code, _out, err, fake = _drive(tmp_path, ["bad|row", ROWS[0]], ["test"])
-
-    assert code == 1
-    assert "tunnels[1] (bad): missing field 'host'" in err
-    assert fake.preflights() == []
-
-
-# --- disconnect ---------------------------------------------------------------
 
 
 def test_disconnect_kills_shared_pid_once(tmp_path):
