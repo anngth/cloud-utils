@@ -126,8 +126,8 @@ Layout:
 | `dbt` | `dbt/secrets.toml`                                  | `mac_scripts/functions/db_tools/secrets.example.toml`                         |
 
 On first run, `bud` bootstraps missing `desired.json` from
-`desired.example.json`. `dbt` converts the old zsh-array `dbt/secrets` (or the legacy
-`dbt_secrets` paths) into `secrets.toml`, else copies `secrets.example.toml`. SKM creates `sources.json` automatically; legacy `profiles.json`,
+`desired.example.json`. `dbt` copies `secrets.example.toml` to `dbt/secrets.toml` when it is
+missing. SKM creates `sources.json` automatically; legacy `profiles.json`,
 `projects.json`, and `list.json` are migrated once and retained unchanged.
 `gt backup` creates `backups.json` on first list use (and migrates older schemas).
 

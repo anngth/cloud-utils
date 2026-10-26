@@ -74,7 +74,6 @@ def run_cli(
         resolved = resolve_secrets_file(
             env,
             home=home,
-            repo_root=Path(__file__).resolve().parents[3],
             example=Path(__file__).resolve().parent / "secrets.example.toml",
         )
         stderr.writelines(f"ℹ️  {notice}\n" for notice in resolved.notices)

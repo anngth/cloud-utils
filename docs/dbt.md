@@ -30,6 +30,5 @@ dbt sync postgres -c  # postgres only
 - **SSH preflight** runs with `StrictHostKeyChecking=accept-new`: unknown hosts are recorded, a changed key still fails.
 - **Errors never quote credentials** — a bad `url`/`uri` is reported with `user:password@` masked, and `dbt config` masks them too.
 - **Secrets file** — TOML; an invalid entry rejects the whole file with its location (`postgres.sources[2] (name): ...`). Tunnels of one VPS share a `name`; two tunnels may not share a `local_port`. The file is created on first run and dbt prints where it put it.
-- **Migration from the zsh-array file** — on first run dbt converts `dbt/secrets` (or the older iCloud/repo `dbt_secrets`) into `secrets.toml`, renames the one next to it to `secrets.zsh.bak`, and leaves rows it cannot convert as comments in the new file. The old format is read for nothing else.
 
 Secrets sections: `[[tunnels]]`, `[[postgres.sources]]`, `[[postgres.targets]]`, `[[mongo.sources]]`, `[[mongo.targets]]` (see [`secrets.example.toml`](../mac_scripts/functions/db_tools/secrets.example.toml)). A Postgres source needs `database` only when it differs from the URL path.
