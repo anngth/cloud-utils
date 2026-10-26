@@ -10,6 +10,8 @@ from shared.process import CommandResult
 
 from db_tools.cli import run_cli
 from db_tools.runtime import Runtime, SignalHooks
+from db_tools.secrets import parse_secrets_text
+from db_tools.tests.secrets_toml import toml_secrets, write_secrets
 from db_tools.tunnels import connection_hint
 
 ROWS = (
@@ -18,6 +20,7 @@ ROWS = (
     "b|me|10.0.0.2|redis|6379|db.internal|6379",
 )
 REPLICA_ROW = "a|me|10.0.0.1|postgres-replica|5433|db.internal|5432"
+TUNNELS = parse_secrets_text(toml_secrets(tunnels=ROWS)).tunnels
 
 _PREFLIGHT = [
     "ssh",
@@ -111,9 +114,7 @@ def _runtime(fake: FakeTunnels) -> Runtime:
 
 
 def _drive(tmp_path, rows, argv, **fake_args):
-    path = tmp_path / "dbt_secrets"
-    lines = ["typeset -a VPS_CONFIGS=(", *(f'  "{row}"' for row in rows), ")"]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    path = write_secrets(tmp_path / "secrets.toml", tunnels=rows)
     fake = FakeTunnels(**fake_args)
     out = io.StringIO()
     err = io.StringIO()
@@ -211,14 +212,13 @@ def test_connect_port_filter_matches_local_port_only(tmp_path):
     assert fake.forwards(argv) == ["5432:db.internal:5432"]
 
 
-def test_connect_skips_zero_local_port_with_warning(tmp_path):
+def test_connect_rejects_a_zero_local_port(tmp_path):
     rows = ("a|me|10.0.0.1|ghost|0|db.internal|5432", ROWS[0])
     code, _out, err, fake = _drive(tmp_path, rows, ["connect"])
 
-    assert code == 0
-    assert rows[0] in err
-    assert len(fake.tunnel_opens()) == 1
-    assert fake.forwards(fake.tunnel_opens()[0]) == ["5432:db.internal:5432"]
+    assert code == 1
+    assert "tunnels[1] (a): 'local_port' must be between 1 and 65535" in err
+    assert fake.tunnel_opens() == []
 
 
 def test_connect_no_match_exits_one_without_ssh(tmp_path):
@@ -266,13 +266,12 @@ def test_connect_our_tunnel_counts_as_already_on(tmp_path):
     assert all(argv[0] != "ssh" for argv in fake.calls)
 
 
-def test_connect_reports_invalid_row_and_opens_rest(tmp_path):
+def test_connect_rejects_the_file_when_a_tunnel_entry_is_invalid(tmp_path):
     code, _out, err, fake = _drive(tmp_path, ["bad|row", ROWS[0]], ["connect"])
 
-    assert code == 0
-    assert "bad|row" in err
-    assert len(fake.tunnel_opens()) == 1
-    assert fake.forwards(fake.tunnel_opens()[0]) == ["5432:db.internal:5432"]
+    assert code == 1
+    assert "tunnels[1] (bad): missing field 'host'" in err
+    assert fake.tunnel_opens() == []
 
 
 def test_connect_empty_vps_list_exits_zero(tmp_path):
@@ -379,12 +378,12 @@ def test_test_one_failed_host_exits_one(tmp_path):
     assert len(fake.preflights()) == 2
 
 
-def test_test_skips_invalid_rows(tmp_path):
+def test_test_rejects_the_file_when_a_tunnel_entry_is_invalid(tmp_path):
     code, _out, err, fake = _drive(tmp_path, ["bad|row", ROWS[0]], ["test"])
 
-    assert code == 0
-    assert "bad|row" in err
-    assert fake.preflights() == [[*_PREFLIGHT, "me@10.0.0.1", "exit"]]
+    assert code == 1
+    assert "tunnels[1] (bad): missing field 'host'" in err
+    assert fake.preflights() == []
 
 
 # --- disconnect ---------------------------------------------------------------
@@ -485,25 +484,12 @@ def test_is_our_tunnel_matches_the_local_port_exactly() -> None:
     assert is_our_tunnel("ssh -L garbage me@host", 5432) is False
 
 
-def test_parse_vps_row():
-    from db_tools.tunnels import parse_vps_row
-
-    row = parse_vps_row("v|me|10.0.0.1|postgres|5432|db.internal|5432")
-    assert row is not None
-    assert (row.name, row.user, row.host, row.service) == ("v", "me", "10.0.0.1", "postgres")
-    assert (row.local_port, row.target_host, row.target_port) == (5432, "db.internal", 5432)
-    assert parse_vps_row("bad|row") is None
-    assert parse_vps_row("v|me|10.0.0.1|postgres|x|db.internal|5432") is None
-    assert parse_vps_row("v|me|10.0.0.1|postgres|70000|db.internal|5432") is None
-    assert parse_vps_row("v|me|10.0.0.1|postgres|0|db.internal|5432") is None
-
-
 # --- connection hints ---------------------------------------------------------
 
 
 def test_hint_names_the_down_tunnel_and_the_connect_command() -> None:
     fake = FakeTunnels()
-    text = connection_hint(ROWS, "localhost", 27017, runtime=_runtime(fake))
+    text = connection_hint(TUNNELS, "localhost", 27017, runtime=_runtime(fake))
     assert text == "tunnel mongo (a) is DOWN; run: dbt connect mongo"
 
 
@@ -511,7 +497,7 @@ def test_hint_blames_the_remote_side_when_our_tunnel_is_up() -> None:
     fake = FakeTunnels(
         listeners={27017: "77"}, commands={77: "ssh -f -N -L 27017:db.internal:27017 me@10.0.0.1"}
     )
-    text = connection_hint(ROWS, "127.0.0.1", 27017, runtime=_runtime(fake))
+    text = connection_hint(TUNNELS, "127.0.0.1", 27017, runtime=_runtime(fake))
     assert text.startswith(
         "tunnel mongo (a) is UP, so 10.0.0.1 refused the forward to db.internal:27017"
     )
@@ -519,7 +505,7 @@ def test_hint_blames_the_remote_side_when_our_tunnel_is_up() -> None:
 
 def test_hint_reports_a_foreign_listener() -> None:
     fake = FakeTunnels(listeners={27017: "88"}, commands={88: "/usr/local/bin/mongod --port 27017"})
-    text = connection_hint(ROWS, "localhost", 27017, runtime=_runtime(fake))
+    text = connection_hint(TUNNELS, "localhost", 27017, runtime=_runtime(fake))
     assert "used by another process" in text
     assert "mongod --port 27017" in text
 
@@ -527,5 +513,5 @@ def test_hint_reports_a_foreign_listener() -> None:
 @pytest.mark.parametrize(("host", "port"), [("db.example", 27017), ("localhost", 9999)])
 def test_hint_is_empty_for_remote_hosts_and_ports_without_a_row(host: str, port: int) -> None:
     fake = FakeTunnels()
-    assert connection_hint(ROWS, host, port, runtime=_runtime(fake)) == ""
+    assert connection_hint(TUNNELS, host, port, runtime=_runtime(fake)) == ""
     assert fake.calls == []  # nothing is probed when no tunnel row applies

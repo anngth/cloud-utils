@@ -12,6 +12,7 @@ from db_tools.mongo import MONGO_DROP_SCRIPT, mongo_eval_argv
 from db_tools.postgres import parse_postgres_url
 from db_tools.runtime import Runtime, SignalHooks
 from db_tools.secrets import parse_secrets_text
+from db_tools.tests.secrets_toml import write_secrets
 from shared.process import CommandResult
 
 BACKUP_NAME = 'weird"name_backup_20260101_120000'
@@ -64,16 +65,9 @@ def _runtime(fake: FakePostgres) -> Runtime:
     )
 
 
-def _write_secrets(path: Path, lines: list[str]) -> None:
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
 def _drive(tmp_path: Path, argv: list[str]) -> tuple[int, str, str, FakePostgres]:
-    path = tmp_path / "dbt_secrets"
-    _write_secrets(
-        path,
-        ["typeset -a POSTGRES_SOURCES=(", *(f'  "{row}"' for row in SOURCES), ")"]
-        + ["typeset -a POSTGRES_TARGETS=(", *(f'  "{row}"' for row in TARGETS), ")"],
+    path = write_secrets(
+        tmp_path / "secrets.toml", postgres_sources=SOURCES, postgres_targets=TARGETS
     )
     fake = FakePostgres()
     out = io.StringIO()
@@ -106,16 +100,15 @@ def test_vps_user_is_data_not_shell(tmp_path: Path) -> None:
     sentinel = tmp_path / "pwned"
     user = f"admin'; touch {sentinel}; echo '"
     text = (
-        "typeset -a VPS_CONFIGS=(\n"
-        f'  "vps|{user}|10.0.0.1|postgres|5432|127.0.0.1|5432"\n'
-        ")\n"
+        '[[tunnels]]\nname = "vps"\nuser = "' + user + '"\nhost = "10.0.0.1"\n'
+        'service = "postgres"\nlocal_port = 5432\ntarget_host = "127.0.0.1"\ntarget_port = 5432\n'
     )
 
-    raw = parse_secrets_text(text)
+    secrets = parse_secrets_text(text)
 
     assert not sentinel.exists()
-    (row,) = raw.vps
-    assert row.split("|")[1] == user
+    (tunnel,) = secrets.tunnels
+    assert tunnel.user == user
 
 
 def test_mongo_keeps_database_name_out_of_the_javascript() -> None:

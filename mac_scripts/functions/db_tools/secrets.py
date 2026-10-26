@@ -1,116 +1,228 @@
-"""Parser for the dbt secrets zsh-array file.
+"""Loader for the dbt secrets file (TOML).
 
-The file is never handed to zsh; we only read a fixed, double-quoted
-subset of zsh syntax. Anything outside that subset is rejected instead
-of interpreted.
+The file has three optional sections::
+
+    [[tunnels]]           name, user, host, service, local_port, target_host, target_port
+    [[postgres.sources]]  name, url, database (defaults to the URL path)
+    [[postgres.targets]]  name, url
+    [[mongo.sources]]     name, uri, databases (a list)
+    [[mongo.targets]]     name, uri
+
+Anything else, a missing field, a wrong type, or a bad port rejects the
+whole file: dbt never guesses what a half-valid entry meant.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+import tomllib
+from collections.abc import Callable, Mapping
+from typing import Any
+from urllib.parse import unquote
 
-from .models import RawSecrets
+from .models import MongoSource, MongoTarget, PostgresSource, PostgresTarget, Secrets, VpsTunnel
 
-_TYPESET = re.compile(r"typeset -a (\w+)=\($")
 _CREDENTIALS = re.compile(r"(://)[^/\s|]*@")
-_ESCAPES = ('"', "\\", "$")
-
-_ARRAY_FIELDS: Mapping[str, str] = {
-    "VPS_CONFIGS": "vps",
-    "POSTGRES_SOURCES": "postgres_sources",
-    "POSTGRES_TARGETS": "postgres_targets",
-    "MONGO_SOURCES": "mongo_sources",
-    "MONGO_TARGETS": "mongo_targets",
-}
+_MIN_PORT = 1
+_MAX_PORT = 65535
+_POSTGRES_SCHEMES = ("postgresql://", "postgres://")
+_MONGO_SCHEMES = ("mongodb://", "mongodb+srv://")
 
 
 class SecretsError(Exception):
-    """A secrets file failed validation.
-
-    Attributes:
-        line: 1-based number of the offending source line.
-    """
-
-    def __init__(self, line: int, message: str) -> None:
-        super().__init__(f"line {line}: {message}")
-        self.line = line
+    """The secrets file is not valid TOML or does not match the dbt layout."""
 
 
 def redact(text: str) -> str:
-    """Mask `scheme://user:password@` so a row can be quoted in a message."""
+    """Mask `scheme://user:password@` so a value can be quoted in a message."""
     return _CREDENTIALS.sub(r"\1***@", text)
 
 
-def parse_secrets_text(text: str) -> RawSecrets:
-    """Parse a secrets file into raw rows, or raise SecretsError."""
-    arrays: dict[str, list[str]] = {}
-    seen_names: set[str] = set()
-    open_field: str | None = None
-    open_line = 0
+def parse_secrets_text(text: str) -> Secrets:
+    """Parse a secrets file into typed entries, or raise SecretsError."""
+    try:
+        document = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise SecretsError(f"invalid TOML: {exc}") from None
 
-    for lineno, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-
-        if open_field is None:
-            match = _TYPESET.fullmatch(line)
-            if match is None:
-                raise SecretsError(lineno, "expected `typeset -a NAME=(`, a comment, or blank line")
-            name = match[1]
-            field = _ARRAY_FIELDS.get(name)
-            if field is None:
-                raise SecretsError(lineno, f"unknown secrets array name: {name}")
-            if name in seen_names:
-                raise SecretsError(lineno, f"duplicate array: {name}")
-            seen_names.add(name)
-            arrays[field] = []
-            open_field = field
-            open_line = lineno
-            continue
-
-        if line == ")":
-            open_field = None
-            continue
-
-        arrays[open_field].append(_read_element(line, lineno))
-
-    if open_field is not None:
-        raise SecretsError(open_line, f"array {open_field} is never closed with `)`")
-
-    return RawSecrets(
-        vps=tuple(arrays.get("vps", ())),
-        postgres_sources=tuple(arrays.get("postgres_sources", ())),
-        postgres_targets=tuple(arrays.get("postgres_targets", ())),
-        mongo_sources=tuple(arrays.get("mongo_sources", ())),
-        mongo_targets=tuple(arrays.get("mongo_targets", ())),
+    _only_keys(document, "", ("tunnels", "postgres", "mongo"))
+    postgres = _section(document, "postgres")
+    mongo = _section(document, "mongo")
+    _only_keys(postgres, "postgres", ("sources", "targets"))
+    _only_keys(mongo, "mongo", ("sources", "targets"))
+    return Secrets(
+        tunnels=_entries(document, "tunnels", _tunnel, unique="local_port"),
+        postgres_sources=_entries(postgres, "sources", _postgres_source, "postgres."),
+        postgres_targets=_entries(postgres, "targets", _postgres_target, "postgres."),
+        mongo_sources=_entries(mongo, "sources", _mongo_source, "mongo."),
+        mongo_targets=_entries(mongo, "targets", _mongo_target, "mongo."),
     )
 
 
-def _read_element(line: str, lineno: int) -> str:
-    if not line.startswith('"'):
-        raise SecretsError(lineno, "array elements must be double-quoted strings")
-    chars: list[str] = []
-    i = 1
-    while i < len(line):
-        char = line[i]
-        if char == "\\":
-            if i + 1 >= len(line) or line[i + 1] not in _ESCAPES:
-                raise SecretsError(lineno, "only \\\\, \\\" and \\$ are valid escapes")
-            chars.append(line[i + 1])
-            i += 2
-            continue
-        if char == '"':
-            if line[i + 1 :].strip():
-                raise SecretsError(lineno, "unexpected text after closing quote")
-            return "".join(chars)
-        if char == "`":
-            raise SecretsError(lineno, "backticks are not allowed")
-        if char == "$":
-            # zsh would expand this; dbt never does, so say so instead of
-            # silently keeping the literal text.
-            raise SecretsError(lineno, "unescaped $ is not expanded; write \\$ for a literal $")
-        chars.append(char)
-        i += 1
-    raise SecretsError(lineno, "unterminated double-quoted string")
+# --- sections -------------------------------------------------------------------
+
+
+def _only_keys(table: Mapping[str, Any], where: str, allowed: tuple[str, ...]) -> None:
+    for key in table:
+        if key not in allowed:
+            place = f"{where}.{key}" if where else key
+            raise SecretsError(f"unknown key {place!r}; expected one of: {', '.join(allowed)}")
+
+
+def _section(document: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    value = document.get(key, {})
+    if not isinstance(value, Mapping):
+        raise SecretsError(f"{key!r} must be a table ([{key}]), not {_kind(value)}")
+    return value
+
+
+def _entries[T](
+    table: Mapping[str, Any],
+    key: str,
+    build: Callable[[_Entry], T],
+    prefix: str = "",
+    unique: str = "name",
+) -> tuple[T, ...]:
+    """Build every `[[prefix.key]]` entry; the `unique` field may not repeat in the list."""
+    value = table.get(key, [])
+    label = f"{prefix}{key}"
+    if not isinstance(value, list) or not all(isinstance(item, Mapping) for item in value):
+        raise SecretsError(f"{label!r} must be an array of tables ([[{label}]])")
+    items: list[T] = []
+    seen: dict[object, int] = {}
+    for index, item in enumerate(value, start=1):
+        entry = _Entry(f"{label}[{index}]", item)
+        items.append(build(entry))
+        marker = item[unique]
+        if marker in seen:
+            raise SecretsError(
+                f"{entry.where}: {unique} {marker!r} is already used by {label}[{seen[marker]}]"
+            )
+        seen[marker] = index
+    return tuple(items)
+
+
+# --- entries --------------------------------------------------------------------
+
+
+class _Entry:
+    """One table of the file, with typed field access that names its location."""
+
+    def __init__(self, where: str, table: Mapping[str, Any]) -> None:
+        self.table = table
+        name = table.get("name")
+        self.where = f"{where} ({name})" if isinstance(name, str) and name else where
+
+    def only(self, *keys: str) -> None:
+        for key in self.table:
+            if key not in keys:
+                raise SecretsError(
+                    f"{self.where}: unknown field {key!r}; expected: {', '.join(keys)}"
+                )
+
+    def string(self, key: str) -> str:
+        value = self.table.get(key)
+        if value is None:
+            raise SecretsError(f"{self.where}: missing field {key!r}")
+        if not isinstance(value, str) or not value:
+            raise SecretsError(f"{self.where}: {key!r} must be a non-empty string")
+        return value
+
+    def optional_string(self, key: str) -> str | None:
+        value = self.table.get(key)
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value:
+            raise SecretsError(f"{self.where}: {key!r} must be a non-empty string")
+        return value
+
+    def strings(self, key: str) -> tuple[str, ...]:
+        value = self.table.get(key)
+        if value is None:
+            raise SecretsError(f"{self.where}: missing field {key!r}")
+        if (
+            not isinstance(value, list)
+            or not value
+            or not all(isinstance(item, str) and item for item in value)
+        ):
+            raise SecretsError(f"{self.where}: {key!r} must be a non-empty list of strings")
+        return tuple(value)
+
+    def port(self, key: str) -> int:
+        value = self.table.get(key)
+        if value is None:
+            raise SecretsError(f"{self.where}: missing field {key!r}")
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise SecretsError(f"{self.where}: {key!r} must be an integer port, not {_kind(value)}")
+        if not _MIN_PORT <= value <= _MAX_PORT:
+            raise SecretsError(f"{self.where}: {key!r} must be between {_MIN_PORT} and {_MAX_PORT}")
+        return value
+
+    def url(self, key: str, schemes: tuple[str, ...]) -> str:
+        value = self.string(key)
+        if not value.startswith(schemes):
+            raise SecretsError(
+                f"{self.where}: {key!r} must start with {' or '.join(schemes)}"
+                f" (got {redact(value)})"
+            )
+        return value
+
+
+def _kind(value: object) -> str:
+    return {str: "a string", bool: "a boolean", list: "an array"}.get(type(value), "a table")
+
+
+def _tunnel(entry: _Entry) -> VpsTunnel:
+    entry.only("name", "user", "host", "service", "local_port", "target_host", "target_port")
+    return VpsTunnel(
+        name=entry.string("name"),
+        user=entry.string("user"),
+        host=entry.string("host"),
+        service=entry.string("service"),
+        local_port=entry.port("local_port"),
+        target_host=entry.string("target_host"),
+        target_port=entry.port("target_port"),
+    )
+
+
+def _postgres_source(entry: _Entry) -> PostgresSource:
+    entry.only("name", "url", "database")
+    url = entry.url("url", _POSTGRES_SCHEMES)
+    database = entry.optional_string("database") or _url_database(url)
+    if not database:
+        raise SecretsError(
+            f"{entry.where}: set 'database'; the url names no database in its path"
+        )
+    return PostgresSource(name=entry.string("name"), url=url, database=database)
+
+
+def _postgres_target(entry: _Entry) -> PostgresTarget:
+    entry.only("name", "url")
+    return PostgresTarget(name=entry.string("name"), url=entry.url("url", _POSTGRES_SCHEMES))
+
+
+def _mongo_source(entry: _Entry) -> MongoSource:
+    entry.only("name", "uri", "databases")
+    return MongoSource(
+        name=entry.string("name"),
+        uri=entry.url("uri", _MONGO_SCHEMES),
+        databases=entry.strings("databases"),
+    )
+
+
+def _mongo_target(entry: _Entry) -> MongoTarget:
+    entry.only("name", "uri")
+    return MongoTarget(name=entry.string("name"), uri=entry.url("uri", _MONGO_SCHEMES))
+
+
+def _url_database(url: str) -> str:
+    """Database path of a Postgres URL, split the way `parse_postgres_url` does.
+
+    The host starts after the last `@` (passwords may hold `@`, `#` or `?`),
+    and the database is the first path segment before any `?query`.
+    """
+    for scheme in _POSTGRES_SCHEMES:
+        url = url.removeprefix(scheme)
+    host_part = url.rpartition("@")[2]
+    host_part = host_part.partition("?")[0]
+    return unquote(host_part.partition("/")[2].split("/", 1)[0])

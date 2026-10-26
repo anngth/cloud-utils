@@ -15,7 +15,7 @@ from typing import TextIO
 
 from shared.process import CommandResult
 
-from .models import MongoSource, MongoTarget
+from .models import MongoTarget
 from .runtime import Runtime, run_with_interrupts
 
 MONGO_EXISTS_SCRIPT = (
@@ -109,25 +109,6 @@ def mongo_uri_database(uri: str) -> str:
     if not sep:
         return ""
     return rest.split("?", 1)[0].split("/", 1)[0]
-
-
-def parse_mongo_source_row(row: str) -> MongoSource | None:
-    """Parse `name|uri|db1,db2,db3`; None when one of the three is missing."""
-    name, sep, rest = row.partition("|")
-    if not sep:
-        return None
-    uri, sep, databases = rest.partition("|")
-    if not sep or not name or not uri or not databases:
-        return None
-    return MongoSource(name=name, uri=uri, databases=databases)
-
-
-def parse_mongo_target_row(row: str) -> MongoTarget | None:
-    """Parse `name|uri`; None when a field is missing or a third one is present."""
-    name, sep, uri = row.partition("|")
-    if not sep or not name or not uri or "|" in uri:
-        return None
-    return MongoTarget(name=name, uri=uri)
 
 
 def _find_client(runtime: Runtime) -> str | None:

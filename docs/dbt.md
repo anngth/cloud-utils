@@ -1,11 +1,13 @@
 # dbt
 
-Database tools — `$CLOUD_UTILS_CONFIG_DIR/dbt/secrets`.
+Database tools — `$CLOUD_UTILS_CONFIG_DIR/dbt/secrets.toml`.
 
 Config paths: [setup.md — Local config](setup.md#local-config).
 
 ```bash
 dbt --help
+dbt config          # show the secrets file, credentials masked
+dbt config path     # only its location (e.g. $EDITOR "$(dbt config path)")
 dbt connect
 dbt list             # tunnels: UP / DOWN / BUSY
 dbt sync list --status
@@ -26,7 +28,8 @@ dbt sync postgres -c  # postgres only
 - **Connection failures through a tunnel** — when a sync cannot reach `localhost:<port>` and a tunnel row uses that port, dbt says whether the tunnel is DOWN (`dbt connect <service>`), UP but refused on the server side, or the port is taken by another process.
 - **Timeouts** — Postgres clients use `PGCONNECT_TIMEOUT=10` unless the environment sets its own; `mongosh` probes get `serverSelectionTimeoutMS=5000` unless the URI sets one.
 - **SSH preflight** runs with `StrictHostKeyChecking=accept-new`: unknown hosts are recorded, a changed key still fails.
-- **Warnings never quote credentials** — an invalid secrets row is reported with `user:password@` masked.
-- **Secrets file** — only double-quoted rows; `$` must be written `\$`. The file is bootstrapped on first run and dbt prints where it put it.
+- **Errors never quote credentials** — a bad `url`/`uri` is reported with `user:password@` masked, and `dbt config` masks them too.
+- **Secrets file** — TOML; an invalid entry rejects the whole file with its location (`postgres.sources[2] (name): ...`). Tunnels of one VPS share a `name`; two tunnels may not share a `local_port`. The file is created on first run and dbt prints where it put it.
+- **Migration from the zsh-array file** — on first run dbt converts `dbt/secrets` (or the older iCloud/repo `dbt_secrets`) into `secrets.toml`, renames the one next to it to `secrets.zsh.bak`, and leaves rows it cannot convert as comments in the new file. The old format is read for nothing else.
 
-Secrets: `VPS_CONFIGS`, `POSTGRES_SOURCES`, `POSTGRES_TARGETS`, `MONGO_SOURCES`, `MONGO_TARGETS` (see [`secrets.example`](../mac_scripts/functions/db_tools/secrets.example)).
+Secrets sections: `[[tunnels]]`, `[[postgres.sources]]`, `[[postgres.targets]]`, `[[mongo.sources]]`, `[[mongo.targets]]` (see [`secrets.example.toml`](../mac_scripts/functions/db_tools/secrets.example.toml)). A Postgres source needs `database` only when it differs from the URL path.

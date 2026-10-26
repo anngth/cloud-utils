@@ -11,19 +11,10 @@ from pathlib import Path
 from typing import NoReturn, TextIO
 
 from .config import ConfigError, load_secrets, resolve_secrets_file
-from .models import MongoTarget, PostgresTarget, RawSecrets
-from .mongo import (
-    clear_mongo_backups,
-    mongo_host,
-    mongo_status,
-    parse_mongo_source_row,
-    parse_mongo_target_row,
-    perform_mongo_sync,
-)
+from .models import MongoTarget, PostgresTarget, Secrets, VpsTunnel
+from .mongo import clear_mongo_backups, mongo_host, mongo_status, perform_mongo_sync
 from .postgres import (
     clear_postgres_backups,
-    parse_postgres_source_row,
-    parse_postgres_target_row,
     parse_postgres_url,
     perform_postgres_sync,
     postgres_status,
@@ -43,6 +34,7 @@ usage: dbt <command> [args]
 
 commands:
   help              show this help
+  config [path]     show the secrets file, credentials masked; `path` prints only its location
   connect [filter]  open SSH tunnels for the secrets file
   disconnect [..]   close SSH tunnels started by dbt
   list              show tunnels and whether each is UP, DOWN or BUSY
@@ -83,18 +75,21 @@ def run_cli(
             env,
             home=home,
             repo_root=Path(__file__).resolve().parents[3],
-            example=Path(__file__).resolve().parent / "secrets.example",
+            example=Path(__file__).resolve().parent / "secrets.example.toml",
         )
         stderr.writelines(f"ℹ️  {notice}\n" for notice in resolved.notices)
-        raw_secrets = load_secrets(resolved.path)
+        secrets = load_secrets(resolved.path)
     except (SecretsError, ConfigError) as exc:
         stderr.write(f"{exc}\n")
         return 1
 
     runtime = dependencies if dependencies is not None else default_runtime()
     command, args = argv[0], list(argv[1:])
-    rows = raw_secrets.vps
+    tunnels = secrets.tunnels
     service = args[0] if args else None
+
+    if command == "config":
+        return _config_cli(args, secrets=secrets, path=resolved.path, stdout=stdout, stderr=stderr)
 
     if command in ("connect", "disconnect", "test"):
         if len(args) > 1:
@@ -105,7 +100,7 @@ def run_cli(
             "disconnect": disconnect_tunnels,
             "test": test_tunnels,
         }[command]
-        return dispatch(rows, service=service, runtime=runtime, stdout=stdout, stderr=stderr)
+        return dispatch(tunnels, service=service, runtime=runtime, stdout=stdout, stderr=stderr)
 
     if command in ("list", "ls"):
         if args == ["--status"]:
@@ -117,11 +112,11 @@ def run_cli(
         if args:
             stderr.write(f"unknown option: {args[0]}\n" + USAGE)
             return 1
-        return list_tunnels(rows, runtime=runtime, stdout=stdout, stderr=stderr)
+        return list_tunnels(tunnels, runtime=runtime, stdout=stdout, stderr=stderr)
 
     if command == "sync":
         return _run_sync(
-            args, raw_secrets=raw_secrets, runtime=runtime, stdout=stdout, stderr=stderr
+            args, secrets=secrets, runtime=runtime, stdout=stdout, stderr=stderr
         )
 
     stderr.write(f"unknown command: {argv[0]}\n" + USAGE)
@@ -131,7 +126,7 @@ def run_cli(
 def _run_sync(
     args: list[str],
     *,
-    raw_secrets: RawSecrets,
+    secrets: Secrets,
     runtime: Runtime,
     stdout: TextIO,
     stderr: TextIO,
@@ -142,7 +137,7 @@ def _run_sync(
     subcommand, rest = args[0], args[1:]
     if subcommand in ("-c", "--clear-backups"):
         return _clear_backups_cli(
-            rest, raw_secrets=raw_secrets, runtime=runtime, stdout=stdout, stderr=stderr
+            rest, secrets=secrets, runtime=runtime, stdout=stdout, stderr=stderr
         )
     if subcommand in ("list", "ls"):
         status = False
@@ -152,15 +147,15 @@ def _run_sync(
                 return 1
             status = True
         return _print_sync_configs(
-            raw_secrets, status=status, runtime=runtime, stdout=stdout, stderr=stderr
+            secrets, status=status, runtime=runtime, stdout=stdout, stderr=stderr
         )
     if subcommand in ("postgres", "postgresql", "pg"):
         return _postgres_cli(
-            rest, raw_secrets=raw_secrets, runtime=runtime, stdout=stdout, stderr=stderr
+            rest, secrets=secrets, runtime=runtime, stdout=stdout, stderr=stderr
         )
     if subcommand == "mongodb":
         return _mongo_sync_cli(
-            rest, raw_secrets=raw_secrets, runtime=runtime, stdout=stdout, stderr=stderr
+            rest, secrets=secrets, runtime=runtime, stdout=stdout, stderr=stderr
         )
     stderr.write(f"unknown sync type: {subcommand}\n" + USAGE)
     return 1
@@ -169,40 +164,17 @@ def _run_sync(
 # --- secrets rows ---------------------------------------------------------------
 
 
-def _parse_rows[T](
-    rows: Sequence[str], parse: Callable[[str], T | None], stderr: TextIO
-) -> list[T]:
-    """Every valid row, in order; invalid rows are reported and skipped."""
-    parsed: list[T] = []
-    for row in rows:
-        item = parse(row)
-        if item is None:
-            stderr.write(f"skipped invalid row: {redact(row)}\n")
-        else:
-            parsed.append(item)
-    return parsed
-
-
-def _select_row[T](
-    rows: Sequence[str],
-    parse: Callable[[str], T | None],
-    text: str,
-    kind: str,
-    stderr: TextIO,
-) -> T | None:
-    """The row at a 1-based index, or None after an error message."""
+def _select[T](items: Sequence[T], text: str, kind: str, stderr: TextIO) -> T | None:
+    """The entry at a 1-based index, or None after an error message."""
     try:
         index = int(text)
     except ValueError:
         index = 0
-    if not 1 <= index <= len(rows):
+    if not 1 <= index <= len(items):
         stderr.write(f"❌ Error: Invalid {kind} index: {text}\n")
-        stderr.write(f"   Available {kind.rsplit(' ', 1)[-1]}s: 1-{len(rows)}\n")
+        stderr.write(f"   Available {kind.rsplit(' ', 1)[-1]}s: 1-{len(items)}\n")
         return None
-    item = parse(rows[index - 1])
-    if item is None:
-        stderr.write(f"❌ Error: {kind} row {index} is invalid\n")
-    return item
+    return items[index - 1]
 
 
 def _status_icon(status: bool | None) -> str:
@@ -215,7 +187,7 @@ def _status_icon(status: bool | None) -> str:
 
 
 def _print_sync_configs(
-    raw_secrets: RawSecrets,
+    secrets: Secrets,
     *,
     status: bool,
     runtime: Runtime,
@@ -223,10 +195,10 @@ def _print_sync_configs(
     stderr: TextIO,
 ) -> int:
     """Show sync entries with 1-based indexes; --status probes every entry at once."""
-    sources = _parse_rows(raw_secrets.postgres_sources, parse_postgres_source_row, stderr)
-    targets = _parse_rows(raw_secrets.postgres_targets, parse_postgres_target_row, stderr)
-    mongo_sources = _parse_rows(raw_secrets.mongo_sources, parse_mongo_source_row, stderr)
-    mongo_targets = _parse_rows(raw_secrets.mongo_targets, parse_mongo_target_row, stderr)
+    sources = secrets.postgres_sources
+    targets = secrets.postgres_targets
+    mongo_sources = secrets.mongo_sources
+    mongo_targets = secrets.mongo_targets
 
     probes: list[Callable[[], bool | None]] = []
     if status:
@@ -265,7 +237,7 @@ def _print_sync_configs(
     stdout.write(f"\n🍃 MongoDB Sources ({len(mongo_sources)}):\n")
     for index, msource in enumerate(mongo_sources, start=1):
         stdout.write(
-            f"  {mark()}{index}) {msource.name} → {msource.databases}"
+            f"  {mark()}{index}) {msource.name} → {','.join(msource.databases)}"
             f" | {mongo_host(msource.uri)}\n"
         )
     if not mongo_sources:
@@ -294,8 +266,10 @@ def _probe_all(probes: Sequence[Callable[[], bool | None]]) -> list[bool | None]
         return list(pool.map(lambda probe: probe(), probes))
 
 
-def _connection_hint(rows: Sequence[str], runtime: Runtime) -> Callable[[str, int], str]:
-    return lambda host, port: connection_hint(rows, host, port, runtime=runtime)
+def _connection_hint(
+    tunnels: Sequence[VpsTunnel], runtime: Runtime
+) -> Callable[[str, int], str]:
+    return lambda host, port: connection_hint(tunnels, host, port, runtime=runtime)
 
 
 # --- sync postgres --------------------------------------------------------------
@@ -304,7 +278,7 @@ def _connection_hint(rows: Sequence[str], runtime: Runtime) -> Callable[[str, in
 def _postgres_cli(
     args: list[str],
     *,
-    raw_secrets: RawSecrets,
+    secrets: Secrets,
     runtime: Runtime,
     stdout: TextIO,
     stderr: TextIO,
@@ -353,7 +327,7 @@ def _postgres_cli(
             source_text,
             destination_text,
             dry_run=dry_run,
-            raw_secrets=raw_secrets,
+            secrets=secrets,
             runtime=runtime,
             stdout=stdout,
             stderr=stderr,
@@ -365,18 +339,16 @@ def _postgres_cli(
     if source_text is None:
         stderr.write("❌ Error: PostgreSQL sync requires --source\n" + _LIST_HINT)
         return 1
-    destination = _select_row(
-        raw_secrets.postgres_targets,
-        parse_postgres_target_row,
+    destination = _select(
+        secrets.postgres_targets,
         destination_text,
         "PostgreSQL destination",
         stderr,
     )
     if destination is None:
         return 1
-    source = _select_row(
-        raw_secrets.postgres_sources,
-        parse_postgres_source_row,
+    source = _select(
+        secrets.postgres_sources,
         source_text,
         "PostgreSQL source",
         stderr,
@@ -395,7 +367,7 @@ def _postgres_cli(
         runtime=runtime,
         stdout=stdout,
         stderr=stderr,
-        hint=_connection_hint(raw_secrets.vps, runtime),
+        hint=_connection_hint(secrets.tunnels, runtime),
     )
 
 
@@ -404,16 +376,15 @@ def _clear_postgres_backups_cli(
     destination_text: str | None,
     *,
     dry_run: bool,
-    raw_secrets: RawSecrets,
+    secrets: Secrets,
     runtime: Runtime,
     stdout: TextIO,
     stderr: TextIO,
 ) -> int:
     source_database: str | None = None
     if source_text is not None:
-        source = _select_row(
-            raw_secrets.postgres_sources,
-            parse_postgres_source_row,
+        source = _select(
+            secrets.postgres_sources,
             source_text,
             "PostgreSQL source",
             stderr,
@@ -423,9 +394,8 @@ def _clear_postgres_backups_cli(
         source_database = source.database
 
     if destination_text is not None:
-        target = _select_row(
-            raw_secrets.postgres_targets,
-            parse_postgres_target_row,
+        target = _select(
+            secrets.postgres_targets,
             destination_text,
             "PostgreSQL destination",
             stderr,
@@ -434,7 +404,7 @@ def _clear_postgres_backups_cli(
             return 1
         destinations = [target]
     else:
-        destinations = _parse_rows(raw_secrets.postgres_targets, parse_postgres_target_row, stderr)
+        destinations = list(secrets.postgres_targets)
         if not destinations:
             stdout.write("ℹ️  No PostgreSQL targets configured\n")
             return 1
@@ -472,7 +442,7 @@ def _flag_value(args: list[str], index: int) -> tuple[str | None, int]:
 def _mongo_sync_cli(
     args: list[str],
     *,
-    raw_secrets: RawSecrets,
+    secrets: Secrets,
     runtime: Runtime,
     stdout: TextIO,
     stderr: TextIO,
@@ -511,14 +481,13 @@ def _mongo_sync_cli(
         stderr.write("❌ Error: MongoDB sync requires --source\n" + _LIST_HINT)
         return 1
 
-    source = _select_row(
-        raw_secrets.mongo_sources, parse_mongo_source_row, source_text, "MongoDB source", stderr
+    source = _select(
+        secrets.mongo_sources, source_text, "MongoDB source", stderr
     )
     if source is None:
         return 1
-    target = _select_row(
-        raw_secrets.mongo_targets,
-        parse_mongo_target_row,
+    target = _select(
+        secrets.mongo_targets,
         destination_text,
         "MongoDB destination",
         stderr,
@@ -544,14 +513,12 @@ def _mongo_sync_cli(
         runtime=runtime,
         stdout=stdout,
         stderr=stderr,
-        hint=_connection_hint(raw_secrets.vps, runtime),
+        hint=_connection_hint(secrets.tunnels, runtime),
     )
 
 
-def _select_mongo_database(
-databases: str, text: str, stderr: TextIO) -> str | None:
-    """1-based index into the source's comma-separated database list."""
-    names = [name.strip() for name in databases.split(",")]
+def _select_mongo_database(names: Sequence[str], text: str, stderr: TextIO) -> str | None:
+    """1-based index into the source's database list."""
     try:
         index = int(text)
     except ValueError:
@@ -569,7 +536,7 @@ databases: str, text: str, stderr: TextIO) -> str | None:
 def _clear_backups_cli(
     args: list[str],
     *,
-    raw_secrets: RawSecrets,
+    secrets: Secrets,
     runtime: Runtime,
     stdout: TextIO,
     stderr: TextIO,
@@ -583,12 +550,8 @@ def _clear_backups_cli(
         stderr.write(f"unknown option: {arg}\n" + USAGE)
         return 1
 
-    targets: list[PostgresTarget] = _parse_rows(
-        raw_secrets.postgres_targets, parse_postgres_target_row, stderr
-    )
-    mongo_targets: list[MongoTarget] = _parse_rows(
-        raw_secrets.mongo_targets, parse_mongo_target_row, stderr
-    )
+    targets: Sequence[PostgresTarget] = secrets.postgres_targets
+    mongo_targets: Sequence[MongoTarget] = secrets.mongo_targets
     if not targets and not mongo_targets:
         stdout.write("ℹ️  No PostgreSQL or MongoDB targets configured\n")
         return 1
@@ -619,6 +582,49 @@ def _clear_backups_cli(
     else:
         stdout.write("ℹ️  No MongoDB targets configured\n")
     return 1 if postgres_code or mongo_code else 0
+
+
+# --- config ----------------------------------------------------------------------
+
+
+def _config_cli(
+    args: list[str], *, secrets: Secrets, path: Path, stdout: TextIO, stderr: TextIO
+) -> int:
+    """`dbt config` shows the file with credentials masked; `dbt config path` only its path."""
+    if args == ["path"]:
+        stdout.write(f"{path}\n")
+        return 0
+    if args:
+        stderr.write(f"unknown option: {args[0]}\nusage: dbt config [path]\n")
+        return 1
+
+    stdout.write(f"Secrets file: {path}\n")
+    sections: list[tuple[str, list[str]]] = [
+        (
+            "🔀 Tunnels",
+            [
+                f"{t.name}: {t.user}@{t.host}  {t.service}"
+                f"  :{t.local_port} -> {t.target_host}:{t.target_port}"
+                for t in secrets.tunnels
+            ],
+        ),
+        (
+            "🐘 PostgreSQL sources",
+            [f"{s.name} → {s.database}  {redact(s.url)}" for s in secrets.postgres_sources],
+        ),
+        ("🎯 PostgreSQL targets", [f"{t.name}  {redact(t.url)}" for t in secrets.postgres_targets]),
+        (
+            "🍃 MongoDB sources",
+            [f"{s.name} → {','.join(s.databases)}  {redact(s.uri)}" for s in secrets.mongo_sources],
+        ),
+        ("🎯 MongoDB targets", [f"{t.name}  {redact(t.uri)}" for t in secrets.mongo_targets]),
+    ]
+    for title, lines in sections:
+        stdout.write(f"\n{title} ({len(lines)}):\n")
+        stdout.writelines(f"  {index}) {line}\n" for index, line in enumerate(lines, start=1))
+        if not lines:
+            stdout.write("  (none)\n")
+    return 0
 
 
 def main() -> NoReturn:

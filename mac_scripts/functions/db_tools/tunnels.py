@@ -6,7 +6,6 @@ Port liveness is checked per port with `lsof` and `ps`, never by a callback.
 
 from __future__ import annotations
 
-import re
 import signal
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -14,48 +13,8 @@ from typing import TextIO
 
 from .models import VpsTunnel
 from .runtime import Runtime
-from .secrets import redact
 
 _SSH_TIMEOUT = 10
-_MIN_PORT = 1
-_MAX_PORT = 65535
-_PORT_TEXT = re.compile(r"\d+")
-
-
-def parse_vps_row(value: str) -> VpsTunnel | None:
-    """Parse one `name|user|host|service|local|target_host|target` row.
-
-    Returns None when the row has anything other than seven fields, a
-    non-integer or out-of-range port, or a missing required field.
-    """
-    fields = value.split("|")
-    if len(fields) != 7:
-        return None
-    name, user, host, service, local_text, target_host, target_text = fields
-    local_port = _parse_port(local_text)
-    target_port = _parse_port(target_text)
-    if local_port is None or target_port is None:
-        return None
-    if not name or not user or not host or not service or not target_host:
-        return None
-    return VpsTunnel(
-        name=name,
-        user=user,
-        host=host,
-        service=service,
-        local_port=local_port,
-        target_host=target_host,
-        target_port=target_port,
-    )
-
-
-def _parse_port(text: str) -> int | None:
-    if _PORT_TEXT.fullmatch(text) is None:
-        return None
-    port = int(text)
-    if not _MIN_PORT <= port <= _MAX_PORT:
-        return None
-    return port
 
 
 def is_our_tunnel(command: str, port: int) -> bool:
@@ -103,18 +62,9 @@ def _matches_service(tunnel: VpsTunnel, service: str) -> bool:
     return service in tunnel.service or service == str(tunnel.local_port)
 
 
-def _select_rows(
-    rows: Sequence[str], service: str | None, stderr: TextIO
-) -> list[VpsTunnel]:
-    """Parse rows, warn on invalid ones, and filter by service if given."""
-    tunnels: list[VpsTunnel] = []
-    for row in rows:
-        tunnel = parse_vps_row(row)
-        if tunnel is None:
-            stderr.write(f"skipped invalid row: {redact(row)}\n")
-        elif service is None or _matches_service(tunnel, service):
-            tunnels.append(tunnel)
-    return tunnels
+def _select(tunnels: Sequence[VpsTunnel], service: str | None) -> list[VpsTunnel]:
+    """Every tunnel, or those whose service name or local port matches `service`."""
+    return [t for t in tunnels if service is None or _matches_service(t, service)]
 
 
 def _no_match(service: str, stderr: TextIO) -> int:
@@ -123,7 +73,7 @@ def _no_match(service: str, stderr: TextIO) -> int:
 
 
 def _nothing_configured(stdout: TextIO) -> int:
-    stdout.write("No VPS tunnel rows configured\n")
+    stdout.write("No tunnels configured\n")
     return 0
 
 
@@ -164,15 +114,16 @@ def _listening_pids(runtime: Runtime) -> dict[int, int]:
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 
 
-def connection_hint(rows: Sequence[str], host: str, port: int, *, runtime: Runtime) -> str:
+def connection_hint(
+    tunnels: Sequence[VpsTunnel], host: str, port: int, *, runtime: Runtime
+) -> str:
     """One line on why a local `host:port` refused, judged by the dbt tunnel on that port.
 
-    Empty when the host is not local or no tunnel row uses the port.
+    Empty when the host is not local or no tunnel uses the port.
     """
     if host not in _LOCAL_HOSTS:
         return ""
-    tunnels = (parse_vps_row(row) for row in rows)
-    tunnel = next((t for t in tunnels if t is not None and t.local_port == port), None)
+    tunnel = next((t for t in tunnels if t.local_port == port), None)
     if tunnel is None:
         return ""
     state = _Listeners(runtime).state(port)
@@ -233,7 +184,7 @@ def _tunnel_argv(tunnels: Sequence[VpsTunnel]) -> list[str]:
 
 
 def connect_tunnels(
-    rows: Sequence[str],
+    configured: Sequence[VpsTunnel],
     *,
     service: str | None,
     runtime: Runtime,
@@ -241,7 +192,7 @@ def connect_tunnels(
     stderr: TextIO,
 ) -> int:
     """Open tunnels for unmatched ports, grouped per (name, user, host)."""
-    tunnels = _select_rows(rows, service, stderr)
+    tunnels = _select(configured, service)
     if service is not None and not tunnels:
         return _no_match(service, stderr)
     if not tunnels:
@@ -303,7 +254,7 @@ def connect_tunnels(
 
 
 def disconnect_tunnels(
-    rows: Sequence[str],
+    configured: Sequence[VpsTunnel],
     *,
     service: str | None,
     runtime: Runtime,
@@ -311,7 +262,7 @@ def disconnect_tunnels(
     stderr: TextIO,
 ) -> int:
     """Stop our tunnel PIDs, each signalled once for all of its ports."""
-    tunnels = _select_rows(rows, service, stderr)
+    tunnels = _select(configured, service)
     if service is not None and not tunnels:
         stderr.write("disconnect matches a service name or a local port\n")
         return _no_match(service, stderr)
@@ -379,14 +330,14 @@ def disconnect_tunnels(
 
 
 def list_tunnels(
-    rows: Sequence[str],
+    configured: Sequence[VpsTunnel],
     *,
     runtime: Runtime,
     stdout: TextIO,
     stderr: TextIO,
 ) -> int:
     """Show a status table for every tunnel row; makes no SSH call."""
-    tunnels = _select_rows(rows, None, stderr)
+    tunnels = _select(configured, None)
     if not tunnels:
         return _nothing_configured(stdout)
     listeners = _Listeners(runtime)
@@ -420,7 +371,7 @@ def _uptime(runtime: Runtime, pid: int) -> str:
 
 
 def test_tunnels(
-    rows: Sequence[str],
+    configured: Sequence[VpsTunnel],
     *,
     service: str | None,
     runtime: Runtime,
@@ -428,7 +379,7 @@ def test_tunnels(
     stderr: TextIO,
 ) -> int:
     """Run the SSH preflight once per distinct (name, user, host)."""
-    tunnels = _select_rows(rows, service, stderr)
+    tunnels = _select(configured, service)
     if service is not None and not tunnels:
         return _no_match(service, stderr)
     if not tunnels:

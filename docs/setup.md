@@ -111,7 +111,7 @@ Layout:
 ├── bud/
 │   └── desired.json
 ├── dbt/
-│   └── secrets
+│   └── secrets.toml
 ├── gt/
 │   └── backups.json
 └── skm/
@@ -123,16 +123,16 @@ Layout:
 | `bud` | `bud/desired.json`                                  | `mac_scripts/functions/brew-desired-update/desired.example.json`             |
 | `gt`  | `gt/backups.json`                                   | Created by `gt backup add`; older schemas migrate automatically               |
 | `skm` | `skm/sources.json`                                  | `mac_scripts/functions/skills_manager/sources.json.example` (reference only) |
-| `dbt` | `dbt/secrets`                                       | `mac_scripts/functions/db_tools/secrets.example`                              |
+| `dbt` | `dbt/secrets.toml`                                  | `mac_scripts/functions/db_tools/secrets.example.toml`                         |
 
 On first run, `bud` bootstraps missing `desired.json` from
-`desired.example.json`. `dbt` bootstraps missing files from
-legacy paths or `*.example`. SKM creates `sources.json` automatically; legacy `profiles.json`,
+`desired.example.json`. `dbt` converts the old zsh-array `dbt/secrets` (or the legacy
+`dbt_secrets` paths) into `secrets.toml`, else copies `secrets.example.toml`. SKM creates `sources.json` automatically; legacy `profiles.json`,
 `projects.json`, and `list.json` are migrated once and retained unchanged.
 `gt backup` creates `backups.json` on first list use (and migrates older schemas).
 
 Optional:
 
 ```zsh
-export DBT_SECRETS_FILE="/absolute/path/to/secrets"
+export DBT_SECRETS_FILE="/absolute/path/to/secrets.toml"
 ```

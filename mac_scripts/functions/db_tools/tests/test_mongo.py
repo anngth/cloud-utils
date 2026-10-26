@@ -24,12 +24,11 @@ from db_tools.mongo import (
     mongo_port,
     mongo_status,
     mongo_uri_database,
-    parse_mongo_source_row,
-    parse_mongo_target_row,
     perform_mongo_sync,
     with_server_selection_timeout,
 )
 from db_tools.runtime import Interrupted, Runtime, SignalHooks
+from db_tools.tests.secrets_toml import write_secrets
 
 MONGOSH = "/usr/local/bin/mongosh"
 MONGO = "/usr/local/bin/mongo"
@@ -141,9 +140,7 @@ class SignalHooksStub(SignalHooks):
 
 
 def _write_secrets(path: Path, sources: tuple[str, ...], targets: tuple[str, ...]) -> None:
-    lines = ["typeset -a MONGO_SOURCES=(", *(f'  "{row}"' for row in sources), ")"]
-    lines += ["typeset -a MONGO_TARGETS=(", *(f'  "{row}"' for row in targets), ")"]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_secrets(path, mongo_sources=sources, mongo_targets=targets)
 
 
 def _drive(
@@ -348,25 +345,6 @@ def test_cleanup_without_mongosh_names_the_legacy_shell_as_unsupported() -> None
     assert code == 1
     assert fake.calls == []
     assert "legacy mongo shell is not supported" in err.getvalue()
-
-
-# --- secret row parsing --------------------------------------------------------
-
-
-def test_parse_mongo_rows() -> None:
-    source = parse_mongo_source_row("prod|mongodb://u:p@h:27017|app,logs")
-    assert source is not None
-    assert (source.name, source.uri, source.databases) == (
-        "prod",
-        "mongodb://u:p@h:27017",
-        "app,logs",
-    )
-    target = parse_mongo_target_row("one|mongodb://u:p@h:27017")
-    assert target is not None
-    assert (target.name, target.uri) == ("one", "mongodb://u:p@h:27017")
-    assert parse_mongo_source_row("prod|mongodb://u:p@h:27017") is None
-    assert parse_mongo_target_row("onlyname") is None
-    assert parse_mongo_target_row("name") is None
 
 
 # --- cleanup (library level; `sync mongodb` flags land in Task 8) ---------------
@@ -611,13 +589,12 @@ def test_sync_list_status_with_no_mongo_client_reports_unknown(tmp_path) -> None
     assert "⚪ 3 unknown (client not installed)" in out
 
 
-def test_sync_list_skips_invalid_mongo_rows_with_a_warning(tmp_path) -> None:
+def test_sync_list_rejects_the_file_when_a_mongo_entry_is_invalid(tmp_path) -> None:
     code, out, err, _fake = _drive(tmp_path, ["sync", "list"], sources=("bad",))
 
-    assert code == 0
-    assert "bad" in err
-    assert "🍃 MongoDB Sources (0):" in out
-    assert "  (No MongoDB sources configured)" in out
+    assert code == 1
+    assert "mongo.sources[1] (bad): missing field 'uri'" in err
+    assert out == ""
 
 
 # --- sync flow (library level; CLI selection below) ------------------------------
@@ -1098,17 +1075,13 @@ def _write_all_secrets(
     mongo_sources: tuple[str, ...],
     mongo_targets: tuple[str, ...],
 ) -> None:
-    lines: list[str] = []
-    for name, rows in (
-        ("POSTGRES_SOURCES", pg_sources),
-        ("POSTGRES_TARGETS", pg_targets),
-        ("MONGO_SOURCES", mongo_sources),
-        ("MONGO_TARGETS", mongo_targets),
-    ):
-        lines.append(f"typeset -a {name}=(")
-        lines.extend(f'  "{row}"' for row in rows)
-        lines.append(")")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_secrets(
+        path,
+        postgres_sources=pg_sources,
+        postgres_targets=pg_targets,
+        mongo_sources=mongo_sources,
+        mongo_targets=mongo_targets,
+    )
 
 
 def _drive_all(
@@ -1315,12 +1288,11 @@ def test_mongo_port(uri: str, expected: int) -> None:
 
 
 def test_target_ping_failure_explains_the_down_tunnel(tmp_path) -> None:
-    path = tmp_path / "dbt_secrets"
-    path.write_text(
-        'typeset -a VPS_CONFIGS=(\n  "oracle|me|10.0.0.1|mongo|27017|127.0.0.1|27017"\n)\n'
-        f'typeset -a MONGO_SOURCES=(\n  "{SOURCES[0]}"\n)\n'
-        f'typeset -a MONGO_TARGETS=(\n  "{TARGETS[0]}"\n)\n',
-        encoding="utf-8",
+    path = write_secrets(
+        tmp_path / "secrets.toml",
+        tunnels=("oracle|me|10.0.0.1|mongo|27017|127.0.0.1|27017",),
+        mongo_sources=(SOURCES[0],),
+        mongo_targets=(TARGETS[0],),
     )
     fake = FakeMongo(ping_by_host={"127.0.0.1": 1})
     base = fake.run_command
@@ -1345,8 +1317,3 @@ def test_target_ping_failure_explains_the_down_tunnel(tmp_path) -> None:
     assert "target connection failed" in err.getvalue()
     assert "tunnel mongo (oracle) is DOWN; run: dbt connect mongo" in err.getvalue()
     assert fake.pipes == []
-
-
-def test_mongo_target_row_with_a_third_field_is_invalid() -> None:
-    assert parse_mongo_target_row("one|mongodb://u:p@h:27017|app") is None
-    assert parse_mongo_target_row("one|mongodb://u:p@h:27017") is not None

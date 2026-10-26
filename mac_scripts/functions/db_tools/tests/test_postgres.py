@@ -18,14 +18,13 @@ from db_tools.postgres import (
     _strip_transaction_timeout,
     clear_postgres_backups,
     find_postgres_tools,
-    parse_postgres_source_row,
-    parse_postgres_target_row,
     parse_postgres_url,
     postgres_status,
     quote_identifier,
     quote_literal,
 )
 from db_tools.runtime import Interrupted, Runtime, SignalHooks
+from db_tools.tests.secrets_toml import write_secrets
 
 PSQL = "/usr/bin/psql"
 PG_DUMP = "/usr/bin/pg_dump"
@@ -199,9 +198,7 @@ def _runtime(fake: FakePostgres, *, now: datetime | None = None) -> Runtime:
 
 
 def _write_secrets(path: Path, sources: tuple[str, ...], targets: tuple[str, ...]) -> None:
-    lines = ["typeset -a POSTGRES_SOURCES=(", *(f'  "{row}"' for row in sources), ")"]
-    lines += ["typeset -a POSTGRES_TARGETS=(", *(f'  "{row}"' for row in targets), ")"]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_secrets(path, postgres_sources=sources, postgres_targets=targets)
 
 
 def _drive(
@@ -281,21 +278,6 @@ def test_sslmode_require_is_true_only_for_that_substring() -> None:
 def test_quote_identifier_and_literal_double_the_quotes() -> None:
     assert quote_identifier('we"ird') == '"we""ird"'
     assert quote_literal("a'b") == "'a''b'"
-
-
-def test_parse_secret_rows() -> None:
-    source = parse_postgres_source_row("prod|postgresql://u:p@h:5432/db|db")
-    assert source is not None
-    assert (source.name, source.url, source.database) == (
-        "prod",
-        "postgresql://u:p@h:5432/db",
-        "db",
-    )
-    target = parse_postgres_target_row("one|postgresql://u:p@h:5432/db")
-    assert target is not None
-    assert (target.name, target.url) == ("one", "postgresql://u:p@h:5432/db")
-    assert parse_postgres_source_row("prod|postgresql://u:p@h:5432/db") is None
-    assert parse_postgres_target_row("onlyname") is None
 
 
 # --- client discovery ---------------------------------------------------------
@@ -577,12 +559,12 @@ def test_sync_list_status_reports_failed_connection(tmp_path) -> None:
     assert "Summary: 🟢 0 connected  |  🔴 3 disconnected" in out
 
 
-def test_sync_list_skips_invalid_rows_with_a_warning(tmp_path) -> None:
+def test_sync_list_rejects_the_file_when_an_entry_is_invalid(tmp_path) -> None:
     code, out, err, _fake = _drive(tmp_path, ["sync", "list"], sources=("bad",))
 
-    assert code == 0
-    assert "bad" in err
-    assert "(No PostgreSQL sources configured)" in out
+    assert code == 1
+    assert "postgres.sources[1] (bad): missing field 'url'" in err
+    assert out == ""
 
 
 # --- sync: plain target ---------------------------------------------------------
@@ -1340,11 +1322,11 @@ def test_database_flag_is_still_accepted_and_ignored(tmp_path) -> None:
 @pytest.mark.parametrize(
     "sources",
     [
-        ("prod|postgresql://svc:p@src.example:5432/app|",),
-        ("prod|postgresql://svc:p@src.example:5432/app",),
+        ("prod|postgresql://svc:p@src.example:5432/app|",),  # empty database
+        ("prod|postgresql://svc:p@src.example:5432",),  # no database anywhere
     ],
 )
-def test_invalid_source_row_blocks_sync(tmp_path, sources) -> None:
+def test_invalid_source_entry_blocks_sync(tmp_path, sources) -> None:
     code, _out, err, fake = _drive(tmp_path, SYNC_ARGV, sources=sources, now=NOW)
 
     assert code == 1
@@ -1514,13 +1496,14 @@ def test_interrupt_during_target_backup_dump_discards_the_file(tmp_path, monkeyp
 # --- warnings never quote credentials ----------------------------------------------
 
 
-def test_invalid_row_warning_masks_the_password(tmp_path) -> None:
+def test_invalid_entry_error_masks_the_password(tmp_path) -> None:
     code, _out, err, _fake = _drive(
-        tmp_path, ["sync", "list"], sources=("bad|postgresql://svc:s3cr3t@h:5432",)
+        tmp_path, ["sync", "list"], sources=("bad|http://svc:s3cr3t@h:5432/db",)
     )
 
-    assert code == 0
-    assert "skipped invalid row: bad|postgresql://***@h:5432" in err
+    assert code == 1
+    assert "postgres.sources[1] (bad): 'url' must start with postgresql://" in err
+    assert "http://***@h:5432/db" in err
     assert "s3cr3t" not in err
 
 
@@ -1560,12 +1543,11 @@ def test_status_probes_run_concurrently(tmp_path) -> None:
 
 
 def test_exists_probe_failure_on_localhost_explains_the_tunnel(tmp_path) -> None:
-    path = tmp_path / "dbt_secrets"
-    path.write_text(
-        'typeset -a VPS_CONFIGS=(\n  "oracle|me|10.0.0.1|postgres|5432|127.0.0.1|5432"\n)\n'
-        f'typeset -a POSTGRES_SOURCES=(\n  "{SOURCES[0]}"\n)\n'
-        'typeset -a POSTGRES_TARGETS=(\n  "local|postgresql://svc:secret@localhost:5432"\n)\n',
-        encoding="utf-8",
+    path = write_secrets(
+        tmp_path / "secrets.toml",
+        tunnels=("oracle|me|10.0.0.1|postgres|5432|127.0.0.1|5432",),
+        postgres_sources=(SOURCES[0],),
+        postgres_targets=("local|postgresql://svc:secret@localhost:5432",),
     )
     fake = FakePostgres(
         responses=(("SELECT 1 FROM pg_database", CommandResult(2, "", "connection refused")),)
@@ -1596,9 +1578,3 @@ def test_exists_probe_failure_on_localhost_explains_the_tunnel(tmp_path) -> None
         "tunnel postgres (oracle) is UP, so 10.0.0.1 refused the forward to 127.0.0.1:5432"
         in out.getvalue()
     )
-
-
-def test_target_row_with_a_third_field_is_invalid() -> None:
-    """A source-shaped target row must not smuggle `|db` into the URL."""
-    assert parse_postgres_target_row("one|postgresql://u:p@h:5432/postgres|postgres") is None
-    assert parse_postgres_target_row("one|postgresql://u:p@h:5432/postgres") is not None

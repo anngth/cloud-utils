@@ -108,25 +108,6 @@ def quote_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def parse_postgres_source_row(row: str) -> PostgresSource | None:
-    """Parse `name|url|database`; None when one of the three is missing."""
-    name, sep, rest = row.partition("|")
-    if not sep:
-        return None
-    url, sep, database = rest.partition("|")
-    if not sep or not name or not url or not database:
-        return None
-    return PostgresSource(name=name, url=url, database=database)
-
-
-def parse_postgres_target_row(row: str) -> PostgresTarget | None:
-    """Parse `name|url`; None when a field is missing or a third one is present."""
-    name, sep, url = row.partition("|")
-    if not sep or not name or not url or "|" in url:
-        return None
-    return PostgresTarget(name=name, url=url)
-
-
 def find_postgres_tools(runtime: Runtime) -> PostgresTools | None:
     """Prefer PATH, then Homebrew libpq, then Homebrew postgresql@18."""
     psql, pg_dump, pg_restore = (runtime.which(name) for name in _CLIENTS)
