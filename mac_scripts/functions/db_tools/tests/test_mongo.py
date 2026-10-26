@@ -22,6 +22,7 @@ from db_tools.mongo import (
     mongo_eval_argv,
     mongo_host,
     mongo_status,
+    mongo_uri_database,
     parse_mongo_source_row,
     parse_mongo_target_row,
     perform_mongo_sync,
@@ -50,7 +51,7 @@ NO_DATABASE = "logs_backup_20260102_130000"
 BACKUP_NAME = "app_backup_20260101_120000"
 ALL_BACKUPS = f"{BACKUP_NAME}\n{NO_DATABASE}\n"
 
-SOURCES = ("prod|mongodb://user:secret@cluster.example/app?retryWrites=true|app,logs",)
+SOURCES = ("prod|mongodb://user:secret@cluster.example/?retryWrites=true|app,logs",)
 TARGETS = (
     "one|mongodb://user:secret@127.0.0.1:27017",
     "two|mongodb://user:secret@t2.example:27017",
@@ -567,7 +568,7 @@ def test_sync_list_status_pings_each_source_and_target(tmp_path) -> None:
 
     assert code == 0
     assert err == ""
-    uris = ("mongodb://user:secret@cluster.example/app?retryWrites=true",
+    uris = ("mongodb://user:secret@cluster.example/?retryWrites=true",
             "mongodb://user:secret@127.0.0.1:27017",
             "mongodb://user:secret@t2.example:27017")
     assert fake.calls == [
@@ -1214,3 +1215,54 @@ def test_sync_clear_applies_dry_run_to_both_halves(tmp_path) -> None:
     assert out.count("Dry run only; no databases were dropped") == 3  # 1 Postgres + 2 Mongo targets
     assert fake.drops() == []
     assert not any("DROP DATABASE" in " ".join(argv) for argv in fake.calls)
+
+
+# --- a URI path must not name another database ----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("uri", "expected"),
+    [
+        ("mongodb://user:secret@cluster.example/admin?authSource=x", "admin"),
+        ("mongodb+srv://user:p@ss@cluster.example/app", "app"),
+        ("mongodb://cluster.example:27017/", ""),
+        ("mongodb://cluster.example:27017", ""),
+        ("mongodb://cluster.example/?retryWrites=true", ""),
+    ],
+)
+def test_mongo_uri_database_reads_the_path(uri: str, expected: str) -> None:
+    assert mongo_uri_database(uri) == expected
+
+
+@pytest.mark.parametrize("side", ["source", "target"])
+def test_sync_rejects_a_uri_naming_another_database(side: str) -> None:
+    fake = FakeMongo()
+    runtime, signals = _sync_runtime(fake)
+    named = "mongodb://user:secret@cluster.example/admin?retryWrites=true"
+    source = named if side == "source" else SOURCE_URI
+    target = named if side == "target" else TARGET_URI
+    out, err = io.StringIO(), io.StringIO()
+
+    code = perform_mongo_sync(
+        source, "app", target, verbose=False, runtime=runtime, stdout=out, stderr=err
+    )
+
+    assert code == 1
+    assert fake.calls == [] and fake.pipes == []
+    assert f"{side} URI names database 'admin'" in err.getvalue()
+    assert "?authSource=admin" in err.getvalue()
+    assert signals.bound == []
+
+
+def test_sync_accepts_a_uri_naming_the_sync_database() -> None:
+    fake = FakeMongo()
+    runtime, _signals = _sync_runtime(fake)
+    source = "mongodb://user:secret@cluster.example/app?retryWrites=true"
+
+    code = perform_mongo_sync(
+        source, "app", TARGET_URI, verbose=False,
+        runtime=runtime, stdout=io.StringIO(), stderr=io.StringIO(),
+    )
+
+    assert code == 0
+    assert len(fake.pipes) == 2

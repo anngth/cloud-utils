@@ -65,6 +65,20 @@ def mongo_host(uri: str) -> str:
     return uri.split("/", 1)[0].split("?", 1)[0].split(":", 1)[0]
 
 
+def mongo_uri_database(uri: str) -> str:
+    """The database named by the URI path (`.../name?...`), or `""`."""
+    for prefix in ("mongodb+srv://", "mongodb://"):
+        if uri.startswith(prefix):
+            uri = uri[len(prefix) :]
+            break
+    if "@" in uri:
+        uri = uri.partition("@")[2]
+    _host, sep, rest = uri.partition("/")
+    if not sep:
+        return ""
+    return rest.split("?", 1)[0].split("/", 1)[0]
+
+
 def parse_mongo_source_row(row: str) -> MongoSource | None:
     """Parse `name|uri|db1,db2,db3`; None when one of the three is missing."""
     name, sep, rest = row.partition("|")
@@ -265,6 +279,15 @@ def perform_mongo_sync(
     runs only after an interrupted pipe is dead. A failed exists-probe
     aborts before any pipe runs.
     """
+    for label, uri in (("source", source_uri), ("target", target_uri)):
+        named = mongo_uri_database(uri)
+        if named and named != database:
+            stderr.write(
+                f"❌ Error: {label} URI names database '{named}' but the sync database is"
+                f" '{database}'; mongodump rejects that combination. Remove /{named} from"
+                f" the URI (use ?authSource={named} if it was for authentication)\n"
+            )
+            return 1
     if mongo_status(source_uri, runtime=runtime) is False:
         stderr.write("❌ Cannot proceed - source connection failed\n")
         return 1

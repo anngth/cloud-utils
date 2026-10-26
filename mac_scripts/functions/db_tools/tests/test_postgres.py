@@ -90,9 +90,10 @@ TARGETS = (
     "two|postgresql://svc:secret@t2.example:5432/other",
 )
 
-_LIST_ARGS = [PSQL, "-h", "t1.example", "-p", "5432", "-U", "svc", "-d", "postgres", "-At", "-c"]
-_TERMINATE_ARGS = [*_LIST_ARGS[:-2], "-t", "-c"]
-_DROP_ARGS = [PSQL, "-h", "t1.example", "-p", "5432", "-U", "svc", "-d", "postgres", "-c"]
+_CONN_ARGS = [PSQL, "-h", "t1.example", "-p", "5432", "-U", "svc", "-w", "-d", "postgres"]
+_LIST_ARGS = [*_CONN_ARGS, "-At", "-c"]
+_TERMINATE_ARGS = [*_CONN_ARGS, "-t", "-c"]
+_DROP_ARGS = [*_CONN_ARGS, "-c"]
 
 
 @dataclass
@@ -602,6 +603,7 @@ def test_existing_target_renamed_created_and_backup_dropped(tmp_path) -> None:
         "5432",
         "-U",
         "svc",
+        "-w",
         "-d",
         "app",
         "--no-owner",
@@ -612,11 +614,13 @@ def test_existing_target_renamed_created_and_backup_dropped(tmp_path) -> None:
     assert dump[0][-2] == "-f"  # the plain dump went straight into a file
     restored = [index for index, value in enumerate(fake.inputs) if value is not None]
     assert restored == [7]
-    assert fake.calls[7] == [PSQL, "-h", "t1.example", "-p", "5432", "-U", "svc", "-d", "app", "-q"]
+    assert fake.calls[7] == [
+        *_CONN_ARGS[:-1], "app", "-v", "ON_ERROR_STOP=1", "-q"
+    ]
     assert fake.inputs[7] == "CREATE TABLE public.items (id int);\n"
     counted = [call for call in fake.calls if call[-1].startswith("SELECT COUNT(*)")]
     assert [counted[0][counted[0].index("-d") + 1]] == ["app"]
-    assert counted[0][:-1] == [PSQL, "-h", "t1.example", "-p", "5432", "-U", "svc", "-d", "app", "-t", "-c"]  # noqa: E501
+    assert counted[0][:-1] == [*_CONN_ARGS[:-1], "app", "-t", "-c"]
     drop = [call for call in fake.calls if call[-1].startswith("DROP DATABASE")]
     assert drop == [[*_DROP_ARGS, SYNC_DROP_BACKUP_SQL]]
     assert "app_backup_20261022_150405" in out
@@ -715,8 +719,10 @@ def test_unreadable_version_uses_custom_format(tmp_path, version_stdout) -> None
     assert code == 0
     assert err == ""
     dump = next(call for call in fake.calls if call[0] == PG_DUMP)
-    assert dump[:9] == [PG_DUMP, "-h", "src.example", "-p", "5432", "-U", "svc", "-d", "app"]
-    assert dump[9] == "-Fc"
+    assert dump[:10] == [
+        PG_DUMP, "-h", "src.example", "-p", "5432", "-U", "svc", "-w", "-d", "app"
+    ]
+    assert dump[10] == "-Fc"
     dump_file = dump[dump.index("-f") + 1]
     assert [call for call in fake.calls if call[0] == PG_RESTORE] == [
         [
@@ -727,6 +733,7 @@ def test_unreadable_version_uses_custom_format(tmp_path, version_stdout) -> None
             "5432",
             "-U",
             "svc",
+            "-w",
             "-d",
             "app",
             "--clean",
@@ -974,7 +981,7 @@ def test_supabase_dumps_file_cleans_schema_and_deletes_it(tmp_path, monkeypatch)
     assert code == 0
     assert err == ""
     backup_dump = next(call for call in fake.calls if call[0] == PG_DUMP)
-    assert backup_dump[:10] == [
+    assert backup_dump[:11] == [
         PG_DUMP,
         "-h",
         "db.supabase.co",
@@ -982,6 +989,7 @@ def test_supabase_dumps_file_cleans_schema_and_deletes_it(tmp_path, monkeypatch)
         "5432",
         "-U",
         "svc",
+        "-w",
         "-d",
         "postgres",
         "-Fc",
@@ -1054,6 +1062,7 @@ def test_supabase_schema_cleanup_failure_restores_dump_file(tmp_path, monkeypatc
             "5432",
             "-U",
             "svc",
+            "-w",
             "-d",
             "postgres",
             "--clean",
@@ -1355,3 +1364,142 @@ def test_sync_aliases_all_reach_pg_dump(tmp_path, alias: str) -> None:
     assert code == 0
     assert err == ""
     assert [call for call in fake.calls if call[0] == PG_DUMP]
+
+
+# --- clients never prompt, never wait forever ----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("targets", "version_stdout"),
+    [(TARGETS, "PostgreSQL 16.4"), (SUPABASE_TARGETS, "PostgreSQL 17.1")],
+)
+def test_every_client_call_passes_the_no_password_flag(tmp_path, targets, version_stdout) -> None:
+    code, _out, _err, fake = _drive(
+        tmp_path, SYNC_ARGV, now=NOW, targets=targets, version_stdout=version_stdout
+    )
+
+    assert code == 0
+    clients = [call for call in fake.calls if call[0] in (PSQL, PG_DUMP, PG_RESTORE)]
+    assert {call[0] for call in clients} >= {PSQL, PG_DUMP}
+    assert all("-w" in call for call in clients)
+
+
+def test_child_env_sets_a_connect_timeout(monkeypatch) -> None:
+    monkeypatch.delenv("PGCONNECT_TIMEOUT", raising=False)
+    fake = FakePostgres()
+    postgres_status("postgresql://svc:secret@t1.example:5432/app", runtime=_runtime(fake))
+    assert fake.envs[0]["PGCONNECT_TIMEOUT"] == "10"
+
+
+def test_child_env_keeps_the_callers_connect_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("PGCONNECT_TIMEOUT", "30")
+    fake = FakePostgres()
+    postgres_status("postgresql://svc:secret@t1.example:5432/app", runtime=_runtime(fake))
+    assert fake.envs[0]["PGCONNECT_TIMEOUT"] == "30"
+
+
+# --- probes connect where the sync will ----------------------------------------
+
+
+def test_status_probes_sources_on_their_database_and_targets_on_postgres(tmp_path) -> None:
+    code, _out, _err, fake = _drive(tmp_path, ["sync", "list", "--status"])
+
+    assert code == 0
+    probes = [call for call in fake.calls if call[-1] == "SELECT 1;"]
+    assert [call[call.index("-d") + 1] for call in probes] == ["app", "postgres", "postgres"]
+
+
+def test_source_version_probe_uses_the_source_database(tmp_path) -> None:
+    code, _out, _err, fake = _drive(tmp_path, SYNC_ARGV, now=NOW)
+
+    assert code == 0
+    versions = [call for call in fake.calls if call[-1] == "SELECT version();"]
+    assert [(call[2], call[call.index("-d") + 1]) for call in versions] == [
+        ("src.example", "app"),
+        ("t1.example", "postgres"),
+    ]
+
+
+# --- the exists probe fails closed ----------------------------------------------
+
+
+def test_exists_probe_failure_aborts_before_any_change(tmp_path) -> None:
+    code, out, _err, fake = _drive(
+        tmp_path,
+        SYNC_ARGV,
+        now=NOW,
+        responses=(
+            ("SELECT 1 FROM pg_database", CommandResult(2, "", "psql: error: connection refused")),
+        ),
+    )
+
+    assert code == 1
+    assert "Failed to check whether database 'app' exists" in out
+    assert "connection refused" in out
+    changes = [
+        call[-1]
+        for call in fake.calls
+        if call[-1].startswith(("ALTER DATABASE", "CREATE DATABASE", "DROP"))
+    ]
+    assert changes == []
+    assert [call for call in fake.calls if call[0] == PG_DUMP] == []
+
+
+# --- plain-SQL restores stop on the first error --------------------------------
+
+
+@pytest.mark.parametrize("verbose", [False, True])
+def test_plain_sql_restore_runs_with_on_error_stop(tmp_path, verbose: bool) -> None:
+    argv = [*SYNC_ARGV, "--verbose"] if verbose else SYNC_ARGV
+    code, _out, _err, fake = _drive(tmp_path, argv, now=NOW)
+
+    assert code == 0
+    restore = next(
+        call for index, call in enumerate(fake.calls) if fake.inputs[index] is not None
+    )
+    assert restore[restore.index("-v") + 1] == "ON_ERROR_STOP=1"
+    assert ("-q" in restore) is not verbose
+
+
+# --- no temp file survives an early interrupt -----------------------------------
+
+
+def test_interrupt_during_target_backup_dump_discards_the_file(tmp_path, monkeypatch) -> None:
+    removed = _track_unlink(monkeypatch)
+    path = tmp_path / "dbt_secrets"
+    _write_secrets(path, SOURCES, SUPABASE_TARGETS)
+    fake = FakePostgres()
+    signals = _StubSignals()
+    dump_files: list[str] = []
+    base = fake.run_command
+
+    def run_command(argv, **kwargs):
+        if argv[0] == PG_DUMP:
+            dump_files.append(argv[argv.index("-f") + 1])
+            assert signals.handler is None  # the target is not preserved yet
+            raise Interrupted()
+        return base(argv, **kwargs)
+
+    runtime = Runtime(
+        run_command=run_command,
+        run_pipe=lambda *_args, **_kwargs: CommandResult(0, "", ""),
+        which=lambda name: fake.which.get(name),
+        path_exists=lambda value: value in fake.files,
+        process_alive=lambda _pid: False,
+        signal=lambda _pid, _signum: True,
+        sleep=lambda _seconds: None,
+        now=lambda: NOW,
+        signals=signals,
+    )
+
+    with pytest.raises(Interrupted):
+        run_cli(
+            SYNC_ARGV,
+            env={"DBT_SECRETS_FILE": str(path)},
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            dependencies=runtime,
+        )
+    assert dump_files and dump_files[0] in removed
+    assert not Path(dump_files[0]).exists()
+    assert not any(call[-1].startswith("DROP SCHEMA") for call in fake.calls)

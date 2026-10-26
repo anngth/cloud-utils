@@ -219,3 +219,31 @@ def test_stream_mode_feeds_input_text(tmp_path: Path) -> None:
 def test_stream_mode_rejects_both_input_forms() -> None:
     with pytest.raises(ValueError):
         run_command(["cat"], stream=True, input_text="x", input_file="/dev/null")
+
+
+# Runs inside a child interpreter whose stdout is a pipe (block-buffered,
+# like `dbt ... | tee log`): parent lines must still land around the
+# child's own output in program order.
+_ORDER_DRIVER = """\
+import sys
+
+from db_tools.process import run_command, run_pipe
+
+sys.stdout.write("1 before\\n")
+run_command(["echo", "2 child"], stream=True)
+sys.stdout.write("3 between\\n")
+run_pipe(["echo", "4 piped"], ["cat"], stream=True)
+sys.stdout.write("5 after\\n")
+"""
+
+
+def test_stream_mode_keeps_parent_output_in_order_when_piped() -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", _ORDER_DRIVER],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1 before\n2 child\n3 between\n4 piped\n5 after\n"

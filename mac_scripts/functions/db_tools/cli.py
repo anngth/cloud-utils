@@ -229,7 +229,9 @@ def _print_sync_configs(
 
     stdout.write(f"🐘 PostgreSQL Sources ({len(sources)}):\n")
     for index, source in enumerate(sources, start=1):
-        mark = icon(lambda: postgres_status(source.url, runtime=runtime))  # noqa: B023
+        mark = icon(
+            lambda: postgres_status(source.url, runtime=runtime, database=source.database)  # noqa: B023
+        )
         host = parse_postgres_url(source.url).host
         stdout.write(f"  {mark}{index}) {source.name} → {source.database} | {host}\n")
     if not sources:

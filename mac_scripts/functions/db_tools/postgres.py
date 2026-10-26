@@ -1,8 +1,8 @@
 """Postgres URL parsing, client discovery, status, sync, and backup cleanup.
 
 Every psql call is an argv list. The password only ever travels in the
-child's PGPASSWORD environment variable, and cleanup always connects to
-the `postgres` database.
+child's PGPASSWORD environment variable, clients never prompt (`-w`),
+and cleanup always connects to the `postgres` database.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ _BACKUP_SUFFIX = "_backup_[0-9]{8}_[0-9]{6}$"
 _LIBPQ_BIN = "/opt/homebrew/opt/libpq/bin"
 _PG18_BIN = "/opt/homebrew/opt/postgresql@18/bin"
 _CLIENTS = ("psql", "pg_dump", "pg_restore")
+_CONNECT_TIMEOUT = "10"  # seconds; PGCONNECT_TIMEOUT in the environment wins
 
 _TOOLS_NOT_FOUND = (
     "❌ Error: PostgreSQL client tools not found\n"
@@ -143,14 +144,14 @@ def find_postgres_tools(runtime: Runtime) -> PostgresTools | None:
     return None
 
 
-def postgres_status(url: str, *, runtime: Runtime) -> bool | None:
-    """`SELECT 1` on the `postgres` database; None when no client is installed."""
+def postgres_status(url: str, *, runtime: Runtime, database: str = "postgres") -> bool | None:
+    """`SELECT 1` on `database`; None when no client is installed."""
     tools = find_postgres_tools(runtime)
     if tools is None:
         return None
     parsed = parse_postgres_url(url)
     result = runtime.run_command(
-        _psql_argv(tools, parsed, ["-t", "-c", "SELECT 1;"]),
+        _psql_argv(tools, parsed, ["-t", "-c", "SELECT 1;"], database=database),
         env=_child_env(parsed),
     )
     return result.returncode == 0
@@ -257,17 +258,20 @@ def _psql_argv(
     argv = [tools.psql, "-h", url.host]
     if url.port:
         argv += ["-p", url.port]
-    argv += ["-U", url.user, "-d", database, *tail]
+    argv += ["-U", url.user, "-w", "-d", database, *tail]
     return argv
 
 
 def _connection_argv(url: PostgresUrl, database: str) -> list[str]:
-    return ["-h", url.host, "-p", url.port, "-U", url.user, "-d", database]
+    return ["-h", url.host, "-p", url.port, "-U", url.user, "-w", "-d", database]
 
 
 def _child_env(url: PostgresUrl) -> dict[str, str]:
-    """PGPASSWORD always, PGSSLMODE only for require."""
-    env = {"PGPASSWORD": url.password}
+    """PGPASSWORD and PGCONNECT_TIMEOUT always, PGSSLMODE only for require."""
+    env = {
+        "PGPASSWORD": url.password,
+        "PGCONNECT_TIMEOUT": os.environ.get("PGCONNECT_TIMEOUT") or _CONNECT_TIMEOUT,
+    }
     if url.sslmode_require:
         env["PGSSLMODE"] = "require"
     return env
@@ -523,6 +527,10 @@ class _PostgresSync:
             self.tgt,
             ["-t", "-c", f"SELECT 1 FROM pg_database WHERE datname={quote_literal(name)};"],
         )
+        if exists.returncode != 0:
+            self.stdout.write(f"❌ Failed to check whether database '{name}' exists\n")
+            self.report_error(exists)
+            return False
         if exists.stdout.strip() != "1":
             return True
         self.backup_db = f"{name}_backup_{self.runtime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -560,17 +568,22 @@ class _PostgresSync:
         name = self.tgt_db_name
         self.stdout.write(f"💾 Backing up target database '{name}' before schema cleanup...\n")
         self.backup_file = _new_dump_file()
-        backed = self.stream(
-            [
-                *self.pg_dump_argv(self.tgt, name),
-                "-Fc",
-                "--no-owner",
-                "--no-acl",
-                "-f",
-                self.backup_file,
-            ],
-            env=self.tgt_env,
-        )
+        try:
+            backed = self.stream(
+                [
+                    *self.pg_dump_argv(self.tgt, name),
+                    "-Fc",
+                    "--no-owner",
+                    "--no-acl",
+                    "-f",
+                    self.backup_file,
+                ],
+                env=self.tgt_env,
+            )
+        except BaseException:
+            _discard(self.backup_file)
+            self.backup_file = ""
+            raise
         if backed.returncode != 0:
             self.stdout.write("❌ Failed to backup target database before cleanup\n")
             self.report_error(backed)
@@ -596,7 +609,9 @@ class _PostgresSync:
     def restore_new_database(self) -> int:
         self.stdout.write("🔍 Detecting database versions...\n")
         source_version = _major_version(
-            self.psql(self.src, ["-t", "-c", _VERSION_QUERY]).stdout
+            self.psql(
+                self.src, ["-t", "-c", _VERSION_QUERY], database=self.source.database
+            ).stdout
         )
         target_version = _major_version(
             self.psql(self.tgt, ["-t", "-c", _VERSION_QUERY]).stdout
@@ -632,8 +647,13 @@ class _PostgresSync:
                 return dump.returncode or 1
             _strip_transaction_timeout(dump_path, sql_path)
             restored = self.stream(
-                [self.tools.psql, *_connection_argv(self.tgt, self.tgt_db_name)]
-                + ([] if self.verbose else ["-q"]),
+                [
+                    self.tools.psql,
+                    *_connection_argv(self.tgt, self.tgt_db_name),
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    *([] if self.verbose else ["-q"]),
+                ],
                 env=self.tgt_env,
                 input_file=sql_path,
             )

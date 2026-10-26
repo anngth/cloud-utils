@@ -40,6 +40,7 @@ def run_command(
         raise ValueError("input_text and input_file are mutually exclusive")
     stdout_stream = stdout if stdout is not None else sys.stdout
     stderr_stream = stderr if stderr is not None else sys.stderr
+    _flush(stdout_stream, stderr_stream)
     source: IO[bytes] | None = None
     stdin = subprocess.PIPE if input_text is not None else None
     if input_file is not None:
@@ -116,6 +117,12 @@ def run_pipe(
     if stream:
         return _run_pipe_live(left, right, left_env, right_env, stdout, stderr)
     return _run_pipe_captured(left, right, left_env, right_env)
+
+
+def _flush(*streams: TextIO) -> None:
+    """Push buffered parent output out before a child writes to the same fd."""
+    for stream in streams:
+        stream.flush()
 
 
 def _close_pipe(stream: IO[str] | None) -> None:
@@ -202,6 +209,7 @@ def _run_pipe_live(
 ) -> CommandResult:
     stdout_stream = stdout if stdout is not None else sys.stdout
     stderr_stream = stderr if stderr is not None else sys.stderr
+    _flush(stdout_stream, stderr_stream)
     left_child = subprocess.Popen(
         list(left),
         env=child_env(left_env),
