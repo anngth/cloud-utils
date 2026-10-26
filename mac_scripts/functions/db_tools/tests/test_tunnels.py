@@ -5,10 +5,12 @@ import signal
 from dataclasses import dataclass, field
 from datetime import datetime
 
+import pytest
 from shared.process import CommandResult
 
 from db_tools.cli import run_cli
 from db_tools.runtime import Runtime, SignalHooks
+from db_tools.tunnels import connection_hint
 
 ROWS = (
     "a|me|10.0.0.1|postgres|5432|db.internal|5432",
@@ -24,7 +26,7 @@ _PREFLIGHT = [
     "-o",
     "BatchMode=yes",
     "-o",
-    "StrictHostKeyChecking=no",
+    "StrictHostKeyChecking=accept-new",
 ]
 
 
@@ -494,3 +496,36 @@ def test_parse_vps_row():
     assert parse_vps_row("v|me|10.0.0.1|postgres|x|db.internal|5432") is None
     assert parse_vps_row("v|me|10.0.0.1|postgres|70000|db.internal|5432") is None
     assert parse_vps_row("v|me|10.0.0.1|postgres|0|db.internal|5432") is None
+
+
+# --- connection hints ---------------------------------------------------------
+
+
+def test_hint_names_the_down_tunnel_and_the_connect_command() -> None:
+    fake = FakeTunnels()
+    text = connection_hint(ROWS, "localhost", 27017, runtime=_runtime(fake))
+    assert text == "tunnel mongo (a) is DOWN; run: dbt connect mongo"
+
+
+def test_hint_blames_the_remote_side_when_our_tunnel_is_up() -> None:
+    fake = FakeTunnels(
+        listeners={27017: "77"}, commands={77: "ssh -f -N -L 27017:db.internal:27017 me@10.0.0.1"}
+    )
+    text = connection_hint(ROWS, "127.0.0.1", 27017, runtime=_runtime(fake))
+    assert text.startswith(
+        "tunnel mongo (a) is UP, so 10.0.0.1 refused the forward to db.internal:27017"
+    )
+
+
+def test_hint_reports_a_foreign_listener() -> None:
+    fake = FakeTunnels(listeners={27017: "88"}, commands={88: "/usr/local/bin/mongod --port 27017"})
+    text = connection_hint(ROWS, "localhost", 27017, runtime=_runtime(fake))
+    assert "used by another process" in text
+    assert "mongod --port 27017" in text
+
+
+@pytest.mark.parametrize(("host", "port"), [("db.example", 27017), ("localhost", 9999)])
+def test_hint_is_empty_for_remote_hosts_and_ports_without_a_row(host: str, port: int) -> None:
+    fake = FakeTunnels()
+    assert connection_hint(ROWS, host, port, runtime=_runtime(fake)) == ""
+    assert fake.calls == []  # nothing is probed when no tunnel row applies

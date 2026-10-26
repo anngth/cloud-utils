@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from .models import RawSecrets
 
 _TYPESET = re.compile(r"typeset -a (\w+)=\($")
+_CREDENTIALS = re.compile(r"(://)[^/\s|]*@")
 _ESCAPES = ('"', "\\", "$")
 
 _ARRAY_FIELDS: Mapping[str, str] = {
@@ -34,6 +35,11 @@ class SecretsError(Exception):
     def __init__(self, line: int, message: str) -> None:
         super().__init__(f"line {line}: {message}")
         self.line = line
+
+
+def redact(text: str) -> str:
+    """Mask `scheme://user:password@` so a row can be quoted in a message."""
+    return _CREDENTIALS.sub(r"\1***@", text)
 
 
 def parse_secrets_text(text: str) -> RawSecrets:

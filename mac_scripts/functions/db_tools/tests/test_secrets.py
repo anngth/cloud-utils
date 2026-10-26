@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from db_tools.models import RawSecrets
-from db_tools.secrets import SecretsError, parse_secrets_text
+from db_tools.secrets import SecretsError, parse_secrets_text, redact
 
 VPS_ROW = "vps|u|10.0.0.1|pg|5432|127.0.0.1|5432"
 
@@ -112,3 +112,16 @@ def test_bare_and_single_quoted_tokens_are_rejected(row: str) -> None:
 def test_empty_array_yields_empty_tuple() -> None:
     result = parse_secrets_text("typeset -a VPS_CONFIGS=(\n)\n")
     assert result.vps == ()
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("name|postgresql://svc:s3cr3t@h:5432/db|db", "name|postgresql://***@h:5432/db|db"),
+        ("mongodb+srv://u:p@ss@cluster.example/app", "mongodb+srv://***@cluster.example/app"),
+        ("a|me|10.0.0.1|pg|5432|db|5432", "a|me|10.0.0.1|pg|5432|db|5432"),
+        ("mongodb://cluster.example:27017", "mongodb://cluster.example:27017"),
+    ],
+)
+def test_redact_masks_credentials_only(text: str, expected: str) -> None:
+    assert redact(text) == expected

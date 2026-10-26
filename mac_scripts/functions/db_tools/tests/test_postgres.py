@@ -251,17 +251,22 @@ def test_parse_url_query_without_a_path_is_not_a_database() -> None:
     assert (url.host, url.port, url.database, url.sslmode_require) == ("h", "5432", "", True)
 
 
-def test_sync_rejects_a_target_url_without_a_database(tmp_path) -> None:
-    code, _out, err, fake = _drive(
+def test_target_url_without_a_database_syncs_into_the_source_name(tmp_path) -> None:
+    code, out, err, fake = _drive(
         tmp_path,
         SYNC_ARGV,
         now=NOW,
         targets=("one|postgresql://svc:secret@t1.example:5432?sslmode=require",),
     )
 
-    assert code == 1
-    assert "names no database" in err
-    assert fake.calls == []  # nothing touched the target
+    assert code == 0
+    assert err == ""
+    assert "Target database: app\n" in out
+    maintenance = [call for call in fake.calls if call[0] == PSQL and "-c" in call]
+    assert {call[call.index("-d") + 1] for call in maintenance} == {"postgres", "app"}
+    assert [call[-1] for call in fake.calls if call[-1].startswith("CREATE DATABASE")] == [
+        SYNC_CREATE_SQL
+    ]
 
 
 def test_sslmode_require_is_true_only_for_that_substring() -> None:
@@ -514,7 +519,7 @@ def test_database_flag_is_accepted_and_ignored(tmp_path, argv: list[str]) -> Non
     code, _out, err, fake = _drive(tmp_path, ["sync", "postgres", *argv, "-c", "-n"])
 
     assert code == 0
-    assert err == ""
+    assert err == "ℹ️  -db is ignored for PostgreSQL; the source row names the database\n"
     assert fake.hosts(fake.listings()) == ["t1.example", "t2.example"]
 
 
@@ -1327,7 +1332,7 @@ def test_database_flag_is_still_accepted_and_ignored(tmp_path) -> None:
     )
 
     assert code == 0
-    assert err == ""
+    assert err == "ℹ️  -db is ignored for PostgreSQL; the source row names the database\n"
     dump = next(call for call in fake.calls if call[0] == PG_DUMP)
     assert dump[dump.index("-d") + 1] == "app"
 
@@ -1406,7 +1411,8 @@ def test_status_probes_sources_on_their_database_and_targets_on_postgres(tmp_pat
 
     assert code == 0
     probes = [call for call in fake.calls if call[-1] == "SELECT 1;"]
-    assert [call[call.index("-d") + 1] for call in probes] == ["app", "postgres", "postgres"]
+    # probes run concurrently, so only the multiset of databases is fixed
+    assert sorted(call[call.index("-d") + 1] for call in probes) == ["app", "postgres", "postgres"]
 
 
 def test_source_version_probe_uses_the_source_database(tmp_path) -> None:
@@ -1503,3 +1509,96 @@ def test_interrupt_during_target_backup_dump_discards_the_file(tmp_path, monkeyp
     assert dump_files and dump_files[0] in removed
     assert not Path(dump_files[0]).exists()
     assert not any(call[-1].startswith("DROP SCHEMA") for call in fake.calls)
+
+
+# --- warnings never quote credentials ----------------------------------------------
+
+
+def test_invalid_row_warning_masks_the_password(tmp_path) -> None:
+    code, _out, err, _fake = _drive(
+        tmp_path, ["sync", "list"], sources=("bad|postgresql://svc:s3cr3t@h:5432",)
+    )
+
+    assert code == 0
+    assert "skipped invalid row: bad|postgresql://***@h:5432" in err
+    assert "s3cr3t" not in err
+
+
+# --- status probes run concurrently -------------------------------------------------
+
+
+def test_status_probes_run_concurrently(tmp_path) -> None:
+    import threading
+
+    path = tmp_path / "dbt_secrets"
+    _write_secrets(path, SOURCES, TARGETS)
+    fake = FakePostgres()
+    base = fake.run_command
+    barrier = threading.Barrier(3, timeout=5)  # one source + two targets
+
+    def run_command(argv, **kwargs):
+        if argv[-1] == "SELECT 1;":
+            barrier.wait()  # sequential probes would time out here
+        return base(argv, **kwargs)
+
+    runtime = _runtime(fake)
+    runtime.run_command = run_command
+    out = io.StringIO()
+    code = run_cli(
+        ["sync", "list", "--status"],
+        env={"DBT_SECRETS_FILE": str(path)},
+        stdout=out,
+        stderr=io.StringIO(),
+        dependencies=runtime,
+    )
+
+    assert code == 0
+    assert "Summary: 🟢 3 connected" in out.getvalue()
+
+
+# --- tunnel hint on a refused target --------------------------------------------------
+
+
+def test_exists_probe_failure_on_localhost_explains_the_tunnel(tmp_path) -> None:
+    path = tmp_path / "dbt_secrets"
+    path.write_text(
+        'typeset -a VPS_CONFIGS=(\n  "oracle|me|10.0.0.1|postgres|5432|127.0.0.1|5432"\n)\n'
+        f'typeset -a POSTGRES_SOURCES=(\n  "{SOURCES[0]}"\n)\n'
+        'typeset -a POSTGRES_TARGETS=(\n  "local|postgresql://svc:secret@localhost:5432"\n)\n',
+        encoding="utf-8",
+    )
+    fake = FakePostgres(
+        responses=(("SELECT 1 FROM pg_database", CommandResult(2, "", "connection refused")),)
+    )
+    base = fake.run_command
+
+    def run_command(argv, **kwargs):
+        if argv[0] == "lsof":
+            return CommandResult(0, "p41\nn127.0.0.1:5432\n", "")
+        if argv[0] == "ps":
+            return CommandResult(0, "ssh -f -N -L 5432:127.0.0.1:5432 me@10.0.0.1\n", "")
+        return base(argv, **kwargs)
+
+    runtime = _runtime(fake, now=NOW)
+    runtime.run_command = run_command
+    out = io.StringIO()
+    code = run_cli(
+        SYNC_ARGV,
+        env={"DBT_SECRETS_FILE": str(path)},
+        stdout=out,
+        stderr=io.StringIO(),
+        dependencies=runtime,
+    )
+
+    assert code == 1
+    assert "Failed to check whether database 'app' exists" in out.getvalue()
+    assert (
+        "tunnel postgres (oracle) is UP, so 10.0.0.1 refused the forward to 127.0.0.1:5432"
+        in out.getvalue()
+    )
+
+
+def test_target_row_with_a_third_field_is_invalid() -> None:
+    """A source-shaped target row must not smuggle `|db` into the URL."""
+    assert parse_postgres_target_row("one|postgresql://u:p@h:5432/postgres|postgres") is None
+    assert parse_postgres_target_row("one|postgresql://u:p@h:5432/postgres") is not None

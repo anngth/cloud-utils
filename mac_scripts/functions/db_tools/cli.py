@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import NoReturn, TextIO
 
@@ -27,8 +29,14 @@ from .postgres import (
     postgres_status,
 )
 from .runtime import Interrupted, Runtime, default_runtime
-from .secrets import SecretsError
-from .tunnels import connect_tunnels, disconnect_tunnels, list_tunnels, test_tunnels
+from .secrets import SecretsError, redact
+from .tunnels import (
+    connect_tunnels,
+    connection_hint,
+    disconnect_tunnels,
+    list_tunnels,
+    test_tunnels,
+)
 
 USAGE = """\
 usage: dbt <command> [args]
@@ -52,6 +60,7 @@ commands:
 """
 
 _SYNC_LIST_USAGE = "usage: dbt sync list|ls [--status]\n"
+_MAX_PROBES = 8
 _LIST_HINT = "   Use 'dbt sync list' to list available configurations\n"
 
 
@@ -168,7 +177,7 @@ def _parse_rows[T](
     for row in rows:
         item = parse(row)
         if item is None:
-            stderr.write(f"skipped invalid row: {row}\n")
+            stderr.write(f"skipped invalid row: {redact(row)}\n")
         else:
             parsed.append(item)
     return parsed
@@ -213,62 +222,80 @@ def _print_sync_configs(
     stdout: TextIO,
     stderr: TextIO,
 ) -> int:
-    """Show sync entries with 1-based indexes; --status probes the clients."""
+    """Show sync entries with 1-based indexes; --status probes every entry at once."""
     sources = _parse_rows(raw_secrets.postgres_sources, parse_postgres_source_row, stderr)
     targets = _parse_rows(raw_secrets.postgres_targets, parse_postgres_target_row, stderr)
     mongo_sources = _parse_rows(raw_secrets.mongo_sources, parse_mongo_source_row, stderr)
     mongo_targets = _parse_rows(raw_secrets.mongo_targets, parse_mongo_target_row, stderr)
+
+    probes: list[Callable[[], bool | None]] = []
+    if status:
+        probes += [
+            partial(postgres_status, s.url, runtime=runtime, database=s.database)
+            for s in sources
+        ]
+        probes += [partial(postgres_status, t.url, runtime=runtime) for t in targets]
+        probes += [partial(mongo_status, s.uri, runtime=runtime) for s in mongo_sources]
+        probes += [partial(mongo_status, t.uri, runtime=runtime) for t in mongo_targets]
+    results = iter(_probe_all(probes))
     counts: dict[bool | None, int] = {True: 0, False: 0, None: 0}
 
-    def icon(probe: Callable[[], bool | None]) -> str:
+    def mark() -> str:
         if not status:
             return ""
-        result = probe()
+        result = next(results)
         counts[result] += 1
         return _status_icon(result)
 
     stdout.write(f"🐘 PostgreSQL Sources ({len(sources)}):\n")
     for index, source in enumerate(sources, start=1):
-        mark = icon(
-            lambda: postgres_status(source.url, runtime=runtime, database=source.database)  # noqa: B023
-        )
         host = parse_postgres_url(source.url).host
-        stdout.write(f"  {mark}{index}) {source.name} → {source.database} | {host}\n")
+        stdout.write(f"  {mark()}{index}) {source.name} → {source.database} | {host}\n")
     if not sources:
         stdout.write("  (No PostgreSQL sources configured)\n")
 
     stdout.write(f"\n🎯 PostgreSQL Targets ({len(targets)}):\n")
     for index, target in enumerate(targets, start=1):
-        mark = icon(lambda: postgres_status(target.url, runtime=runtime))  # noqa: B023
         url = parse_postgres_url(target.url)
         ssl = "require" if url.sslmode_require else "disable"
-        stdout.write(f"  {mark}{index}) {target.name} | {url.host} [SSL: {ssl}]\n")
+        stdout.write(f"  {mark()}{index}) {target.name} | {url.host} [SSL: {ssl}]\n")
     if not targets:
         stdout.write("  (No PostgreSQL targets configured)\n")
 
     stdout.write(f"\n🍃 MongoDB Sources ({len(mongo_sources)}):\n")
     for index, msource in enumerate(mongo_sources, start=1):
-        mark = icon(lambda: mongo_status(msource.uri, runtime=runtime))  # noqa: B023
         stdout.write(
-            f"  {mark}{index}) {msource.name} → {msource.databases} | {mongo_host(msource.uri)}\n"
+            f"  {mark()}{index}) {msource.name} → {msource.databases}"
+            f" | {mongo_host(msource.uri)}\n"
         )
     if not mongo_sources:
         stdout.write("  (No MongoDB sources configured)\n")
 
     stdout.write(f"\n🎯 MongoDB Targets ({len(mongo_targets)}):\n")
     for index, mtarget in enumerate(mongo_targets, start=1):
-        mark = icon(lambda: mongo_status(mtarget.uri, runtime=runtime))  # noqa: B023
-        stdout.write(f"  {mark}{index}) {mtarget.name} | {mongo_host(mtarget.uri)}\n")
+        stdout.write(f"  {mark()}{index}) {mtarget.name} | {mongo_host(mtarget.uri)}\n")
     if not mongo_targets:
         stdout.write("  (No MongoDB targets configured)\n")
 
     stdout.write("\n")
-    if status and (sources or targets or mongo_sources or mongo_targets):
+    if status and probes:
         summary = f"Summary: 🟢 {counts[True]} connected  |  🔴 {counts[False]} disconnected"
         if counts[None]:
             summary += f"  |  ⚪ {counts[None]} unknown (client not installed)"
         stdout.write(summary + "\n")
     return 0
+
+
+def _probe_all(probes: Sequence[Callable[[], bool | None]]) -> list[bool | None]:
+    """Run every probe concurrently; results keep the probes' order."""
+    if not probes:
+        return []
+    with ThreadPoolExecutor(max_workers=min(len(probes), _MAX_PROBES)) as pool:
+        return list(pool.map(lambda probe: probe(), probes))
+
+
+def _connection_hint(rows: Sequence[str], runtime: Runtime) -> Callable[[str, int], str]:
+    return lambda host, port: connection_hint(rows, host, port, runtime=runtime)
 
 
 # --- sync postgres --------------------------------------------------------------
@@ -288,6 +315,7 @@ def _postgres_cli(
     verbose = False
     source_text: str | None = None
     destination_text: str | None = None
+    database_text: str | None = None
     index = 0
     while index < len(args):
         arg = args[index]
@@ -312,11 +340,14 @@ def _postgres_cli(
                 source_text = value
             elif arg in ("-d", "--destination"):
                 destination_text = value
-            # -db/--database: accepted for parity; the source names the database.
+            else:
+                database_text = value
             continue
         stderr.write(f"unknown option: {arg}\n" + USAGE)
         return 1
 
+    if database_text is not None:
+        stderr.write("ℹ️  -db is ignored for PostgreSQL; the source row names the database\n")
     if clear_backups:
         return _clear_postgres_backups_cli(
             source_text,
@@ -358,7 +389,13 @@ def _postgres_cli(
     stdout.write(f"  To: {destination.name}\n")
     stdout.write("\n")
     return perform_postgres_sync(
-        source, destination, verbose=verbose, runtime=runtime, stdout=stdout, stderr=stderr
+        source,
+        destination,
+        verbose=verbose,
+        runtime=runtime,
+        stdout=stdout,
+        stderr=stderr,
+        hint=_connection_hint(raw_secrets.vps, runtime),
     )
 
 
@@ -507,10 +544,12 @@ def _mongo_sync_cli(
         runtime=runtime,
         stdout=stdout,
         stderr=stderr,
+        hint=_connection_hint(raw_secrets.vps, runtime),
     )
 
 
-def _select_mongo_database(databases: str, text: str, stderr: TextIO) -> str | None:
+def _select_mongo_database(
+databases: str, text: str, stderr: TextIO) -> str | None:
     """1-based index into the source's comma-separated database list."""
     names = [name.strip() for name in databases.split(",")]
     try:

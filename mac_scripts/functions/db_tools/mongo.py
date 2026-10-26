@@ -9,7 +9,7 @@ environment variable, which the fixed scripts read via
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TextIO
 
@@ -32,6 +32,7 @@ MONGO_PING_SCRIPT = "db.adminCommand('ping')"
 _BACKUP_NAME = re.compile(r"^[^\s/\\.\"$*<>:|?]+_backup_[0-9]{8}_[0-9]{6}$")
 
 _CLIENT_NAMES = ("mongosh",)
+_SERVER_SELECTION_TIMEOUT = "serverSelectionTimeoutMS=5000"
 
 _TOOLS_NOT_FOUND = (
     "❌ Error: MongoDB client tools not found (dbt needs mongosh; the legacy"
@@ -65,6 +66,37 @@ def mongo_host(uri: str) -> str:
     return uri.split("/", 1)[0].split("?", 1)[0].split(":", 1)[0]
 
 
+def mongo_port(uri: str) -> int:
+    """Port of the first host in a Mongo URI; 27017 when unspecified."""
+    for prefix in ("mongodb+srv://", "mongodb://"):
+        if uri.startswith(prefix):
+            uri = uri[len(prefix) :]
+            break
+    if "@" in uri:
+        uri = uri.rpartition("@")[2]
+    host = uri.split("/", 1)[0].split("?", 1)[0].split(",", 1)[0]
+    _name, _sep, port = host.rpartition(":")
+    return int(port) if port.isdigit() else 27017
+
+
+def with_server_selection_timeout(uri: str) -> str:
+    """Add a 5s server-selection timeout unless the URI already sets one."""
+    if "serverselectiontimeoutms=" in uri.lower():
+        return uri
+    scheme, sep, rest = uri.partition("://")
+    if not sep:
+        return uri
+    credentials, at, endpoint = rest.rpartition("@")
+    if "?" in endpoint:
+        base, query = endpoint.split("?", 1)
+        query = f"{query}&{_SERVER_SELECTION_TIMEOUT}" if query else _SERVER_SELECTION_TIMEOUT
+        endpoint = f"{base}?{query}"
+    else:
+        slash = "" if "/" in endpoint else "/"
+        endpoint = f"{endpoint}{slash}?{_SERVER_SELECTION_TIMEOUT}"
+    return f"{scheme}://{credentials}{at}{endpoint}"
+
+
 def mongo_uri_database(uri: str) -> str:
     """The database named by the URI path (`.../name?...`), or `""`."""
     for prefix in ("mongodb+srv://", "mongodb://"):
@@ -91,9 +123,9 @@ def parse_mongo_source_row(row: str) -> MongoSource | None:
 
 
 def parse_mongo_target_row(row: str) -> MongoTarget | None:
-    """Parse `name|uri`; None when one of the two is missing."""
+    """Parse `name|uri`; None when a field is missing or a third one is present."""
     name, sep, uri = row.partition("|")
-    if not sep or not name or not uri:
+    if not sep or not name or not uri or "|" in uri:
         return None
     return MongoTarget(name=name, uri=uri)
 
@@ -122,7 +154,7 @@ def mongo_eval_argv(
     client: str, uri: str, database: str | None, script: str
 ) -> tuple[list[str], dict[str, str]]:
     """Build one `--eval` invocation; the database rides in env only."""
-    argv = [client, uri, "--quiet", "--eval", script]
+    argv = [client, with_server_selection_timeout(uri), "--quiet", "--eval", script]
     env = {} if database is None else {"DBT_MONGO_DB": database}
     return argv, env
 
@@ -269,6 +301,7 @@ def perform_mongo_sync(
     runtime: Runtime,
     stdout: TextIO,
     stderr: TextIO,
+    hint: Callable[[str, int], str] | None = None,
 ) -> int:
     """Dump `database` from the source into the target, keeping the old one.
 
@@ -288,12 +321,13 @@ def perform_mongo_sync(
                 f" the URI (use ?authSource={named} if it was for authentication)\n"
             )
             return 1
-    if mongo_status(source_uri, runtime=runtime) is False:
-        stderr.write("❌ Cannot proceed - source connection failed\n")
-        return 1
-    if mongo_status(target_uri, runtime=runtime) is False:
-        stderr.write("❌ Cannot proceed - target connection failed\n")
-        return 1
+    for label, uri in (("source", source_uri), ("target", target_uri)):
+        if mongo_status(uri, runtime=runtime) is False:
+            stderr.write(f"❌ Cannot proceed - {label} connection failed\n")
+            text = hint(mongo_host(uri), mongo_port(uri)) if hint is not None else ""
+            if text:
+                stderr.write(f"   {text}\n")
+            return 1
     tools = find_mongo_tools(runtime)
     if tools is None:
         stderr.write(_TOOLS_NOT_FOUND)

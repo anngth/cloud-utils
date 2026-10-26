@@ -120,9 +120,9 @@ def parse_postgres_source_row(row: str) -> PostgresSource | None:
 
 
 def parse_postgres_target_row(row: str) -> PostgresTarget | None:
-    """Parse `name|url`; None when one of the two is missing."""
+    """Parse `name|url`; None when a field is missing or a third one is present."""
     name, sep, url = row.partition("|")
-    if not sep or not name or not url:
+    if not sep or not name or not url or "|" in url:
         return None
     return PostgresTarget(name=name, url=url)
 
@@ -321,6 +321,7 @@ def perform_postgres_sync(
     runtime: Runtime,
     stdout: TextIO,
     stderr: TextIO,
+    hint: Callable[[str, int], str] | None = None,
 ) -> int:
     """Restore `source.database` onto the target, keeping the old one.
 
@@ -331,14 +332,15 @@ def perform_postgres_sync(
     if tools is None:
         stderr.write(_TOOLS_NOT_FOUND)
         return 1
-    if not parse_postgres_url(target.url).database:
-        stderr.write(
-            f"❌ Error: target '{target.name}' URL names no database;"
-            " add /<database> to the URL in the secrets file\n"
-        )
-        return 1
     sync = _PostgresSync(
-        source, target, tools, verbose=verbose, runtime=runtime, stdout=stdout, stderr=stderr
+        source,
+        target,
+        tools,
+        verbose=verbose,
+        runtime=runtime,
+        stdout=stdout,
+        stderr=stderr,
+        hint=hint,
     )
     return run_with_interrupts(runtime, sync.run)
 
@@ -346,8 +348,9 @@ def perform_postgres_sync(
 class _PostgresSync:
     """One sync run. Two strategies, picked by the target:
 
-    * rename: the existing target database is renamed to a `_backup_*`
-      copy and a fresh one is created (rolled back by renaming it back);
+    * rename: the target database named after the source is renamed to a
+      `_backup_*` copy and a fresh one is created (rolled back by renaming
+      it back); maintenance runs in `postgres`, whatever the URL path says;
     * dump file: Supabase and `postgres` targets cannot be renamed, so
       they are dumped to a temp file and their public schema is wiped
       (rolled back by restoring that file).
@@ -363,6 +366,7 @@ class _PostgresSync:
         runtime: Runtime,
         stdout: TextIO,
         stderr: TextIO,
+        hint: Callable[[str, int], str] | None = None,
     ) -> None:
         self.source = source
         self.tools = tools
@@ -370,6 +374,7 @@ class _PostgresSync:
         self.runtime = runtime
         self.stdout = stdout
         self.stderr = stderr
+        self.hint = hint
         self.src = parse_postgres_url(source.url)
         self.tgt = parse_postgres_url(target.url)
         self.src_env = _child_env(self.src)
@@ -395,6 +400,7 @@ class _PostgresSync:
         out.write(f"PostgreSQL Sync: {self.source.database}\n")
         out.write(f"Source: {self.src.user}@{self.src.host}:{self.src.port}\n")
         out.write(f"Target: {self.tgt.user}@{self.tgt.host}:{self.tgt.port}\n")
+        out.write(f"Target database: {self.tgt_db_name}\n")
         out.write(f"Client: {self.tools.source}\n")
         out.write("-------------------------------------\n")
 
@@ -448,6 +454,15 @@ class _PostgresSync:
         message = _first_error_line(result.stderr)
         if message:
             self.stdout.write(f"   Error: {message}\n")
+
+    def hint_for(self, url: PostgresUrl) -> None:
+        """One line on a refused local connection, when a tunnel explains it."""
+        if self.hint is None:
+            return
+        port = int(url.port) if url.port.isdigit() else 5432
+        text = self.hint(url.host, port)
+        if text:
+            self.stdout.write(f"   {text}\n")
 
     def report_step_failure(self, step: str, result: CommandResult, limit: int) -> None:
         self.stdout.write(f"❌ {step} failed (exit code {result.returncode})\n")
@@ -530,6 +545,7 @@ class _PostgresSync:
         if exists.returncode != 0:
             self.stdout.write(f"❌ Failed to check whether database '{name}' exists\n")
             self.report_error(exists)
+            self.hint_for(self.tgt)
             return False
         if exists.stdout.strip() != "1":
             return True
@@ -587,6 +603,7 @@ class _PostgresSync:
         if backed.returncode != 0:
             self.stdout.write("❌ Failed to backup target database before cleanup\n")
             self.report_error(backed)
+            self.hint_for(self.tgt)
             _discard(self.backup_file)
             self.backup_file = ""
             return False
@@ -644,6 +661,7 @@ class _PostgresSync:
             )
             if dump.returncode != 0:
                 self.report_step_failure("Dump", dump, limit=5)
+                self.hint_for(self.src)
                 return dump.returncode or 1
             _strip_transaction_timeout(dump_path, sql_path)
             restored = self.stream(
@@ -675,6 +693,7 @@ class _PostgresSync:
             )
             if dump.returncode != 0:
                 self.report_step_failure("Dump", dump, limit=5)
+                self.hint_for(self.src)
                 return dump.returncode or 1
             restored = self.stream(
                 self.pg_restore_argv(self.tgt_db_name, dump_file), env=self.tgt_env

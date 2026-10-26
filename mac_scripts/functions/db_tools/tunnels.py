@@ -14,6 +14,7 @@ from typing import TextIO
 
 from .models import VpsTunnel
 from .runtime import Runtime
+from .secrets import redact
 
 _SSH_TIMEOUT = 10
 _MIN_PORT = 1
@@ -110,7 +111,7 @@ def _select_rows(
     for row in rows:
         tunnel = parse_vps_row(row)
         if tunnel is None:
-            stderr.write(f"skipped invalid row: {row}\n")
+            stderr.write(f"skipped invalid row: {redact(row)}\n")
         elif service is None or _matches_service(tunnel, service):
             tunnels.append(tunnel)
     return tunnels
@@ -160,6 +161,36 @@ def _listening_pids(runtime: Runtime) -> dict[int, int]:
     return pids
 
 
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def connection_hint(rows: Sequence[str], host: str, port: int, *, runtime: Runtime) -> str:
+    """One line on why a local `host:port` refused, judged by the dbt tunnel on that port.
+
+    Empty when the host is not local or no tunnel row uses the port.
+    """
+    if host not in _LOCAL_HOSTS:
+        return ""
+    tunnels = (parse_vps_row(row) for row in rows)
+    tunnel = next((t for t in tunnels if t is not None and t.local_port == port), None)
+    if tunnel is None:
+        return ""
+    state = _Listeners(runtime).state(port)
+    label = f"tunnel {tunnel.service} ({tunnel.name})"
+    if not state.listens:
+        return f"{label} is DOWN; run: dbt connect {tunnel.service}"
+    if state.ours:
+        return (
+            f"{label} is UP, so {tunnel.host} refused the forward to"
+            f" {tunnel.target_host}:{tunnel.target_port}; check that the service"
+            " there listens on that address"
+        )
+    return (
+        f"port {port} is used by another process, not the {tunnel.service} tunnel:"
+        f" {state.command}"
+    )
+
+
 def _forward(tunnel: VpsTunnel) -> str:
     return f"{tunnel.local_port}:{tunnel.target_host}:{tunnel.target_port}"
 
@@ -176,7 +207,7 @@ def _preflight_argv(user: str, host: str) -> list[str]:
         "-o",
         "BatchMode=yes",
         "-o",
-        "StrictHostKeyChecking=no",
+        "StrictHostKeyChecking=accept-new",
         f"{user}@{host}",
         "exit",
     ]

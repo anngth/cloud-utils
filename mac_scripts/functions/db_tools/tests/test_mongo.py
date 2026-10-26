@@ -21,11 +21,13 @@ from db_tools.mongo import (
     find_mongo_tools,
     mongo_eval_argv,
     mongo_host,
+    mongo_port,
     mongo_status,
     mongo_uri_database,
     parse_mongo_source_row,
     parse_mongo_target_row,
     perform_mongo_sync,
+    with_server_selection_timeout,
 )
 from db_tools.runtime import Interrupted, Runtime, SignalHooks
 
@@ -272,7 +274,7 @@ def test_database_name_stays_out_of_eval() -> None:
     )
     assert exists_argv == [
         MONGOSH,
-        "mongodb://u:p@h:27017",
+        "mongodb://u:p@h:27017/?serverSelectionTimeoutMS=5000",
         "--quiet",
         "--eval",
         MONGO_EXISTS_SCRIPT,
@@ -286,7 +288,7 @@ def test_database_name_stays_out_of_eval() -> None:
     )
     assert drop_argv == [
         MONGOSH,
-        "mongodb://u:p@h:27017",
+        "mongodb://u:p@h:27017/?serverSelectionTimeoutMS=5000",
         "--quiet",
         "--eval",
         MONGO_DROP_SCRIPT,
@@ -297,7 +299,8 @@ def test_database_name_stays_out_of_eval() -> None:
 
 def test_list_script_carries_no_database_env() -> None:
     argv, env = mongo_eval_argv(MONGOSH, "mongodb://u:p@h:27017", None, MONGO_LIST_SCRIPT)
-    assert argv == [MONGOSH, "mongodb://u:p@h:27017", "--quiet", "--eval", MONGO_LIST_SCRIPT]
+    probed = "mongodb://u:p@h:27017/?serverSelectionTimeoutMS=5000"
+    assert argv == [MONGOSH, probed, "--quiet", "--eval", MONGO_LIST_SCRIPT]
     assert "DBT_MONGO_DB" not in MONGO_LIST_SCRIPT
     assert env == {}
 
@@ -309,7 +312,9 @@ def test_mongo_status_pings_with_the_fixed_script() -> None:
     fake = FakeMongo()
     uri = "mongodb+srv://user:secret@cluster.example/app"
     assert mongo_status(uri, runtime=_runtime(fake)) is True
-    assert fake.calls == [[MONGOSH, uri, "--quiet", "--eval", MONGO_PING_SCRIPT]]
+    assert fake.calls == [
+        [MONGOSH, f"{uri}?serverSelectionTimeoutMS=5000", "--quiet", "--eval", MONGO_PING_SCRIPT]
+    ]
     assert fake.envs[0] == {}
 
 
@@ -388,7 +393,7 @@ def test_dry_run_prints_names_and_never_drops() -> None:
     assert len(fake.calls) == 1
     assert fake.calls[0] == [
         MONGOSH,
-        "mongodb://user:secret@127.0.0.1:27017",
+        "mongodb://user:secret@127.0.0.1:27017/?serverSelectionTimeoutMS=5000",
         "--quiet",
         "--eval",
         MONGO_LIST_SCRIPT,
@@ -414,9 +419,10 @@ def test_real_clear_drops_every_backup_via_env_name() -> None:
 
     assert code == 0
     assert err.getvalue() == ""
+    probed = "mongodb://user:secret@127.0.0.1:27017/?serverSelectionTimeoutMS=5000"
     assert [(argv[1], database) for argv, database in fake.drops()] == [
-        ("mongodb://user:secret@127.0.0.1:27017", BACKUP_NAME),
-        ("mongodb://user:secret@127.0.0.1:27017", NO_DATABASE),
+        (probed, BACKUP_NAME),
+        (probed, NO_DATABASE),
     ]
     drop_argv, _database = fake.drops()[0]
     assert drop_argv[-1] == MONGO_DROP_SCRIPT
@@ -568,12 +574,15 @@ def test_sync_list_status_pings_each_source_and_target(tmp_path) -> None:
 
     assert code == 0
     assert err == ""
-    uris = ("mongodb://user:secret@cluster.example/?retryWrites=true",
-            "mongodb://user:secret@127.0.0.1:27017",
-            "mongodb://user:secret@t2.example:27017")
-    assert fake.calls == [
+    uris = (
+        "mongodb://user:secret@cluster.example/?retryWrites=true&serverSelectionTimeoutMS=5000",
+        "mongodb://user:secret@127.0.0.1:27017/?serverSelectionTimeoutMS=5000",
+        "mongodb://user:secret@t2.example:27017/?serverSelectionTimeoutMS=5000",
+    )
+    # probes run concurrently, so only the set of calls is fixed
+    assert sorted(fake.calls) == sorted(
         [MONGOSH, uri, "--quiet", "--eval", MONGO_PING_SCRIPT] for uri in uris
-    ]
+    )
     assert all(env == {} for env in fake.envs)
     assert "🟢 1) prod → app,logs | cluster.example" in out
     assert "🟢 1) one | 127.0.0.1" in out
@@ -1266,3 +1275,78 @@ def test_sync_accepts_a_uri_naming_the_sync_database() -> None:
 
     assert code == 0
     assert len(fake.pipes) == 2
+
+
+# --- probe timeout and tunnel hints ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("uri", "expected"),
+    [
+        ("mongodb://u:p@h:27017", "mongodb://u:p@h:27017/?serverSelectionTimeoutMS=5000"),
+        ("mongodb://u:p@h:27017/", "mongodb://u:p@h:27017/?serverSelectionTimeoutMS=5000"),
+        (
+            "mongodb+srv://u:p@c.example/app?retryWrites=true",
+            "mongodb+srv://u:p@c.example/app?retryWrites=true&serverSelectionTimeoutMS=5000",
+        ),
+        ("mongodb://u:p@h/?", "mongodb://u:p@h/?serverSelectionTimeoutMS=5000"),
+        ("mongodb://u:p/x@h:27017", "mongodb://u:p/x@h:27017/?serverSelectionTimeoutMS=5000"),
+        (
+            "mongodb://h:27017/?serverSelectionTimeoutMS=900",
+            "mongodb://h:27017/?serverSelectionTimeoutMS=900",
+        ),
+    ],
+)
+def test_with_server_selection_timeout(uri: str, expected: str) -> None:
+    assert with_server_selection_timeout(uri) == expected
+
+
+@pytest.mark.parametrize(
+    ("uri", "expected"),
+    [
+        ("mongodb://u:p@127.0.0.1:27018/?x=1", 27018),
+        ("mongodb://u:p@h1:27001,h2:27002/app", 27001),
+        ("mongodb+srv://u:p@cluster.example/app", 27017),
+        ("mongodb://localhost", 27017),
+    ],
+)
+def test_mongo_port(uri: str, expected: int) -> None:
+    assert mongo_port(uri) == expected
+
+
+def test_target_ping_failure_explains_the_down_tunnel(tmp_path) -> None:
+    path = tmp_path / "dbt_secrets"
+    path.write_text(
+        'typeset -a VPS_CONFIGS=(\n  "oracle|me|10.0.0.1|mongo|27017|127.0.0.1|27017"\n)\n'
+        f'typeset -a MONGO_SOURCES=(\n  "{SOURCES[0]}"\n)\n'
+        f'typeset -a MONGO_TARGETS=(\n  "{TARGETS[0]}"\n)\n',
+        encoding="utf-8",
+    )
+    fake = FakeMongo(ping_by_host={"127.0.0.1": 1})
+    base = fake.run_command
+
+    def run_command(argv, **kwargs):
+        if argv[0] == "lsof":
+            return CommandResult(0, "", "")  # nothing listens: the tunnel is down
+        return base(argv, **kwargs)
+
+    runtime = _runtime(fake, signals=SyncSignals())
+    runtime.run_command = run_command
+    out, err = io.StringIO(), io.StringIO()
+    code = run_cli(
+        ["sync", "mongodb", "-s", "1", "-d", "1"],
+        env={"DBT_SECRETS_FILE": str(path)},
+        stdout=out,
+        stderr=err,
+        dependencies=runtime,
+    )
+
+    assert code == 1
+    assert "target connection failed" in err.getvalue()
+    assert "tunnel mongo (oracle) is DOWN; run: dbt connect mongo" in err.getvalue()
+    assert fake.pipes == []
+
+
+def test_mongo_target_row_with_a_third_field_is_invalid() -> None:
+    assert parse_mongo_target_row("one|mongodb://u:p@h:27017|app") is None
+    assert parse_mongo_target_row("one|mongodb://u:p@h:27017") is not None
