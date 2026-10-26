@@ -126,31 +126,38 @@ def _nothing_configured(stdout: TextIO) -> int:
     return 0
 
 
-def _listen_pid(runtime: Runtime, port: int) -> int | None:
-    result = runtime.run_command(["lsof", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"])
+class _Listeners:
+    """One `lsof` snapshot of every listening TCP port, plus `ps` per pid."""
+
+    def __init__(self, runtime: Runtime) -> None:
+        self._runtime = runtime
+        self._pids = _listening_pids(runtime)
+        self._commands: dict[int, str] = {}
+
+    def state(self, port: int) -> _PortState:
+        pid = self._pids.get(port)
+        if pid is None:
+            return _PortState(listens=False, ours=False)
+        if pid not in self._commands:
+            result = self._runtime.run_command(["ps", "-p", str(pid), "-o", "command="])
+            self._commands[pid] = result.stdout.strip()
+        command = self._commands[pid]
+        return _PortState(listens=True, ours=is_our_tunnel(command, port), pid=pid, command=command)
+
+
+def _listening_pids(runtime: Runtime) -> dict[int, int]:
+    """Parse `lsof -F pn` output (`p<pid>` then `n<addr>:<port>` lines)."""
+    result = runtime.run_command(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"])
+    pids: dict[int, int] = {}
+    pid: int | None = None
     for line in result.stdout.splitlines():
-        text = line.strip()
-        if text.isdigit():
-            return int(text)
-    return None
-
-
-def _process_command(runtime: Runtime, pid: int) -> str:
-    result = runtime.run_command(["ps", "-p", str(pid), "-o", "command="])
-    return result.stdout.strip()
-
-
-def _port_state(runtime: Runtime, port: int) -> _PortState:
-    pid = _listen_pid(runtime, port)
-    if pid is None:
-        return _PortState(listens=False, ours=False)
-    command = _process_command(runtime, pid)
-    return _PortState(
-        listens=True,
-        ours=is_our_tunnel(command, port),
-        pid=pid,
-        command=command,
-    )
+        if line.startswith("p") and line[1:].isdigit():
+            pid = int(line[1:])
+        elif line.startswith("n") and pid is not None:
+            port_text = line.rsplit(":", 1)[-1]
+            if port_text.isdigit():
+                pids.setdefault(int(port_text), pid)
+    return pids
 
 
 def _forward(tunnel: VpsTunnel) -> str:
@@ -212,8 +219,9 @@ def connect_tunnels(
     pending: dict[tuple[str, str, str], list[VpsTunnel]] = {}
     already: dict[tuple[str, str, str], list[VpsTunnel]] = {}
     failed = 0
+    listeners = _Listeners(runtime)
     for tunnel in tunnels:
-        state = _port_state(runtime, tunnel.local_port)
+        state = listeners.state(tunnel.local_port)
         key = (tunnel.name, tunnel.user, tunnel.host)
         if not state.listens:
             pending.setdefault(key, []).append(tunnel)
@@ -282,8 +290,9 @@ def disconnect_tunnels(
     off: dict[tuple[str, str, str], list[VpsTunnel]] = {}
     by_pid: dict[int, list[VpsTunnel]] = {}
     left_alone = 0
+    listeners = _Listeners(runtime)
     for tunnel in tunnels:
-        state = _port_state(runtime, tunnel.local_port)
+        state = listeners.state(tunnel.local_port)
         key = (tunnel.name, tunnel.user, tunnel.host)
         if not state.listens:
             off.setdefault(key, []).append(tunnel)
@@ -341,25 +350,23 @@ def disconnect_tunnels(
 def list_tunnels(
     rows: Sequence[str],
     *,
-    service: str | None,
     runtime: Runtime,
     stdout: TextIO,
     stderr: TextIO,
 ) -> int:
     """Show a status table for every tunnel row; makes no SSH call."""
-    tunnels = _select_rows(rows, service, stderr)
-    if service is not None and not tunnels:
-        return _no_match(service, stderr)
+    tunnels = _select_rows(rows, None, stderr)
     if not tunnels:
         return _nothing_configured(stdout)
+    listeners = _Listeners(runtime)
 
     stdout.write(
         f"{'STATUS':<8}{'SERVICE':<20}{'LOCAL':<8}{'TARGET':<26}"
         f"{'VIA':<10}{'IP':<18}UPTIME\n"
     )
     for tunnel in tunnels:
-        state = _port_state(runtime, tunnel.local_port)
-        if state.listens and state.ours:
+        state = listeners.state(tunnel.local_port)
+        if state.listens and state.ours and state.pid is not None:
             status = "UP"
             uptime = _uptime(runtime, state.pid)
         elif state.listens:

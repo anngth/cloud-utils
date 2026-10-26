@@ -1,15 +1,14 @@
-"""Tests for secrets path resolution, bootstrap, and caching."""
+"""Tests for secrets path resolution, bootstrap, and loading."""
 
 from __future__ import annotations
 
 import io
-import os
 from pathlib import Path
 
 import pytest
 
 from db_tools.cli import run_cli
-from db_tools.config import ConfigError, SecretsCache, resolve_secrets_file
+from db_tools.config import ConfigError, load_secrets, resolve_secrets_file
 
 ICLOUD_BACKUPS = "Library/Mobile Documents/com~apple~CloudDocs/Backups"
 ICLOUD_LEGACY = ICLOUD_BACKUPS + "/dbt_secrets"
@@ -30,7 +29,7 @@ def test_existing_override_is_used_without_bootstrap(tmp_path: Path) -> None:
         home=home,
         repo_root=tmp_path / "repo",
         example=tmp_path / "missing.example",
-    )
+    ).path
     assert path == override
     assert not (config_dir / "dbt" / "secrets").exists()
 
@@ -46,7 +45,7 @@ def test_missing_override_is_ignored_for_default_destination(tmp_path: Path) -> 
         home=home,
         repo_root=tmp_path / "repo",
         example=example,
-    )
+    ).path
     expected = home / ICLOUD_BACKUPS / "cloud-utils" / "dbt" / "secrets"
     assert path == expected
     assert expected.exists()
@@ -69,7 +68,7 @@ def test_existing_destination_wins_over_legacy_with_other_bytes(tmp_path: Path) 
         home=home,
         repo_root=tmp_path / "repo",
         example=example,
-    )
+    ).path
     assert path == destination
     assert path.read_text() == "current bytes"
     assert legacy.read_text() == "legacy bytes"
@@ -90,7 +89,7 @@ def test_icloud_legacy_is_copied_even_when_repo_legacy_exists(tmp_path: Path) ->
         home=home,
         repo_root=repo_root,
         example=tmp_path / "example.secrets",
-    )
+    ).path
     assert path == config_dir / "dbt" / "secrets"
     assert path.read_text() == "icloud bytes"
 
@@ -108,7 +107,7 @@ def test_repo_legacy_is_copied_when_icloud_legacy_is_missing(tmp_path: Path) -> 
         home=home,
         repo_root=repo_root,
         example=tmp_path / "example.secrets",
-    )
+    ).path
     assert path == config_dir / "dbt" / "secrets"
     assert path.read_text() == "repo bytes"
 
@@ -127,7 +126,7 @@ def test_example_is_copied_when_no_legacy_file_exists(tmp_path: Path) -> None:
         home=home,
         repo_root=repo_root,
         example=example,
-    )
+    ).path
     assert path == config_dir / "dbt" / "secrets"
     assert path.read_text() == "example bytes"
 
@@ -147,58 +146,38 @@ def test_config_dir_pointing_at_a_file_raises(tmp_path: Path) -> None:
         )
 
 
-def test_secrets_cache_reuses_object_until_file_or_mtime_changes(tmp_path: Path) -> None:
+def test_load_secrets_parses_the_file(tmp_path: Path) -> None:
     path = tmp_path / "secrets"
-    path.write_text(EMPTY_SECRETS)
-    cache = SecretsCache()
-    first = cache.load(path)
-    second = cache.load(path)
-    assert first is second
     path.write_text(ONE_VPS_SECRETS)
-    mtime = path.stat().st_mtime
-    os.utime(path, (mtime + 5, mtime + 5))
-    third = cache.load(path)
-    assert third is not first
-    assert third.vps == (VPS_ROW,)
+    assert load_secrets(path).vps == (VPS_ROW,)
 
 
-def test_secrets_cache_raises_config_error_when_path_vanishes(tmp_path: Path) -> None:
-    path = tmp_path / "secrets"
-    path.write_text(EMPTY_SECRETS)
-    cache = SecretsCache()
-    cache.load(path)
-    path.unlink()
-    with pytest.raises(ConfigError):
-        cache.load(path)
-    cache2 = SecretsCache()  # fresh cache, path already gone
-    with pytest.raises(ConfigError):
-        cache2.load(path)
+def test_load_secrets_raises_config_error_when_path_is_missing(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError) as exc:
+        load_secrets(tmp_path / "secrets")
+    assert str(tmp_path / "secrets") in str(exc.value)
 
 
-def test_secrets_cache_raises_config_error_when_path_is_a_directory(
+def test_load_secrets_raises_config_error_when_path_is_a_directory(
     tmp_path: Path,
 ) -> None:
-    cache = SecretsCache()
     with pytest.raises(ConfigError) as exc:
-        cache.load(tmp_path)  # a directory can never be the secrets file
-
+        load_secrets(tmp_path)
     assert str(tmp_path) in str(exc.value)
 
 
-def test_secrets_cache_raises_config_error_when_file_is_unreadable(
+def test_load_secrets_raises_config_error_when_file_is_unreadable(
     tmp_path: Path,
 ) -> None:
     secrets = tmp_path / "secrets"
     secrets.write_text(EMPTY_SECRETS)
     secrets.chmod(0o000)
     try:
-        cache = SecretsCache()
         with pytest.raises(ConfigError) as exc:
-            cache.load(secrets)
-
+            load_secrets(secrets)
         assert str(secrets) in str(exc.value)
     finally:
-        secrets.chmod(0o644)  # let pytest's cleanup remove the file
+        secrets.chmod(0o644)
 
 
 def test_run_cli_prints_message_and_exits_one_when_secrets_vanish(
@@ -207,14 +186,11 @@ def test_run_cli_prints_message_and_exits_one_when_secrets_vanish(
     override = tmp_path / "secrets"
     override.write_text(EMPTY_SECRETS)
 
-    real_cache = SecretsCache
+    def vanishing_load(path: Path) -> object:
+        path.unlink()
+        return load_secrets(path)
 
-    class VanishingCache(real_cache):
-        def load(self, path: Path) -> object:
-            path.unlink()
-            return super().load(path)
-
-    monkeypatch.setattr("db_tools.cli.SecretsCache", VanishingCache)
+    monkeypatch.setattr("db_tools.cli.load_secrets", vanishing_load)
     out = io.StringIO()
     err = io.StringIO()
     code = run_cli(
@@ -225,6 +201,72 @@ def test_run_cli_prints_message_and_exits_one_when_secrets_vanish(
     )
     assert code == 1
     assert str(override) in err.getvalue()
+
+
+# --- bootstrap notices -----------------------------------------------------------
+
+
+def _resolve(tmp_path: Path, env: dict[str, str]):
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    example = tmp_path / "example.secrets"
+    example.write_text(EMPTY_SECRETS)
+    return resolve_secrets_file(
+        env, home=home, repo_root=tmp_path / "repo", example=example
+    )
+
+
+def test_existing_override_has_no_notice(tmp_path: Path) -> None:
+    override = tmp_path / "override"
+    override.write_text(EMPTY_SECRETS)
+    assert _resolve(tmp_path, {"DBT_SECRETS_FILE": str(override)}).notices == ()
+
+
+def test_missing_override_is_reported(tmp_path: Path) -> None:
+    resolved = _resolve(
+        tmp_path,
+        {
+            "DBT_SECRETS_FILE": str(tmp_path / "gone"),
+            "CLOUD_UTILS_CONFIG_DIR": str(tmp_path / "cfg"),
+        },
+    )
+    assert any("DBT_SECRETS_FILE" in n and "gone" in n for n in resolved.notices)
+
+
+def test_bootstrap_from_example_says_the_file_is_empty(tmp_path: Path) -> None:
+    resolved = _resolve(tmp_path, {"CLOUD_UTILS_CONFIG_DIR": str(tmp_path / "cfg")})
+    (notice,) = resolved.notices
+    assert "created an empty secrets file" in notice
+    assert str(resolved.path) in notice
+
+
+def test_bootstrap_from_legacy_says_migrated(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "dbt_secrets").write_text(ONE_VPS_SECRETS)
+    resolved = _resolve(tmp_path, {"CLOUD_UTILS_CONFIG_DIR": str(tmp_path / "cfg")})
+    (notice,) = resolved.notices
+    assert notice.startswith("migrated secrets from")
+    assert str(repo / "dbt_secrets") in notice
+
+
+def test_second_run_has_no_notice(tmp_path: Path) -> None:
+    env = {"CLOUD_UTILS_CONFIG_DIR": str(tmp_path / "cfg")}
+    _resolve(tmp_path, env)
+    assert _resolve(tmp_path, env).notices == ()
+
+
+def test_run_cli_prints_bootstrap_notice_on_stderr(tmp_path: Path) -> None:
+    out, err = io.StringIO(), io.StringIO()
+    code = run_cli(
+        ["list"],
+        env={"HOME": str(tmp_path / "home"), "CLOUD_UTILS_CONFIG_DIR": str(tmp_path / "cfg")},
+        stdout=out,
+        stderr=err,
+    )
+    assert code == 0
+    assert "created an empty secrets file" in err.getvalue()
+    assert str(tmp_path / "cfg" / "dbt" / "secrets") in err.getvalue()
 
 
 def test_run_cli_connect_reports_bad_second_line(tmp_path: Path) -> None:

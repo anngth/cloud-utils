@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from shared.process import CommandResult
 
 from db_tools.cli import run_cli
 from db_tools.models import MongoTarget
@@ -26,7 +27,6 @@ from db_tools.mongo import (
     perform_mongo_sync,
 )
 from db_tools.runtime import Interrupted, Runtime, SignalHooks
-from shared.process import CommandResult
 
 MONGOSH = "/usr/local/bin/mongosh"
 MONGO = "/usr/local/bin/mongo"
@@ -63,7 +63,7 @@ class FakeMongo:
 
     which: dict[str, str] = field(default_factory=lambda: dict(FULL_WHICH))
     calls: list[list[str]] = field(default_factory=list)
-    envs: list[dict[str, str] | None] = field(default_factory=list)
+    envs: list[dict[str, str]] = field(default_factory=list)
     list_codes: dict[str, int] = field(default_factory=dict)  # host -> returncode
     drop_codes: dict[str, int] = field(default_factory=dict)  # database -> returncode
     ping_code: int = 0
@@ -79,7 +79,7 @@ class FakeMongo:
 
     def run_command(self, argv, *, env=None, input_text=None, **_kwargs):
         self.calls.append(list(argv))
-        self.envs.append(dict(env) if env is not None else None)
+        self.envs.append(dict(env or {}))
         script = argv[4]
         if script == MONGO_LIST_SCRIPT:
             return CommandResult(
@@ -111,7 +111,7 @@ class FakeMongo:
 
 
 def _runtime(
-    fake: FakeMongo, *, now: datetime | None = None, signals: object = None
+    fake: FakeMongo, *, now: datetime | None = None, signals: SignalHooks | None = None
 ) -> Runtime:
     signals = signals if signals is not None else SignalHooksStub()
 
@@ -132,9 +132,7 @@ def _runtime(
     )
 
 
-class SignalHooksStub:
-    handler: object = None
-
+class SignalHooksStub(SignalHooks):
     def bind(self, handler) -> None:  # pragma: no cover - cleanup binds nothing
         raise AssertionError("clear_mongo_backups must not bind signal handlers")
 
@@ -318,15 +316,15 @@ def test_mongo_status_failed_ping_is_false() -> None:
     assert mongo_status("mongodb://u:p@h:27017", runtime=_runtime(FakeMongo(ping_code=1))) is False
 
 
-def test_mongo_status_missing_client_counts_as_connected() -> None:
+def test_mongo_status_missing_client_is_unknown() -> None:
     fake = FakeMongo(which={"mongodump": MONGODUMP, "mongorestore": MONGORESTORE})
-    assert mongo_status("mongodb://u:p@h:27017", runtime=_runtime(fake)) is True
+    assert mongo_status("mongodb://u:p@h:27017", runtime=_runtime(fake)) is None
     assert fake.calls == []
 
 
 def test_mongo_status_never_runs_the_legacy_mongo_shell() -> None:
     fake = FakeMongo(which={"mongo": MONGO})
-    assert mongo_status("mongodb://u:p@h:27017", runtime=_runtime(fake)) is True
+    assert mongo_status("mongodb://u:p@h:27017", runtime=_runtime(fake)) is None
     assert fake.calls == []
 
 
@@ -583,7 +581,7 @@ def test_sync_list_status_pings_each_source_and_target(tmp_path) -> None:
 
 
 def test_sync_list_status_failed_ping_is_marked_disconnected(tmp_path) -> None:
-    code, out, _err, fake = _drive(tmp_path, ["sync", "list", "--status"], ping_code=1)
+    code, out, _err, _fake = _drive(tmp_path, ["sync", "list", "--status"], ping_code=1)
 
     assert code == 0
     assert "🔴 1) prod → app,logs | cluster.example" in out
@@ -591,15 +589,16 @@ def test_sync_list_status_failed_ping_is_marked_disconnected(tmp_path) -> None:
     assert "Summary: 🟢 0 connected  |  🔴 3 disconnected" in out
 
 
-def test_sync_list_status_with_no_mongo_client_reports_connected(tmp_path) -> None:
-    which = {"mongodump": MONGODUMP, "mongorestore": MONGORESTORE}
-    code, out, err, fake = _drive(tmp_path, ["sync", "list", "--status"], which=which)
+def test_sync_list_status_with_no_mongo_client_reports_unknown(tmp_path) -> None:
+    code, out, err, fake = _drive(
+        tmp_path, ["sync", "list", "--status"], which={"mongodump": MONGODUMP}
+    )
 
     assert code == 0
     assert err == ""
     assert fake.calls == []
-    assert "🟢 1) prod → app,logs | cluster.example" in out
-    assert "Summary: 🟢 3 connected  |  🔴 0 disconnected" in out
+    assert "⚪ 1) prod → app,logs | cluster.example" in out
+    assert "⚪ 3 unknown (client not installed)" in out
 
 
 def test_sync_list_skips_invalid_mongo_rows_with_a_warning(tmp_path) -> None:
@@ -764,7 +763,7 @@ def test_exists_false_skips_backup_and_runs_sync() -> None:
     assert code == 0
     assert "skipping backup" in out
     assert len(fake.pipes) == 1  # only the sync pipe
-    sync_left, sync_right = fake.pipes[0]
+    _sync_left, sync_right = fake.pipes[0]
     assert "--drop" in sync_right
     assert "--nsFrom=app.*" in sync_right
     assert "--nsTo=app.*" in sync_right
@@ -938,7 +937,7 @@ def test_interrupt_before_any_backup_propagates_with_nothing_bound() -> None:
 
 def test_signal_handler_restores_backup_and_returns_130() -> None:
     fake = FakeMongo()
-    code, _out, _err, signals = _sync(fake)
+    _code, _out, _err, signals = _sync(fake)
 
     # The handler was live during the sync pipe: an interrupt there restores.
     handler = fake.handler_at_pipe[1]
@@ -1067,7 +1066,7 @@ class FakeAll(FakeMongo):
     def run_command(self, argv, *, env=None, input_text=None, **kwargs):
         if argv[0] == PSQL:
             self.calls.append(list(argv))  # keep one ordered timeline
-            self.envs.append(dict(env) if env is not None else None)
+            self.envs.append(dict(env or {}))
             query = argv[-1]
             host = argv[argv.index("-h") + 1]
             if query.startswith("SELECT datname FROM pg_database"):
@@ -1200,7 +1199,7 @@ def test_sync_clear_without_any_targets_exits_one(tmp_path) -> None:
 
 
 def test_sync_clear_without_mongo_targets_returns_zero(tmp_path) -> None:
-    code, out, _err, fake = _drive_all(tmp_path, ["sync", "-c"], mongo_targets=())
+    code, _out, _err, fake = _drive_all(tmp_path, ["sync", "-c"], mongo_targets=())
 
     assert code == 0
     assert _pg_list_index(fake) >= 0

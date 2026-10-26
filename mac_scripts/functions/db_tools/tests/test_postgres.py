@@ -9,11 +9,13 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from shared.process import CommandResult
 
 from db_tools.cli import run_cli
 from db_tools.models import PostgresTarget
 from db_tools.postgres import (
     PostgresTools,
+    _strip_transaction_timeout,
     clear_postgres_backups,
     find_postgres_tools,
     parse_postgres_source_row,
@@ -23,9 +25,7 @@ from db_tools.postgres import (
     quote_identifier,
     quote_literal,
 )
-from db_tools.postgres import _strip_transaction_timeout
 from db_tools.runtime import Interrupted, Runtime, SignalHooks
-from shared.process import CommandResult
 
 PSQL = "/usr/bin/psql"
 PG_DUMP = "/usr/bin/pg_dump"
@@ -58,7 +58,7 @@ SYNC_ARGV = ["sync", "postgres", "-s", "1", "-d", "1"]
 SYNC_EXISTS_SQL = "SELECT 1 FROM pg_database WHERE datname='app';"
 SYNC_TERMINATE_SQL = (
     "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
-    " WHERE datname='app' AND pid <> pg_backend_pid();"
+    " WHERE datname = 'app' AND pid <> pg_backend_pid();"
 )
 SYNC_RENAME_TO_BACKUP = f'ALTER DATABASE "app" RENAME TO "{SYNC_BACKUP}";'
 SYNC_CREATE_SQL = 'CREATE DATABASE "app";'
@@ -91,7 +91,7 @@ TARGETS = (
 )
 
 _LIST_ARGS = [PSQL, "-h", "t1.example", "-p", "5432", "-U", "svc", "-d", "postgres", "-At", "-c"]
-_TERMINATE_ARGS = [PSQL, "-h", "t1.example", "-p", "5432", "-U", "svc", "-d", "postgres", "-t", "-c"]
+_TERMINATE_ARGS = [*_LIST_ARGS[:-2], "-t", "-c"]
 _DROP_ARGS = [PSQL, "-h", "t1.example", "-p", "5432", "-U", "svc", "-d", "postgres", "-c"]
 
 
@@ -106,7 +106,7 @@ class FakePostgres:
     )
     files: frozenset[str] = field(default_factory=frozenset)
     calls: list[list[str]] = field(default_factory=list)
-    envs: list[dict[str, str] | None] = field(default_factory=list)
+    envs: list[dict[str, str]] = field(default_factory=list)
     # Next matching substring wins once, then is removed (for run stories).
     responses: tuple[tuple[str, CommandResult], ...] = ()
     version_stdout: str = "PostgreSQL 16.4 (Homebrew)"
@@ -120,7 +120,7 @@ class FakePostgres:
 
     def run_command(self, argv, *, env=None, input_text=None, input_file=None, **kwargs):
         self.calls.append(list(argv))
-        self.envs.append(dict(env) if env is not None else None)
+        self.envs.append(dict(env or {}))
         self.input_files.append(input_file)
         self.streams.append(bool(kwargs.get("stream", False)))
         stdin_text = input_text
@@ -148,7 +148,7 @@ class FakePostgres:
             return CommandResult(0, self.table_count + "\n", "")
         if query.startswith("DROP DATABASE"):
             return CommandResult(0, "", "")
-        if query.startswith("ALTER DATABASE") or query.startswith("CREATE DATABASE"):
+        if query.startswith(("ALTER DATABASE", "CREATE DATABASE")):
             return CommandResult(0, "", "")
         if query.startswith("DROP SCHEMA"):
             return CommandResult(0, "", "")
@@ -240,8 +240,27 @@ def test_parse_url_keeps_password_colons_and_at_sign() -> None:
     assert (url.host, url.port, url.database) == ("db.example", "5432", "app")
 
 
-def test_parse_url_defaults_database_to_postgres() -> None:
-    assert parse_postgres_url("postgresql://user:pass@host:5432").database == "postgres"
+def test_parse_url_without_a_path_has_no_database() -> None:
+    assert parse_postgres_url("postgresql://user:pass@host:5432").database == ""
+    assert parse_postgres_url("postgresql://user:pass@host:5432/").database == ""
+
+
+def test_parse_url_query_without_a_path_is_not_a_database() -> None:
+    url = parse_postgres_url("postgresql://u:p@h:5432?sslmode=require")
+    assert (url.host, url.port, url.database, url.sslmode_require) == ("h", "5432", "", True)
+
+
+def test_sync_rejects_a_target_url_without_a_database(tmp_path) -> None:
+    code, _out, err, fake = _drive(
+        tmp_path,
+        SYNC_ARGV,
+        now=NOW,
+        targets=("one|postgresql://svc:secret@t1.example:5432?sslmode=require",),
+    )
+
+    assert code == 1
+    assert "names no database" in err
+    assert fake.calls == []  # nothing touched the target
 
 
 def test_sslmode_require_is_true_only_for_that_substring() -> None:
@@ -343,7 +362,7 @@ def test_postgres_status_probes_select_one_with_pgpassword_env() -> None:
     url = "postgresql://svc:secret@t1.example:5432/app?sslmode=require"
     assert postgres_status(url, runtime=_runtime(fake)) is True
     assert fake.calls == [
-        [PSQL, "-h", "t1.example", "-p", "5432", "-U", "svc", "-d", "postgres", "-t", "-c", "SELECT 1;"]
+        [*_TERMINATE_ARGS, "SELECT 1;"]
     ]
     assert fake.envs[0]["PGPASSWORD"] == "secret"
     assert fake.envs[0]["PGSSLMODE"] == "require"
@@ -359,13 +378,13 @@ def test_postgres_status_omits_pgsslmode_without_require() -> None:
     assert "PGSSLMODE" not in fake.envs[0]
 
 
-def test_postgres_status_missing_client_counts_as_connected() -> None:
+def test_postgres_status_missing_client_is_unknown() -> None:
     assert (
         postgres_status(
             "postgresql://svc:secret@t1.example:5432/app",
             runtime=_runtime(FakePostgres(which={})),
         )
-        is True
+        is None
     )
 
 
@@ -532,19 +551,19 @@ def test_sync_list_prints_sections_with_1_based_indexes(tmp_path, alias: str) ->
     assert "  2) two | t2.example [SSL: disable]" in out
 
 
-def test_sync_list_status_with_no_client_still_reports_connected(tmp_path) -> None:
+def test_sync_list_status_with_no_client_reports_unknown(tmp_path) -> None:
     code, out, err, fake = _drive(tmp_path, ["sync", "list", "--status"], which={})
 
     assert code == 0
     assert err == ""
     assert fake.calls == []
-    assert "🟢 1) prod → app | src.example" in out
-    assert "🟢 1) one | t1.example [SSL: require]" in out
-    assert "Summary: 🟢 3 connected  |  🔴 0 disconnected" in out
+    assert "⚪ 1) prod → app | src.example" in out
+    assert "⚪ 1) one | t1.example [SSL: require]" in out
+    assert "⚪ 3 unknown (client not installed)" in out
 
 
 def test_sync_list_status_reports_failed_connection(tmp_path) -> None:
-    code, out, _err, fake = _drive(tmp_path, ["sync", "list", "--status"], probe_code=1)
+    code, out, _err, _fake = _drive(tmp_path, ["sync", "list", "--status"], probe_code=1)
 
     assert code == 0
     assert "🔴 1) prod → app | src.example" in out
@@ -553,7 +572,7 @@ def test_sync_list_status_reports_failed_connection(tmp_path) -> None:
 
 
 def test_sync_list_skips_invalid_rows_with_a_warning(tmp_path) -> None:
-    code, out, err, fake = _drive(tmp_path, ["sync", "list"], sources=("bad",))
+    code, out, err, _fake = _drive(tmp_path, ["sync", "list"], sources=("bad",))
 
     assert code == 0
     assert "bad" in err
@@ -597,9 +616,9 @@ def test_existing_target_renamed_created_and_backup_dropped(tmp_path) -> None:
     assert fake.inputs[7] == "CREATE TABLE public.items (id int);\n"
     counted = [call for call in fake.calls if call[-1].startswith("SELECT COUNT(*)")]
     assert [counted[0][counted[0].index("-d") + 1]] == ["app"]
-    assert counted[0][:-1] == [PSQL, "-h", "t1.example", "-p", "5432", "-U", "svc", "-d", "app", "-t", "-c"]
+    assert counted[0][:-1] == [PSQL, "-h", "t1.example", "-p", "5432", "-U", "svc", "-d", "app", "-t", "-c"]  # noqa: E501
     drop = [call for call in fake.calls if call[-1].startswith("DROP DATABASE")]
-    assert drop == [[PSQL, "-h", "t1.example", "-p", "5432", "-U", "svc", "-d", "postgres", "-c", SYNC_DROP_BACKUP_SQL]]
+    assert drop == [[*_DROP_ARGS, SYNC_DROP_BACKUP_SQL]]
     assert "app_backup_20261022_150405" in out
     assert "synced successfully" in out
 
@@ -610,12 +629,13 @@ def test_missing_target_just_creates_a_fresh_database(tmp_path) -> None:
     assert code == 0
     assert err == ""
     assert [call[-1] for call in fake.calls if call[-1].startswith("ALTER DATABASE")] == []
-    assert [call[-1] for call in fake.calls if call[-1].startswith("CREATE DATABASE")] == [SYNC_CREATE_SQL]
+    created = [call[-1] for call in fake.calls if call[-1].startswith("CREATE DATABASE")]
+    assert created == [SYNC_CREATE_SQL]
     assert [call[-1] for call in fake.calls if call[-1].startswith("DROP DATABASE")] == []
 
 
 def test_create_failure_renames_the_backup_back(tmp_path) -> None:
-    code, _out, err, fake = _drive(
+    code, _out, _err, fake = _drive(
         tmp_path,
         SYNC_ARGV,
         now=NOW,
@@ -631,7 +651,7 @@ def test_create_failure_renames_the_backup_back(tmp_path) -> None:
 
 
 def test_rename_back_failure_keeps_the_backup(tmp_path) -> None:
-    code, _out, err, fake = _drive(
+    code, _out, _err, fake = _drive(
         tmp_path,
         SYNC_ARGV,
         now=NOW,
@@ -651,7 +671,7 @@ def test_version_16_strips_transaction_timeout(tmp_path) -> None:
 
     assert code == 0
     assert err == ""
-    dump = [call for call in fake.calls if call[0] == PG_DUMP][0]
+    dump = next(call for call in fake.calls if call[0] == PG_DUMP)
     assert dump[-6:-2] == ["--no-owner", "--no-acl", "--clean", "--if-exists"]
     assert "-Fc" not in dump
     assert dump[-2] == "-f"
@@ -668,7 +688,7 @@ def test_version_16_restore_streams_through_temp_files(tmp_path, monkeypatch) ->
 
     assert code == 0
     assert err == ""
-    dump = [call for call in fake.calls if call[0] == PG_DUMP][0]
+    dump = next(call for call in fake.calls if call[0] == PG_DUMP)
     dump_path = dump[dump.index("-f") + 1]
     restore = next(
         index
@@ -694,8 +714,9 @@ def test_unreadable_version_uses_custom_format(tmp_path, version_stdout) -> None
 
     assert code == 0
     assert err == ""
-    dump = [call for call in fake.calls if call[0] == PG_DUMP][0]
-    assert dump[:10] == [PG_DUMP, "-h", "src.example", "-p", "5432", "-U", "svc", "-d", "app", "-Fc"]
+    dump = next(call for call in fake.calls if call[0] == PG_DUMP)
+    assert dump[:9] == [PG_DUMP, "-h", "src.example", "-p", "5432", "-U", "svc", "-d", "app"]
+    assert dump[9] == "-Fc"
     dump_file = dump[dump.index("-f") + 1]
     assert [call for call in fake.calls if call[0] == PG_RESTORE] == [
         [
@@ -727,13 +748,13 @@ def test_verbose_sets_debug_flags_and_omits_qs(tmp_path, version_stdout) -> None
 
     assert code == 0
     assert err == ""
-    dump = [call for call in fake.calls if call[0] == PG_DUMP][0]
+    dump = next(call for call in fake.calls if call[0] == PG_DUMP)
     assert dump[1] == "-v"
     if version_stdout:  # SQL path: psql stays chatty
         assert [value for value in fake.inputs if value is not None] != []
         assert all("-q" not in call for call in fake.calls)
     else:  # custom path: pg_restore goes verbose
-        restore = [call for call in fake.calls if call[0] == PG_RESTORE][0]
+        restore = next(call for call in fake.calls if call[0] == PG_RESTORE)
         assert restore[1] == "--verbose"
         assert [value for value in fake.inputs if value is not None] == []
 
@@ -745,14 +766,14 @@ def test_verbose_streams_the_dump_and_restore_live(tmp_path, version_stdout) -> 
     )
 
     assert code == 0
-    streamed = [call[0] for call, stream in zip(fake.calls, fake.streams) if stream]
+    streamed = [call[0] for call, stream in zip(fake.calls, fake.streams, strict=True) if stream]
     assert PG_DUMP in streamed
     assert PG_RESTORE in streamed or any(
         call[0] == PSQL and stream and "-c" not in call
-        for call, stream in zip(fake.calls, fake.streams)
+        for call, stream in zip(fake.calls, fake.streams, strict=True)
     )
     assert not any(
-        stream for call, stream in zip(fake.calls, fake.streams) if "-c" in call
+        stream for call, stream in zip(fake.calls, fake.streams, strict=True) if "-c" in call
     )
 
 
@@ -769,7 +790,8 @@ def test_supabase_verbose_streams_the_target_backup_dump(tmp_path) -> None:
     )
 
     assert code == 0
-    dumps = [stream for call, stream in zip(fake.calls, fake.streams) if call[0] == PG_DUMP]
+    pairs = zip(fake.calls, fake.streams, strict=True)
+    dumps = [stream for call, stream in pairs if call[0] == PG_DUMP]
     assert dumps == [True, True]
 
 
@@ -781,7 +803,9 @@ def test_dump_failure_prints_the_cause_and_exit_code(tmp_path) -> None:
         responses=(
             (
                 "usr/bin/pg_dump",
-                CommandResult(2, "", "pg_dump: error: connection failed\npg_dump: detail: no route\n"),
+                CommandResult(
+                    2, "", "pg_dump: error: connection failed\npg_dump: detail: no route\n"
+                ),
             ),
         ),
     )
@@ -875,7 +899,7 @@ def test_strip_passes_non_utf8_bytes_through_unchanged(tmp_path) -> None:
 
 
 def test_restore_error_keeps_backup_and_exits_one(tmp_path) -> None:
-    code, out, err, fake = _drive(
+    code, out, _err, fake = _drive(
         tmp_path,
         SYNC_ARGV,
         now=NOW,
@@ -897,7 +921,7 @@ def test_zero_table_count_keeps_backup_and_exits_one(tmp_path) -> None:
 
 
 def test_dump_failure_drops_new_database_and_renames_backup_back(tmp_path) -> None:
-    code, _out, err, fake = _drive(
+    code, _out, _err, fake = _drive(
         tmp_path,
         SYNC_ARGV,
         now=NOW,
@@ -912,7 +936,7 @@ def test_dump_failure_drops_new_database_and_renames_backup_back(tmp_path) -> No
 
 
 def test_restore_failure_drops_new_database_and_renames_backup_back(tmp_path) -> None:
-    code, _out, err, fake = _drive(
+    code, _out, _err, fake = _drive(
         tmp_path,
         SYNC_ARGV,
         now=NOW,
@@ -943,13 +967,13 @@ def _track_unlink(monkeypatch) -> list[str]:
 
 def test_supabase_dumps_file_cleans_schema_and_deletes_it(tmp_path, monkeypatch) -> None:
     removed = _track_unlink(monkeypatch)
-    code, out, err, fake = _drive(
+    code, _out, err, fake = _drive(
         tmp_path, SYNC_ARGV, now=NOW, targets=SUPABASE_TARGETS
     )
 
     assert code == 0
     assert err == ""
-    backup_dump = [call for call in fake.calls if call[0] == PG_DUMP][0]
+    backup_dump = next(call for call in fake.calls if call[0] == PG_DUMP)
     assert backup_dump[:10] == [
         PG_DUMP,
         "-h",
@@ -981,7 +1005,7 @@ def test_target_database_postgres_dumps_file_before_schema_cleanup(tmp_path) -> 
     assert code == 0
     assert err == ""
     assert "Supabase or uses 'postgres' database" in out
-    backup_dump = [call for call in fake.calls if call[0] == PG_DUMP][0]
+    backup_dump = next(call for call in fake.calls if call[0] == PG_DUMP)
     assert backup_dump[2] == "plain.example"
     clean_calls = [call for call in fake.calls if call[-1].startswith("DROP SCHEMA")]
     assert fake.calls.index(backup_dump) < fake.calls.index(clean_calls[0])
@@ -992,7 +1016,7 @@ def test_supabase_dump_failure_deletes_file_and_skips_schema_drop(
     tmp_path, monkeypatch
 ) -> None:
     removed = _track_unlink(monkeypatch)
-    code, _out, err, fake = _drive(
+    code, _out, _err, fake = _drive(
         tmp_path,
         SYNC_ARGV,
         now=NOW,
@@ -1018,7 +1042,7 @@ def test_supabase_schema_cleanup_failure_restores_dump_file(tmp_path, monkeypatc
 
     assert code == 1
     assert err == ""
-    backup_dump = [call for call in fake.calls if call[0] == PG_DUMP][0]
+    backup_dump = next(call for call in fake.calls if call[0] == PG_DUMP)
     dump_file = backup_dump[backup_dump.index("-f") + 1]
     restore = [call for call in fake.calls if call[0] == PG_RESTORE]
     assert restore == [
@@ -1049,7 +1073,7 @@ def test_supabase_file_restore_failure_keeps_file_and_prints_path(
     tmp_path, monkeypatch
 ) -> None:
     removed = _track_unlink(monkeypatch)
-    code, out, err, fake = _drive(
+    code, out, _err, fake = _drive(
         tmp_path,
         SYNC_ARGV,
         now=NOW,
@@ -1064,7 +1088,7 @@ def test_supabase_file_restore_failure_keeps_file_and_prints_path(
     )
 
     assert code == 1
-    backup_dump = [call for call in fake.calls if call[0] == PG_DUMP][0]
+    backup_dump = next(call for call in fake.calls if call[0] == PG_DUMP)
     dump_file = backup_dump[backup_dump.index("-f") + 1]
     assert dump_file not in removed
     assert dump_file in out
@@ -1234,7 +1258,7 @@ def test_interrupt_after_supabase_dump_restores_file(tmp_path) -> None:
     )
 
     assert code == 130
-    dump_argv = [call for call in fake.calls if call[0] == PG_DUMP][0]
+    dump_argv = next(call for call in fake.calls if call[0] == PG_DUMP)
     dump_file = dump_argv[dump_argv.index("-f") + 1]
     restore = [call for call in fake.calls if call[0] == PG_RESTORE][-1]
     assert restore[-1] == dump_file
@@ -1250,7 +1274,7 @@ def test_interrupt_after_supabase_dump_restores_file(tmp_path) -> None:
 
 def test_password_is_only_in_pgpassword(tmp_path) -> None:
     bad = "p'; touch pwned; echo '"
-    code, _out, err, fake = _drive(
+    code, _out, _err, fake = _drive(
         tmp_path,
         SYNC_ARGV,
         now=NOW,
@@ -1267,7 +1291,10 @@ def test_password_is_only_in_pgpassword(tmp_path) -> None:
     assert not (tmp_path / "pwned").exists()
 
 
-@pytest.mark.parametrize("argv", [["sync", "postgres", "-s", "1"], ["sync", "postgres", "-d", "1"], ["sync", "postgres"]])
+@pytest.mark.parametrize(
+    "argv",
+    [["sync", "postgres", "-s", "1"], ["sync", "postgres", "-d", "1"], ["sync", "postgres"]],
+)
 def test_sync_requires_source_and_destination(tmp_path, argv: list[str]) -> None:
     code, _out, err, fake = _drive(tmp_path, argv)
 
@@ -1292,7 +1319,7 @@ def test_database_flag_is_still_accepted_and_ignored(tmp_path) -> None:
 
     assert code == 0
     assert err == ""
-    dump = [call for call in fake.calls if call[0] == PG_DUMP][0]
+    dump = next(call for call in fake.calls if call[0] == PG_DUMP)
     assert dump[dump.index("-d") + 1] == "app"
 
 

@@ -5,9 +5,10 @@ import signal
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from shared.process import CommandResult
+
 from db_tools.cli import run_cli
 from db_tools.runtime import Runtime, SignalHooks
-from shared.process import CommandResult
 
 ROWS = (
     "a|me|10.0.0.1|postgres|5432|db.internal|5432",
@@ -47,8 +48,9 @@ class FakeTunnels:
         self.calls.append(list(argv))
         head = argv[0]
         if head == "lsof":
-            port = int(argv[1].removeprefix("-iTCP:"))
-            return CommandResult(0, self.listeners.get(port, ""), "")
+            assert argv == ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"]
+            lines = [f"p{pid}\nn*:{port}" for port, pid in self.listeners.items() if pid]
+            return CommandResult(0, "\n".join(lines) + "\n", "")
         if head == "ps":
             pid = int(argv[2])
             option = argv[4]
@@ -282,11 +284,11 @@ def test_connect_empty_vps_list_exits_zero(tmp_path):
 # --- list / ls ----------------------------------------------------------------
 
 
-def test_list_status_shows_rows_without_ssh(tmp_path):
+def test_list_shows_rows_without_ssh(tmp_path):
     code, out, _err, fake = _drive(
         tmp_path,
         ROWS,
-        ["list", "--status"],
+        ["list"],
         listeners={5432: "42", 27017: "42"},
         commands={42: "ssh -L 5432:db.internal:5432 -L 27017:db.internal:27017"},
         etimes={42: "01:02"},
@@ -294,13 +296,17 @@ def test_list_status_shows_rows_without_ssh(tmp_path):
 
     assert code == 0
     assert {argv[0] for argv in fake.calls} <= {"lsof", "ps"}
+    assert [argv[0] for argv in fake.calls].count("lsof") == 1  # one snapshot
+    assert [argv for argv in fake.calls if argv[0] == "ps" and argv[4] == "command="] == [
+        ["ps", "-p", "42", "-o", "command="]
+    ]  # one ps per pid, not per port
     for token in ("UP", "DOWN", "postgres", "mongo", "5432", "db.internal:5432",
                   "a", "10.0.0.1", "01:02"):
         assert token in out
 
 
 def test_list_busy_row(tmp_path):
-    code, out, _err, fake = _drive(
+    code, out, _err, _fake = _drive(
         tmp_path,
         ROWS[:1],
         ["ls"],
@@ -321,10 +327,33 @@ def test_list_empty_vps_prints_message(tmp_path):
 
 
 def test_list_rejects_unknown_option(tmp_path):
-    code, _out, err, fake = _drive(tmp_path, ROWS, ["list", "--full"])
+    code, _out, err, _fake = _drive(tmp_path, ROWS, ["list", "--full"])
 
     assert code == 1
     assert err != ""
+
+
+def test_list_status_flag_is_rejected_with_a_hint(tmp_path):
+    code, out, err, fake = _drive(tmp_path, ROWS, ["list", "--status"])
+
+    assert code == 1
+    assert out == ""
+    assert fake.calls == []
+    assert "dbt sync list --status" in err
+
+
+def test_listening_pids_parses_lsof_field_output():
+    from db_tools.tunnels import _listening_pids
+
+    class R:
+        def run_command(self, argv, **_kwargs):
+            return CommandResult(
+                0,
+                "p42\nf5\nn*:5432\nf6\nn[::1]:5432\np77\nn127.0.0.1:27017\nnjunk\n",
+                "",
+            )
+
+    assert _listening_pids(R()) == {5432: 42, 27017: 77}
 
 
 # --- test ---------------------------------------------------------------------

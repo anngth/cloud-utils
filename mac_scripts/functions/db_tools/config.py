@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .models import RawSecrets
@@ -17,26 +18,33 @@ class ConfigError(Exception):
     """A user or environment configuration could not be used."""
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedSecrets:
+    path: Path
+    notices: tuple[str, ...] = field(default=())
+
+
 def resolve_secrets_file(
     env: Mapping[str, str],
     *,
     home: Path,
     repo_root: Path,
     example: Path,
-) -> Path:
-    """Return the current secrets file path, bootstrapping it if needed.
+) -> ResolvedSecrets:
+    """Return the secrets file path plus any notice about how it was found.
 
-    An existing ``DBT_SECRETS_FILE`` wins and never touches the config
-    directory. Otherwise the destination is ``$CLOUD_UTILS_CONFIG_DIR/dbt/secrets``
-    (defaulting to the iCloud ``cloud-utils`` backup directory); when the
-    destination is missing it is copied from the iCloud legacy file, the repo
-    ``dbt_secrets``, or the packaged ``secrets.example``, in that order.
+    An existing ``DBT_SECRETS_FILE`` wins. Otherwise the file is
+    ``$CLOUD_UTILS_CONFIG_DIR/dbt/secrets`` (default: the iCloud
+    ``cloud-utils`` backup directory), bootstrapped on first use from the
+    iCloud legacy file, the repo ``dbt_secrets``, or ``secrets.example``.
     """
+    notices: list[str] = []
     override = env.get("DBT_SECRETS_FILE", "")
     if override:
         path = Path(override).expanduser()
         if path.is_file():
-            return path
+            return ResolvedSecrets(path)
+        notices.append(f"DBT_SECRETS_FILE={override} does not exist; using the default location")
 
     config_text = env.get("CLOUD_UTILS_CONFIG_DIR", "")
     config_dir = Path(config_text).expanduser() if config_text else home / _DEFAULT_CONFIG_DIR
@@ -47,7 +55,7 @@ def resolve_secrets_file(
 
     destination = config_dir / "dbt" / "secrets"
     if destination.is_file():
-        return destination
+        return ResolvedSecrets(destination, tuple(notices))
 
     source = example
     for candidate in (home / _ICLOUD_LEGACY, repo_root / "dbt_secrets"):
@@ -60,37 +68,17 @@ def resolve_secrets_file(
         shutil.copyfile(source, destination)
     except OSError as exc:
         raise ConfigError(f"cannot bootstrap secrets file {destination}: {exc}") from exc
-    return destination
+    if source == example:
+        notices.append(f"created an empty secrets file at {destination}; add your entries there")
+    else:
+        notices.append(f"migrated secrets from {source} to {destination}")
+    return ResolvedSecrets(destination, tuple(notices))
 
 
-class SecretsCache:
-    """Parses a secrets file once per path, reloading when its mtime moves.
-
-    Raises ``ConfigError`` if the file is missing or cannot be read.
-    """
-
-    def __init__(self) -> None:
-        self._path: Path | None = None
-        self._mtime: float | None = None
-        self._secrets: RawSecrets | None = None
-
-    def load(self, path: Path) -> RawSecrets:
-        try:
-            stat = path.stat()
-            text = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            # Missing, unreadable, or not a file: a raw traceback would
-            # leak, so every OS-level read failure becomes a ConfigError
-            # that names the path.
-            raise ConfigError(f"cannot read secrets file {path}: {exc}") from exc
-        if (
-            self._secrets is not None
-            and self._path == path
-            and self._mtime == stat.st_mtime
-        ):
-            return self._secrets
-        secrets = parse_secrets_text(text)
-        self._path = path
-        self._mtime = stat.st_mtime
-        self._secrets = secrets
-        return secrets
+def load_secrets(path: Path) -> RawSecrets:
+    """Parse the secrets file; raise ConfigError when it cannot be read."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(f"cannot read secrets file {path}: {exc}") from exc
+    return parse_secrets_text(text)

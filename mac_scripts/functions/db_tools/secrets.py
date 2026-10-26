@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from .models import RawSecrets
 
 _TYPESET = re.compile(r"typeset -a (\w+)=\($")
+_ESCAPES = ('"', "\\", "$")
 
 _ARRAY_FIELDS: Mapping[str, str] = {
     "VPS_CONFIGS": "vps",
@@ -89,8 +90,8 @@ def _read_element(line: str, lineno: int) -> str:
     while i < len(line):
         char = line[i]
         if char == "\\":
-            if i + 1 >= len(line) or line[i + 1] not in ('"', "\\"):
-                raise SecretsError(lineno, "only \\\\ and \\\" are valid escapes")
+            if i + 1 >= len(line) or line[i + 1] not in _ESCAPES:
+                raise SecretsError(lineno, "only \\\\, \\\" and \\$ are valid escapes")
             chars.append(line[i + 1])
             i += 2
             continue
@@ -100,8 +101,10 @@ def _read_element(line: str, lineno: int) -> str:
             return "".join(chars)
         if char == "`":
             raise SecretsError(lineno, "backticks are not allowed")
-        if char == "$" and line[i + 1 : i + 2] == "(":
-            raise SecretsError(lineno, "command substitution $(...) is not allowed")
+        if char == "$":
+            # zsh would expand this; dbt never does, so say so instead of
+            # silently keeping the literal text.
+            raise SecretsError(lineno, "unescaped $ is not expanded; write \\$ for a literal $")
         chars.append(char)
         i += 1
     raise SecretsError(lineno, "unterminated double-quoted string")

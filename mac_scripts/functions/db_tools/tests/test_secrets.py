@@ -41,10 +41,20 @@ def test_escaped_characters_in_values() -> None:
             "typeset -a VPS_CONFIGS=(",
             r'"a\"b"',
             r'"a\\b"',
+            r'"p\$ss"',
             ")",
         )
     )
-    assert result.vps == ('a"b', "a\\b")
+    assert result.vps == ('a"b', "a\\b", "p$ss")
+
+
+@pytest.mark.parametrize("row", ['"$HOME/x"', '"pass${X}"', '"a$"'])
+def test_unescaped_dollar_is_rejected_instead_of_kept_literally(row: str) -> None:
+    text = secrets_text("typeset -a VPS_CONFIGS=(", row, ")")
+    with pytest.raises(SecretsError) as excinfo:
+        parse_secrets_text(text)
+    assert excinfo.value.line == 2
+    assert "\\$" in str(excinfo.value)
 
 
 def test_duplicate_array_name_raises() -> None:

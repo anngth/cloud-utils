@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -40,13 +41,14 @@ def run_command(
     stdout_stream = stdout if stdout is not None else sys.stdout
     stderr_stream = stderr if stderr is not None else sys.stderr
     source: IO[bytes] | None = None
+    stdin = subprocess.PIPE if input_text is not None else None
     if input_file is not None:
         source = open(input_file, "rb")  # noqa: SIM115
     try:
         process = subprocess.Popen(
             list(argv),
             env=child_env(env),
-            stdin=source if source is not None else subprocess.PIPE if input_text is not None else None,
+            stdin=source if source is not None else stdin,
             stdout=stdout_stream,
             stderr=subprocess.PIPE,
             text=True,
@@ -93,10 +95,8 @@ class _Tee(threading.Thread):
         except (OSError, ValueError):  # pragma: no cover
             pass
         finally:
-            try:
+            with contextlib.suppress(OSError, ValueError):
                 self._pipe.close()
-            except (OSError, ValueError):  # pragma: no cover
-                pass
 
     def text(self) -> str:
         return "".join(self._chunks)
@@ -118,7 +118,7 @@ def run_pipe(
     return _run_pipe_captured(left, right, left_env, right_env)
 
 
-def _close_pipe(stream: TextIO | None) -> None:
+def _close_pipe(stream: IO[str] | None) -> None:
     """Close one parent-side pipe end; caller-owned streams never arrive."""
     if stream is not None and not stream.closed:
         stream.close()
@@ -168,10 +168,8 @@ def _run_pipe_captured(
             drained.append(left_stderr.read())
         except (OSError, ValueError):  # pragma: no cover - fd closed first
             drained.append("")
-        try:
+        with contextlib.suppress(OSError, ValueError):
             left_stderr.close()
-        except (OSError, ValueError):  # pragma: no cover - already closed
-            pass
 
     drain = threading.Thread(target=_drain_left_stderr, daemon=True)
     drain.start()

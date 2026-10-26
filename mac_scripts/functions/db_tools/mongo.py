@@ -113,11 +113,11 @@ def mongo_eval_argv(
     return argv, env
 
 
-def mongo_status(uri: str, *, runtime: Runtime) -> bool:
-    """Ping the server with the fixed ping script; no client counts as up."""
+def mongo_status(uri: str, *, runtime: Runtime) -> bool | None:
+    """Ping with the fixed script; None when mongosh is not installed."""
     client = _find_client(runtime)
     if client is None:
-        return True
+        return None
     argv, env = mongo_eval_argv(client, uri, None, MONGO_PING_SCRIPT)
     return runtime.run_command(argv, env=env).returncode == 0
 
@@ -172,15 +172,13 @@ def _clear_target(
     backups = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
     skipped = [line for line in backups if _BACKUP_NAME.match(line) is None]
     backups = [line for line in backups if _BACKUP_NAME.match(line) is not None]
-    for line in skipped:
-        stderr.write(f"ignored non-backup output line: {line}\n")
+    stderr.writelines(f"ignored non-backup output line: {line}\n" for line in skipped)
     if not backups:
         stdout.write("✅ No MongoDB backup databases found\n")
         return True
 
     stdout.write("Found backup databases:\n")
-    for backup in backups:
-        stdout.write(f"  - {backup}\n")
+    stdout.writelines(f"  - {backup}\n" for backup in backups)
     stdout.write("\n")
 
     if dry_run:
@@ -267,10 +265,10 @@ def perform_mongo_sync(
     runs only after an interrupted pipe is dead. A failed exists-probe
     aborts before any pipe runs.
     """
-    if not mongo_status(source_uri, runtime=runtime):
+    if mongo_status(source_uri, runtime=runtime) is False:
         stderr.write("❌ Cannot proceed - source connection failed\n")
         return 1
-    if not mongo_status(target_uri, runtime=runtime):
+    if mongo_status(target_uri, runtime=runtime) is False:
         stderr.write("❌ Cannot proceed - target connection failed\n")
         return 1
     tools = find_mongo_tools(runtime)

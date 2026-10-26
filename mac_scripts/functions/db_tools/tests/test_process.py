@@ -102,7 +102,7 @@ def test_captured_pipe_drains_a_left_stderr_larger_than_the_pipe_buffer() -> Non
                     ["cat"],
                 )
             )
-        except BaseException as exc:  # noqa: BLE001 - re-checked in the main thread
+        except BaseException as exc:
             errors.append(exc)
 
     worker = threading.Thread(target=pipe, daemon=True)

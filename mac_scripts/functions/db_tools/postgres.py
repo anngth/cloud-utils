@@ -1,4 +1,4 @@
-"""Postgres URL parsing, client discovery, status, and backup cleanup.
+"""Postgres URL parsing, client discovery, status, sync, and backup cleanup.
 
 Every psql call is an argv list. The password only ever travels in the
 child's PGPASSWORD environment variable, and cleanup always connects to
@@ -42,6 +42,15 @@ _SCHEMA_SQL = (
     " GRANT ALL ON SCHEMA public TO postgres;"
     " GRANT ALL ON SCHEMA public TO public;"
 )
+_TERMINATE_SQL = (
+    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+    " WHERE datname = {literal} AND pid <> pg_backend_pid();"
+)
+
+# Servers up to 16 reject this GUC; only statements go, never COPY data.
+_TRANSACTION_TIMEOUT_LINE = re.compile(
+    rb"^\s*(?:SET|ALTER\s+(?:DATABASE|ROLE)\b[^\n]*?\bSET)\s+transaction_timeout\b"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,28 +72,21 @@ class PostgresTools:
 
 
 def parse_postgres_url(url: str) -> PostgresUrl:
-    """Split `postgresql://user:pass@host:port/db` into its parts.
+    """Split `postgresql://user:pass@host:port/db?query` into its parts.
 
     The user ends at the first colon, the password keeps remaining
     colons, and the host starts after the last `@`. A missing database
-    defaults to `postgres`. `sslmode=require` anywhere in the URL sets
-    `sslmode_require`; any other SSL mode leaves it unset.
+    is `""`. `sslmode=require` anywhere in the URL sets `sslmode_require`.
     """
     rest = url.removeprefix("postgresql://")
     auth_part, sep, host_part = rest.rpartition("@")
     if not sep:
         auth_part, host_part = "", rest
     user, _, password = auth_part.partition(":")
-    path_part = ""
-    if "/" in host_part:
-        host_part, _, path_part = host_part.partition("/")
-    elif "?" in host_part:
-        host_part, _, path_part = host_part.partition("?")
-    host, _, port_and_db = host_part.partition(":")
-    port = port_and_db.split("/", 1)[0].split("?", 1)[0]
-    database = path_part.split("/", 1)[0].split("?", 1)[0]
-    if not database:
-        database = "postgres"
+    host_part, _, _query = host_part.partition("?")
+    host_part, _, path_part = host_part.partition("/")
+    host, _, port = host_part.partition(":")
+    database = path_part.split("/", 1)[0]
     return PostgresUrl(
         user=user,
         password=password,
@@ -126,14 +128,9 @@ def parse_postgres_target_row(row: str) -> PostgresTarget | None:
 
 def find_postgres_tools(runtime: Runtime) -> PostgresTools | None:
     """Prefer PATH, then Homebrew libpq, then Homebrew postgresql@18."""
-    on_path = [runtime.which(name) for name in _CLIENTS]
-    if all(path is not None for path in on_path):
-        return PostgresTools(
-            psql=on_path[0],
-            pg_dump=on_path[1],
-            pg_restore=on_path[2],
-            source="PATH",
-        )
+    psql, pg_dump, pg_restore = (runtime.which(name) for name in _CLIENTS)
+    if psql is not None and pg_dump is not None and pg_restore is not None:
+        return PostgresTools(psql=psql, pg_dump=pg_dump, pg_restore=pg_restore, source="PATH")
     for prefix, source in (
         (_LIBPQ_BIN, "Homebrew libpq"),
         (_PG18_BIN, "Homebrew postgresql@18"),
@@ -141,19 +138,16 @@ def find_postgres_tools(runtime: Runtime) -> PostgresTools | None:
         paths = [f"{prefix}/{name}" for name in _CLIENTS]
         if all(runtime.path_exists(path) for path in paths):
             return PostgresTools(
-                psql=paths[0],
-                pg_dump=paths[1],
-                pg_restore=paths[2],
-                source=source,
+                psql=paths[0], pg_dump=paths[1], pg_restore=paths[2], source=source
             )
     return None
 
 
-def postgres_status(url: str, *, runtime: Runtime) -> bool:
-    """Run `SELECT 1;` on the `postgres` database; no client counts as up."""
+def postgres_status(url: str, *, runtime: Runtime) -> bool | None:
+    """`SELECT 1` on the `postgres` database; None when no client is installed."""
     tools = find_postgres_tools(runtime)
     if tools is None:
-        return True
+        return None
     parsed = parse_postgres_url(url)
     result = runtime.run_command(
         _psql_argv(tools, parsed, ["-t", "-c", "SELECT 1;"]),
@@ -183,9 +177,7 @@ def clear_postgres_backups(
     failed = False
     for target in targets:
         stdout.write(f"Target: {target.name}\n")
-        if not _clear_target(
-            target, tools, source_database, dry_run, runtime, stdout, stderr
-        ):
+        if not _clear_target(target, tools, source_database, dry_run, runtime, stdout, stderr):
             failed = True
         stdout.write("\n")
     return 1 if failed else 0
@@ -198,8 +190,7 @@ def _backup_query(source_database: str | None) -> str:
         + quote_literal(_BACKUP_SUFFIX)
     )
     if source_database:
-        prefix = f"{source_database}_backup_"
-        prefix_literal = quote_literal(prefix)
+        prefix_literal = quote_literal(f"{source_database}_backup_")
         query += f" AND left(datname, length({prefix_literal})) = {prefix_literal}"
     return query + " ORDER BY datname;"
 
@@ -232,8 +223,7 @@ def _clear_target(
         return True
 
     stdout.write("Found backup databases:\n")
-    for backup in backups:
-        stdout.write(f"  - {backup}\n")
+    stdout.writelines(f"  - {backup}\n" for backup in backups)
     stdout.write("\n")
 
     if dry_run:
@@ -243,26 +233,10 @@ def _clear_target(
     dropped = 0
     failed_drops = 0
     for backup in backups:
-        literal = quote_literal(backup)
-        runtime.run_command(
-            _psql_argv(
-                tools,
-                url,
-                [
-                    "-t",
-                    "-c",
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
-                    f" WHERE datname = {literal} AND pid <> pg_backend_pid();",
-                ],
-            ),
-            env=env,
-        )  # best effort; only the DROP decides success
+        terminate = _TERMINATE_SQL.format(literal=quote_literal(backup))
+        runtime.run_command(_psql_argv(tools, url, ["-t", "-c", terminate]), env=env)
         drop_result = runtime.run_command(
-            _psql_argv(
-                tools,
-                url,
-                ["-c", f"DROP DATABASE IF EXISTS {quote_identifier(backup)};"],
-            ),
+            _psql_argv(tools, url, ["-c", f"DROP DATABASE IF EXISTS {quote_identifier(backup)};"]),
             env=env,
         )
         if drop_result.returncode == 0:
@@ -287,8 +261,12 @@ def _psql_argv(
     return argv
 
 
+def _connection_argv(url: PostgresUrl, database: str) -> list[str]:
+    return ["-h", url.host, "-p", url.port, "-U", url.user, "-d", database]
+
+
 def _child_env(url: PostgresUrl) -> dict[str, str]:
-    """Minimal child env: PGPASSWORD always, PGSSLMODE only for require."""
+    """PGPASSWORD always, PGSSLMODE only for require."""
     env = {"PGPASSWORD": url.password}
     if url.sslmode_require:
         env["PGSSLMODE"] = "require"
@@ -307,12 +285,6 @@ def _error_lines(stderr_text: str, limit: int) -> list[str]:
     return lines[:limit]
 
 
-# Servers up to 16 reject this GUC; only statements go, never COPY data.
-_TRANSACTION_TIMEOUT_LINE = re.compile(
-    rb"^\s*(?:SET|ALTER\s+(?:DATABASE|ROLE)\b[^\n]*?\bSET)\s+transaction_timeout\b"
-)
-
-
 def _major_version(version_text: str) -> str:
     """Return the client/server major number, `""` when unreadable."""
     match = re.search(r"PostgreSQL\s+(\d+)", version_text)
@@ -325,6 +297,16 @@ def _strip_transaction_timeout(source_path: str, destination_path: str) -> None:
         for line in source:
             if _TRANSACTION_TIMEOUT_LINE.match(line) is None:
                 destination.write(line)
+
+
+def _new_dump_file() -> str:
+    handle, path = tempfile.mkstemp(prefix="dbt_pg_sync_", suffix=".dump")
+    os.close(handle)
+    return path
+
+
+def _discard(path: str) -> None:
+    Path(path).unlink(missing_ok=True)
 
 
 def perform_postgres_sync(
@@ -345,434 +327,384 @@ def perform_postgres_sync(
     if tools is None:
         stderr.write(_TOOLS_NOT_FOUND)
         return 1
-    return run_with_interrupts(
-        runtime,
-        lambda: _sync(
-            source, target, tools, verbose=verbose, runtime=runtime, stdout=stdout, stderr=stderr
-        ),
-    )
-
-
-def _sync(
-    source: PostgresSource,
-    target: PostgresTarget,
-    tools: PostgresTools,
-    *,
-    verbose: bool,
-    runtime: Runtime,
-    stdout: TextIO,
-    stderr: TextIO,
-) -> int:
-    src = parse_postgres_url(source.url)
-    tgt = parse_postgres_url(target.url)
-    src_env = _child_env(src)
-    tgt_env = _child_env(tgt)
-    is_supabase = "supabase" in tgt.host.lower()
-    tgt_db_name = source.database
-    if is_supabase or tgt.database == "postgres":
-        tgt_db_name = "postgres"
-        stdout.write(
-            "ℹ️  Target is Supabase or uses 'postgres' database"
-            " - will restore to 'postgres'\n"
+    if not parse_postgres_url(target.url).database:
+        stderr.write(
+            f"❌ Error: target '{target.name}' URL names no database;"
+            " add /<database> to the URL in the secrets file\n"
         )
-    stdout.write("=====================================\n")
-    stdout.write(f"PostgreSQL Sync: {source.database}\n")
-    stdout.write(f"Source: {src.user}@{src.host}:{src.port}\n")
-    stdout.write(f"Target: {tgt.user}@{tgt.host}:{tgt.port}\n")
-    stdout.write(f"Client: {tools.source}\n")
-    stdout.write("-------------------------------------\n")
+        return 1
+    sync = _PostgresSync(
+        source, target, tools, verbose=verbose, runtime=runtime, stdout=stdout, stderr=stderr
+    )
+    return run_with_interrupts(runtime, sync.run)
+
+
+class _PostgresSync:
+    """One sync run. Two strategies, picked by the target:
+
+    * rename: the existing target database is renamed to a `_backup_*`
+      copy and a fresh one is created (rolled back by renaming it back);
+    * dump file: Supabase and `postgres` targets cannot be renamed, so
+      they are dumped to a temp file and their public schema is wiped
+      (rolled back by restoring that file).
+    """
+
+    def __init__(
+        self,
+        source: PostgresSource,
+        target: PostgresTarget,
+        tools: PostgresTools,
+        *,
+        verbose: bool,
+        runtime: Runtime,
+        stdout: TextIO,
+        stderr: TextIO,
+    ) -> None:
+        self.source = source
+        self.tools = tools
+        self.verbose = verbose
+        self.runtime = runtime
+        self.stdout = stdout
+        self.stderr = stderr
+        self.src = parse_postgres_url(source.url)
+        self.tgt = parse_postgres_url(target.url)
+        self.src_env = _child_env(self.src)
+        self.tgt_env = _child_env(self.tgt)
+        self.uses_dump_file = (
+            "supabase" in self.tgt.host.lower() or self.tgt.database == "postgres"
+        )
+        self.tgt_db_name = "postgres" if self.uses_dump_file else source.database
+        self.backup_db = ""
+        self.backup_file = ""
+        self.restore_error = ""
+
+    # --- orchestration ----------------------------------------------------------
+
+    def run(self) -> int:
+        out = self.stdout
+        if self.uses_dump_file:
+            out.write(
+                "ℹ️  Target is Supabase or uses 'postgres' database"
+                " - will restore to 'postgres'\n"
+            )
+        out.write("=====================================\n")
+        out.write(f"PostgreSQL Sync: {self.source.database}\n")
+        out.write(f"Source: {self.src.user}@{self.src.host}:{self.src.port}\n")
+        out.write(f"Target: {self.tgt.user}@{self.tgt.host}:{self.tgt.port}\n")
+        out.write(f"Client: {self.tools.source}\n")
+        out.write("-------------------------------------\n")
+
+        if self.uses_dump_file:
+            if not self.backup_target_to_file():
+                return 1
+        elif not (self.backup_existing_database() and self.create_fresh_database()):
+            return 1
+        if self.restore_new_database() != 0:
+            return self.fail_sync()
+        return self.finish_sync()
+
+    # --- process helpers --------------------------------------------------------
 
     def psql(
-        url: PostgresUrl,
-        tail: Sequence[str],
-        *,
-        env: dict[str, str],
-        database: str = "postgres",
+        self, url: PostgresUrl, tail: Sequence[str], *, database: str = "postgres"
     ) -> CommandResult:
-        return runtime.run_command(
-            _psql_argv(tools, url, tail, database=database),
-            env=env,
+        env = self.tgt_env if url is self.tgt else self.src_env
+        return self.runtime.run_command(
+            _psql_argv(self.tools, url, tail, database=database), env=env
         )
 
-    def new_dump_file() -> str:
-        handle, path = tempfile.mkstemp(prefix="dbt_pg_sync_", suffix=".dump")
-        os.close(handle)
-        return path
+    def tgt_sql(self, sql: str, *, database: str = "postgres") -> CommandResult:
+        return self.psql(self.tgt, ["-c", sql], database=database)
 
-    def discard(path: str) -> None:
-        Path(path).unlink(missing_ok=True)
+    def stream(self, argv: Sequence[str], **kwargs: object) -> CommandResult:
+        """Dump/restore step: live under --verbose, captured otherwise."""
+        return self.runtime.run_command(
+            argv, stream=self.verbose, stdout=self.stdout, stderr=self.stderr, **kwargs
+        )
 
-    def report_error(result: CommandResult) -> None:
+    def pg_dump_argv(self, url: PostgresUrl, database: str) -> list[str]:
+        verbose = ["-v"] if self.verbose else []
+        return [self.tools.pg_dump, *verbose, *_connection_argv(url, database)]
+
+    def pg_restore_argv(self, database: str, dump_file: str) -> list[str]:
+        return [
+            self.tools.pg_restore,
+            *(["--verbose"] if self.verbose else []),
+            *_connection_argv(self.tgt, database),
+            "--clean",
+            "--if-exists",
+            "--no-owner",
+            "--no-acl",
+            dump_file,
+        ]
+
+    # --- reporting --------------------------------------------------------------
+
+    def report_error(self, result: CommandResult) -> None:
         message = _first_error_line(result.stderr)
         if message:
-            stdout.write(f"   Error: {message}\n")
+            self.stdout.write(f"   Error: {message}\n")
 
-    def stream_command(argv: Sequence[str], **kwargs: object) -> CommandResult:
-        return runtime.run_command(
-            argv, stream=verbose, stdout=stdout, stderr=stderr, **kwargs
-        )
-
-    def report_step_failure(step: str, result: CommandResult, limit: int) -> None:
-        stdout.write(f"❌ {step} failed (exit code {result.returncode})\n")
+    def report_step_failure(self, step: str, result: CommandResult, limit: int) -> None:
+        self.stdout.write(f"❌ {step} failed (exit code {result.returncode})\n")
         lines = _error_lines(result.stderr, limit)
         if lines:
-            stdout.write(f"   {step} errors:\n")
-            for line in lines:
-                stdout.write(f"     {line}\n")
-        if not verbose:
-            stdout.write("   Run again with --verbose for the full output\n")
+            self.stdout.write(f"   {step} errors:\n")
+            self.stdout.writelines(f"     {line}\n" for line in lines)
+        if not self.verbose:
+            self.stdout.write("   Run again with --verbose for the full output\n")
 
-    def report_dump_backup(ok: bool, error_text: str, dump_file: str) -> None:
+    def report_dump_backup(self, ok: bool, error_text: str) -> None:
         if ok:
-            stdout.write("✅ Dump backup restored successfully\n")
-            discard(dump_file)
-        else:
-            stdout.write(
-                "⚠️  Failed to restore dump backup. Backup file is still"
-                f" available: {dump_file}\n"
-            )
-            message = _first_error_line(error_text)
-            if message:
-                stdout.write(f"   Error: {message}\n")
+            self.stdout.write("✅ Dump backup restored successfully\n")
+            _discard(self.backup_file)
+            return
+        self.stdout.write(
+            "⚠️  Failed to restore dump backup. Backup file is still"
+            f" available: {self.backup_file}\n"
+        )
+        message = _first_error_line(error_text)
+        if message:
+            self.stdout.write(f"   Error: {message}\n")
 
-    def restore_dump_backup(database: str, backup_file: str) -> tuple[bool, str]:
+    def report_backup_database(self, renamed: CommandResult) -> None:
+        if renamed.returncode == 0:
+            self.stdout.write("✅ Backup database restored successfully\n")
+        else:
+            self.stdout.write(
+                "⚠️  Failed to restore backup. Original database"
+                f" is available as '{self.backup_db}'\n"
+            )
+            self.report_error(renamed)
+
+    # --- rollback primitives ----------------------------------------------------
+
+    def rename(self, first: str, second: str) -> CommandResult:
+        return self.tgt_sql(
+            f"ALTER DATABASE {quote_identifier(first)} RENAME TO {quote_identifier(second)};"
+        )
+
+    def drop_database(self, name: str) -> CommandResult:
+        return self.tgt_sql(f"DROP DATABASE IF EXISTS {quote_identifier(name)};")
+
+    def restore_dump_backup(self) -> tuple[bool, str]:
         """Best effort: wipe the public schema, then pg_restore the file."""
-        cleanup = psql(tgt, ["-c", _SCHEMA_SQL], env=tgt_env, database=database)
+        cleanup = self.tgt_sql(_SCHEMA_SQL, database=self.tgt_db_name)
         if cleanup.returncode != 0:
             return False, cleanup.stderr
-        restore = stream_command(
-            [tools.pg_restore]
-            + (["--verbose"] if verbose else [])
-            + [
-                "-h",
-                tgt.host,
-                "-p",
-                tgt.port,
-                "-U",
-                tgt.user,
-                "-d",
-                database,
-                "--clean",
-                "--if-exists",
-                "--no-owner",
-                "--no-acl",
-                backup_file,
-            ],
-            env=tgt_env,
+        restore = self.stream(
+            self.pg_restore_argv(self.tgt_db_name, self.backup_file), env=self.tgt_env
         )
         return restore.returncode == 0, cleanup.stderr + restore.stderr
 
-    def rename_two_way(first: str, second: str) -> CommandResult:
-        return runtime.run_command(
-            _psql_argv(
-                tools,
-                tgt,
-                [
-                    "-c",
-                    f"ALTER DATABASE {quote_identifier(first)}"
-                    f" RENAME TO {quote_identifier(second)};",
-                ],
-            ),
-            env=tgt_env,
-        )
+    def rollback_to_backup_database(self) -> None:
+        self.drop_database(self.tgt_db_name)
+        self.report_backup_database(self.rename(self.backup_db, self.tgt_db_name))
 
-    def drop_database(name: str) -> None:
-        """Best effort drop; connections keep working on failure."""
-        psql(tgt, ["-c", f"DROP DATABASE IF EXISTS {quote_identifier(name)};"], env=tgt_env)
+    def rollback_to_dump_file(self) -> None:
+        ok, error_text = self.restore_dump_backup()
+        self.report_dump_backup(ok, error_text)
 
-    def report_backup_database(backup_db: str, renamed: CommandResult) -> None:
-        if renamed.returncode == 0:
-            stdout.write("✅ Backup database restored successfully\n")
-        else:
-            stdout.write(
-                "⚠️  Failed to restore backup. Original database"
-                f" is available as '{backup_db}'\n"
-            )
-            report_error(renamed)
-
-    def interrupt_restore_backup_database(backup_db: str) -> Callable[[], int]:
+    def interrupt_handler(self, rollback: Callable[[], None], what: str) -> Callable[[], int]:
         def handler() -> int:
-            stdout.write("\n⚠️  PostgreSQL sync interrupted\n\n")
-            stdout.write(f"🔄 Restoring backup database '{backup_db}'...\n")
-            drop_database(tgt_db_name)
-            report_backup_database(backup_db, rename_two_way(backup_db, tgt_db_name))
+            self.stdout.write("\n⚠️  PostgreSQL sync interrupted\n\n")
+            self.stdout.write(f"🔄 Restoring {what}...\n")
+            rollback()
             return 130
 
         return handler
 
-    def interrupt_restore_dump_file(backup_file: str) -> Callable[[], int]:
-        def handler() -> int:
-            stdout.write("\n⚠️  PostgreSQL sync interrupted\n\n")
-            stdout.write("🔄 Restoring dump backup...\n")
-            ok, error_text = restore_dump_backup(tgt_db_name, backup_file)
-            report_dump_backup(ok, error_text, backup_file)
-            return 130
+    # --- steps ------------------------------------------------------------------
 
-        return handler
-
-    def backup_existing_database() -> str | None:
-        """Rename the target into a `_backup_*` copy; None means fatal."""
-        exists = psql(
-            tgt,
-            [
-                "-t",
-                "-c",
-                "SELECT 1 FROM pg_database"
-                f" WHERE datname={quote_literal(tgt_db_name)};",
-            ],
-            env=tgt_env,
+    def backup_existing_database(self) -> bool:
+        """Rename the target into a `_backup_*` copy; False means fatal."""
+        name = self.tgt_db_name
+        exists = self.psql(
+            self.tgt,
+            ["-t", "-c", f"SELECT 1 FROM pg_database WHERE datname={quote_literal(name)};"],
         )
         if exists.stdout.strip() != "1":
-            return ""
-        backup_db = f"{tgt_db_name}_backup_{runtime.now().strftime('%Y%m%d_%H%M%S')}"
-        stdout.write(
-            f"💾 Backing up existing database '{tgt_db_name}' to '{backup_db}'...\n"
+            return True
+        self.backup_db = f"{name}_backup_{self.runtime.now().strftime('%Y%m%d_%H%M%S')}"
+        self.stdout.write(
+            f"💾 Backing up existing database '{name}' to '{self.backup_db}'...\n"
         )
-        psql(
-            tgt,
-            [
-                "-t",
-                "-c",
-                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
-                f" WHERE datname={quote_literal(tgt_db_name)}"
-                " AND pid <> pg_backend_pid();",
-            ],
-            env=tgt_env,
-        )
-        renamed = rename_two_way(tgt_db_name, backup_db)
+        self.psql(self.tgt, ["-t", "-c", _TERMINATE_SQL.format(literal=quote_literal(name))])
+        renamed = self.rename(name, self.backup_db)
         if renamed.returncode != 0:
-            stdout.write(f"❌ Failed to backup existing database '{tgt_db_name}'\n")
-            report_error(renamed)
-            return None
-        # The target is now safely preserved; bind interrupt recovery.
-        runtime.signals.bind(interrupt_restore_backup_database(backup_db))
-        return backup_db
-
-    def create_report(backup_db: str) -> int:
-        stdout.write(f"🆕 Creating fresh target database '{tgt_db_name}'...\n")
-        created = runtime.run_command(
-            _psql_argv(
-                tools, tgt, ["-c", f"CREATE DATABASE {quote_identifier(tgt_db_name)};"]
-            ),
-            env=tgt_env,
+            self.stdout.write(f"❌ Failed to backup existing database '{name}'\n")
+            self.report_error(renamed)
+            self.backup_db = ""
+            return False
+        self.runtime.signals.bind(
+            self.interrupt_handler(
+                self.rollback_to_backup_database, f"backup database '{self.backup_db}'"
+            )
         )
-        if created.returncode != 0:
-            stdout.write(f"❌ Failed to create database '{tgt_db_name}'\n")
-            report_error(created)
-            if backup_db:
-                stdout.write("🔄 Attempting to restore backup...\n")
-                report_backup_database(backup_db, rename_two_way(backup_db, tgt_db_name))
-            return 1
-        return 0
+        return True
 
-    def backup_target_for_schema_cleanup() -> str | None:
-        """Dump the target first; Supabase/postgres targets cannot rename."""
-        stdout.write(
-            f"💾 Backing up target database '{tgt_db_name}' before schema cleanup...\n"
-        )
-        backup_file = new_dump_file()
-        backed = stream_command(
-            [tools.pg_dump]
-            + (["-v"] if verbose else [])
-            + [
-                "-h",
-                tgt.host,
-                "-p",
-                tgt.port,
-                "-U",
-                tgt.user,
-                "-d",
-                tgt_db_name,
+    def create_fresh_database(self) -> bool:
+        self.stdout.write(f"🆕 Creating fresh target database '{self.tgt_db_name}'...\n")
+        created = self.tgt_sql(f"CREATE DATABASE {quote_identifier(self.tgt_db_name)};")
+        if created.returncode == 0:
+            return True
+        self.stdout.write(f"❌ Failed to create database '{self.tgt_db_name}'\n")
+        self.report_error(created)
+        if self.backup_db:
+            self.stdout.write("🔄 Attempting to restore backup...\n")
+            self.report_backup_database(self.rename(self.backup_db, self.tgt_db_name))
+        return False
+
+    def backup_target_to_file(self) -> bool:
+        """Dump the target first, then wipe its public schema."""
+        name = self.tgt_db_name
+        self.stdout.write(f"💾 Backing up target database '{name}' before schema cleanup...\n")
+        self.backup_file = _new_dump_file()
+        backed = self.stream(
+            [
+                *self.pg_dump_argv(self.tgt, name),
                 "-Fc",
                 "--no-owner",
                 "--no-acl",
                 "-f",
-                backup_file,
+                self.backup_file,
             ],
-            env=tgt_env,
+            env=self.tgt_env,
         )
         if backed.returncode != 0:
-            stdout.write("❌ Failed to backup target database before cleanup\n")
-            report_error(backed)
-            discard(backup_file)
-            return None
-        runtime.signals.bind(interrupt_restore_dump_file(backup_file))
-        stdout.write("✅ Backup file created\n")
-        stdout.write(
+            self.stdout.write("❌ Failed to backup target database before cleanup\n")
+            self.report_error(backed)
+            _discard(self.backup_file)
+            self.backup_file = ""
+            return False
+        self.runtime.signals.bind(
+            self.interrupt_handler(self.rollback_to_dump_file, "dump backup")
+        )
+        self.stdout.write("✅ Backup file created\n")
+        self.stdout.write(
             "🧹 Cleaning existing objects in target database (Supabase/postgres)...\n"
         )
-        cleaned = runtime.run_command(
-            _psql_argv(tools, tgt, ["-c", _SCHEMA_SQL], database=tgt_db_name),
-            env=tgt_env,
-        )
+        cleaned = self.tgt_sql(_SCHEMA_SQL, database=name)
         if cleaned.returncode != 0:
-            stdout.write("❌ Failed to clean target database before restore\n")
-            report_error(cleaned)
-            stdout.write("🔄 Restoring dump backup...\n")
-            ok, error_text = restore_dump_backup(tgt_db_name, backup_file)
-            report_dump_backup(ok, error_text, backup_file)
-            return None
-        return backup_file
+            self.stdout.write("❌ Failed to clean target database before restore\n")
+            self.report_error(cleaned)
+            self.stdout.write("🔄 Restoring dump backup...\n")
+            self.rollback_to_dump_file()
+            return False
+        return True
 
-    def restore_new_database() -> int:
-        nonlocal restore_error
-        stdout.write("🔍 Detecting database versions...\n")
+    def restore_new_database(self) -> int:
+        self.stdout.write("🔍 Detecting database versions...\n")
         source_version = _major_version(
-            psql(src, ["-t", "-c", _VERSION_QUERY], env=src_env).stdout
+            self.psql(self.src, ["-t", "-c", _VERSION_QUERY]).stdout
         )
         target_version = _major_version(
-            psql(tgt, ["-t", "-c", _VERSION_QUERY], env=tgt_env).stdout
+            self.psql(self.tgt, ["-t", "-c", _VERSION_QUERY]).stdout
         )
         if source_version:
-            stdout.write(f"   Source version: PostgreSQL {source_version}\n")
+            self.stdout.write(f"   Source version: PostgreSQL {source_version}\n")
         if target_version:
-            stdout.write(f"   Target version: PostgreSQL {target_version}\n")
+            self.stdout.write(f"   Target version: PostgreSQL {target_version}\n")
         # No spinner: without --verbose the dump/restore is silent.
-        dump_argv = (
-            [tools.pg_dump]
-            + (["-v"] if verbose else [])
-            + ["-h", src.host, "-p", src.port, "-U", src.user, "-d", source.database]
-        )
-        restore_error_inner = ""
+        if target_version and int(target_version) <= 16:
+            return self.restore_plain_sql()
+        return self.restore_custom_format()
+
+    def restore_plain_sql(self) -> int:
+        """Servers up to 16: plain SQL through temp files, minus `transaction_timeout`."""
+        dump_path = _new_dump_file()
+        sql_path = _new_dump_file()
         try:
-            if target_version and int(target_version) <= 16:
-                # Plain-SQL dumps stream through temp files: holding the
-                # whole dump in memory would kill the process on a
-                # multi-GB legacy server before psql could roll back.
-                dump_path = new_dump_file()
-                sql_path = new_dump_file()
-                try:
-                    dump = stream_command(
-                        dump_argv
-                        + [
-                            "--no-owner",
-                            "--no-acl",
-                            "--clean",
-                            "--if-exists",
-                            "-f",
-                            dump_path,
-                        ],
-                        env=src_env,
-                    )
-                    if dump.returncode != 0:
-                        report_step_failure("Dump", dump, limit=5)
-                        return dump.returncode or 1
-                    _strip_transaction_timeout(dump_path, sql_path)
-                    restored = stream_command(
-                        [tools.psql, "-h", tgt.host, "-p", tgt.port, "-U", tgt.user]
-                        + ["-d", tgt_db_name]
-                        + ([] if verbose else ["-q"]),
-                        env=tgt_env,
-                        input_file=sql_path,
-                    )
-                    restore_error_inner = restored.stderr
-                    if restored.returncode != 0:
-                        report_step_failure("Restore", restored, limit=10)
-                        return restored.returncode or 1
-                finally:
-                    discard(dump_path)
-                    discard(sql_path)
-            else:
-                dump_file = new_dump_file()
-                try:
-                    dump = stream_command(
-                        dump_argv + ["-Fc", "-f", dump_file], env=src_env
-                    )
-                    if dump.returncode != 0:
-                        report_step_failure("Dump", dump, limit=5)
-                        return dump.returncode or 1
-                    restored = stream_command(
-                        [tools.pg_restore]
-                        + (["--verbose"] if verbose else [])
-                        + [
-                            "-h",
-                            tgt.host,
-                            "-p",
-                            tgt.port,
-                            "-U",
-                            tgt.user,
-                            "-d",
-                            tgt_db_name,
-                            "--clean",
-                            "--if-exists",
-                            "--no-owner",
-                            "--no-acl",
-                            dump_file,
-                        ],
-                        env=tgt_env,
-                    )
-                    restore_error_inner = restored.stderr
-                    if restored.returncode != 0:
-                        report_step_failure("Restore", restored, limit=10)
-                        return restored.returncode or 1
-                finally:
-                    discard(dump_file)
+            dump = self.stream(
+                [
+                    *self.pg_dump_argv(self.src, self.source.database),
+                    "--no-owner",
+                    "--no-acl",
+                    "--clean",
+                    "--if-exists",
+                    "-f",
+                    dump_path,
+                ],
+                env=self.src_env,
+            )
+            if dump.returncode != 0:
+                self.report_step_failure("Dump", dump, limit=5)
+                return dump.returncode or 1
+            _strip_transaction_timeout(dump_path, sql_path)
+            restored = self.stream(
+                [self.tools.psql, *_connection_argv(self.tgt, self.tgt_db_name)]
+                + ([] if self.verbose else ["-q"]),
+                env=self.tgt_env,
+                input_file=sql_path,
+            )
+            self.restore_error = restored.stderr
+            if restored.returncode != 0:
+                self.report_step_failure("Restore", restored, limit=10)
+                return restored.returncode or 1
             return 0
         finally:
-            restore_error = restore_error_inner
+            _discard(dump_path)
+            _discard(sql_path)
 
-    def fail_sync() -> int:
-        stdout.write(f"❌ Sync failed for '{source.database}'\n")
-        if backup_file:
-            stdout.write("\n🔄 Restoring dump backup...\n")
-            ok, error_text = restore_dump_backup(tgt_db_name, backup_file)
-            report_dump_backup(ok, error_text, backup_file)
-        elif backup_db:
-            stdout.write("\n🔄 Restoring backup database...\n")
-            drop_database(tgt_db_name)
-            report_backup_database(backup_db, rename_two_way(backup_db, tgt_db_name))
+    def restore_custom_format(self) -> int:
+        dump_file = _new_dump_file()
+        try:
+            dump = self.stream(
+                [*self.pg_dump_argv(self.src, self.source.database), "-Fc", "-f", dump_file],
+                env=self.src_env,
+            )
+            if dump.returncode != 0:
+                self.report_step_failure("Dump", dump, limit=5)
+                return dump.returncode or 1
+            restored = self.stream(
+                self.pg_restore_argv(self.tgt_db_name, dump_file), env=self.tgt_env
+            )
+            self.restore_error = restored.stderr
+            if restored.returncode != 0:
+                self.report_step_failure("Restore", restored, limit=10)
+                return restored.returncode or 1
+            return 0
+        finally:
+            _discard(dump_file)
+
+    def fail_sync(self) -> int:
+        self.stdout.write(f"❌ Sync failed for '{self.source.database}'\n")
+        if self.backup_file:
+            self.stdout.write("\n🔄 Restoring dump backup...\n")
+            self.rollback_to_dump_file()
+        elif self.backup_db:
+            self.stdout.write("\n🔄 Restoring backup database...\n")
+            self.rollback_to_backup_database()
         return 1
 
-    def finish_sync() -> int:
-        counted = psql(
-            tgt, ["-t", "-c", _TABLE_COUNT_QUERY], env=tgt_env, database=tgt_db_name
+    def finish_sync(self) -> int:
+        counted = self.psql(
+            self.tgt, ["-t", "-c", _TABLE_COUNT_QUERY], database=self.tgt_db_name
         )
         table_count = counted.stdout.strip()
-        has_error = "error" in restore_error.lower() or "failed" in restore_error.lower()
+        lowered = self.restore_error.lower()
+        has_error = "error" in lowered or "failed" in lowered
         if table_count in ("", "0") or has_error:
-            stdout.write(f"⚠️  '{source.database}' sync completed with warnings\n")
+            self.stdout.write(f"⚠️  '{self.source.database}' sync completed with warnings\n")
             if table_count in ("", "0"):
-                stdout.write("   ⚠️  WARNING: No tables found in restored database!\n")
+                self.stdout.write("   ⚠️  WARNING: No tables found in restored database!\n")
             else:
-                stdout.write(f"   Tables: {table_count}\n")
-            message = _first_error_line(restore_error)
+                self.stdout.write(f"   Tables: {table_count}\n")
+            message = _first_error_line(self.restore_error)
             if message:
-                stdout.write(f"   Error: {message}\n")
-            if backup_db:
-                stdout.write(f"\n💾 Backup database '{backup_db}' kept for safety\n")
-            if backup_file:
-                stdout.write(f"\n💾 Backup file kept for safety: {backup_file}\n")
+                self.stdout.write(f"   Error: {message}\n")
+            if self.backup_db:
+                self.stdout.write(f"\n💾 Backup database '{self.backup_db}' kept for safety\n")
+            if self.backup_file:
+                self.stdout.write(f"\n💾 Backup file kept for safety: {self.backup_file}\n")
             return 1
-        stdout.write(f"✅ '{source.database}' synced successfully to '{tgt_db_name}'\n")
-        stdout.write(f"   Tables: {table_count}\n")
-        if backup_file:
-            discard(backup_file)
-        if backup_db:
-            stdout.write(f"🗑️  Removing backup database '{backup_db}'...\n")
-            runtime.run_command(
-                _psql_argv(
-                    tools,
-                    tgt,
-                    ["-c", f"DROP DATABASE IF EXISTS {quote_identifier(backup_db)};"],
-                ),
-                env=tgt_env,
-            )
+        self.stdout.write(
+            f"✅ '{self.source.database}' synced successfully to '{self.tgt_db_name}'\n"
+        )
+        self.stdout.write(f"   Tables: {table_count}\n")
+        if self.backup_file:
+            _discard(self.backup_file)
+        if self.backup_db:
+            self.stdout.write(f"🗑️  Removing backup database '{self.backup_db}'...\n")
+            self.drop_database(self.backup_db)
         return 0
-
-    backup_db = ""
-    backup_file = ""
-    restore_error = ""
-    if not is_supabase and tgt_db_name != "postgres":
-        backup_db = backup_existing_database()
-        if backup_db is None:
-            return 1
-        result = create_report(backup_db)
-        if result != 0:
-            return result
-    else:
-        backup_file = backup_target_for_schema_cleanup()
-        if backup_file is None:
-            return 1
-    if restore_new_database() != 0:
-        return fail_sync()
-    return finish_sync()

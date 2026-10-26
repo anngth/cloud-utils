@@ -31,3 +31,18 @@ packages = [
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests", "mac_scripts/functions"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PIE", "FURB", "ISC", "C4"]
+allowed-confusables = ["ℹ"]
+
+[tool.mypy]
+python_version = "3.14"
+mypy_path = "mac_scripts/functions"
+files = ["mac_scripts/functions/db_tools"]
+ignore_missing_imports = true
+follow_imports = "silent"

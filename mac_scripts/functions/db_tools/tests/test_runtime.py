@@ -45,7 +45,12 @@ class _RecordingSignals(SignalHooks):
 def test_dispose_raises_interrupted_without_running_the_handler() -> None:
     hooks = SignalHooks()
     ran: list[bool] = []
-    hooks.handler = lambda: ran.append(True) or 130
+
+    def rollback() -> int:
+        ran.append(True)
+        return 130
+
+    hooks.handler = rollback
 
     with pytest.raises(Interrupted) as exc:
         hooks._dispose(signal.SIGTERM, None)
