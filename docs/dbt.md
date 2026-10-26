@@ -21,7 +21,7 @@ dbt clean            # delete backup DBs on every target (dry-run: -n)
 dbt clean postgres --to staging --from prod       # one target, one source database
 ```
 
-- **Before a sync** dbt prints the plan (target database, what the backup is) and, in a terminal, asks for confirmation; `-y` skips the question, `-n` stops after the plan.
+- **Before a sync** dbt prints the plan (target database, what the backup is); `-n` stops after the plan.
 
 
 - **`dbt clean`** — removes `<database>_backup_YYYYMMDD_HHMMSS`: PostgreSQL targets first, then MongoDB. Postgres: optional `--to <target>`, `--from <source>`. No configured target is a notice, not an error (exit 0).

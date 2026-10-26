@@ -725,10 +725,11 @@ def test_exists_true_backs_up_syncs_and_drops_backup() -> None:
     ]
     assert [database for _argv, database in fake.drops()] == [SYNC_BACKUP]
     assert SYNC_BACKUP in out
-    # The handler is bound only once the backup pipe succeeded ...
-    assert fake.handler_at_pipe == [None, signals.bound[0]]
-    assert signals.bound[0] is not None
-    # ... and it is gone again before this function returns.
+    # A partial-backup handler covers the backup pipe, the restore handler the sync pipe ...
+    assert fake.handler_at_pipe == [signals.bound[0], signals.bound[1]]
+    assert signals.bound[0] is not None and signals.bound[1] is not None
+    assert signals.bound[0] is not signals.bound[1]
+    # ... and both are gone again before this function returns.
     assert signals.handler is None
 
 
@@ -738,8 +739,9 @@ def test_backup_pipe_failure_returns_one_before_sync() -> None:
 
     assert code == 1
     assert len(fake.pipes) == 1  # backup only; the sync pipe never starts
-    assert fake.drops() == []
-    assert fake.handler_at_pipe == [None]
+    # The half-written backup is dropped, so nothing is left behind.
+    assert [database for _argv, database in fake.drops()] == [SYNC_BACKUP]
+    assert fake.handler_at_pipe == [signals.bound[0]]
     assert signals.handler is None
 
 
@@ -906,6 +908,29 @@ def test_interrupt_during_sync_pipe_restores_after_the_pipe_unwound() -> None:
     assert signals.handler is None
 
 
+def test_interrupt_during_backup_pipe_drops_the_partial_backup() -> None:
+    fake = FakeMongo()
+    runtime, signals = _sync_runtime(fake)
+
+    def run_pipe(left, right, **_kwargs):
+        fake.pipes.append((list(left), list(right)))
+        raise Interrupted()  # the backup pipe is the first one
+
+    runtime.run_pipe = run_pipe
+    out = io.StringIO()
+    code = perform_mongo_sync(
+        SOURCE_URI, "app", TARGET_URI, verbose=False,
+        runtime=runtime, stdout=out, stderr=io.StringIO(),
+    )
+
+    assert code == 130
+    assert len(fake.pipes) == 1  # no restore pipe: the target was never touched
+    assert [database for _argv, database in fake.drops()] == [SYNC_BACKUP]
+    assert "interrupted during the backup" in out.getvalue()
+    assert f"Partial backup '{SYNC_BACKUP}' removed" in out.getvalue()
+    assert signals.handler is None
+
+
 def test_interrupt_before_any_backup_propagates_with_nothing_bound() -> None:
     fake = FakeMongo(exists_stdout="false")
     runtime, signals = _sync_runtime(fake)
@@ -929,7 +954,7 @@ def test_signal_handler_restores_backup_and_returns_130() -> None:
     # The handler was live during the sync pipe: an interrupt there restores.
     handler = fake.handler_at_pipe[1]
     assert handler is not None
-    assert handler is signals.bound[0]
+    assert handler is signals.bound[1]
     assert handler() == 130
     restore_left, restore_right = fake.pipes[2]
     assert restore_left == [

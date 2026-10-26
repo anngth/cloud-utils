@@ -303,9 +303,10 @@ def perform_mongo_sync(
     The backup pipe copies the existing target database into
     `{database}_backup_YYYYMMDD_HHMMSS`; the sync pipe then dumps the source
     database onto the target with `--drop`, and a failure restores the backup
-    first. The rollback handler is bound only once the backup exists and
-    runs only after an interrupted pipe is dead. A failed exists-probe
-    aborts before any pipe runs.
+    first. During the backup pipe an interrupt only drops the half-written
+    backup; once it exists, an interrupt restores it. Either handler runs
+    only after the interrupted pipe is dead. A failed exists-probe aborts
+    before any pipe runs.
     """
     for label, uri in (("source", source_uri), ("target", target_uri)):
         named = mongo_uri_database(uri)
@@ -370,35 +371,6 @@ def _sync(
             " not attempting a sync without a backup probe\n"
         )
         return 1
-    if exists:
-        backup_db = f"{database}_backup_{runtime.now().strftime('%Y%m%d_%H%M%S')}"
-        stdout.write(f"💾 Backing up target database '{database}' to '{backup_db}'...\n")
-        backed_up = runtime.run_pipe(
-            _dump_argv(tools, target_uri, database),
-            _restore_argv(tools, target_uri, drop=False, ns_from=database, ns_to=backup_db),
-            stream=verbose,
-            stdout=stdout,
-            stderr=stderr,
-        )
-        if backed_up.returncode != 0:
-            stdout.write("❌ Failed to backup target database\n")
-            report_pipe_failure(backed_up)
-            return 1
-        stdout.write(f"✅ Backup created: {backup_db}\n")
-
-        def interrupt() -> int:
-            stdout.write("\n⚠️  MongoDB sync interrupted\n")
-            restore_backup()
-            return 130
-
-        # The target content is now safely preserved; bind interrupt recovery.
-        runtime.signals.bind(interrupt)
-        bound = True
-    else:
-        stdout.write(
-            f"ℹ️  Target database '{database}' does not exist; skipping backup\n"
-        )
-
     def restore_backup() -> bool:
         """Restore the backup onto the target; a failed restore keeps it."""
         restored = runtime.run_pipe(
@@ -421,17 +393,63 @@ def _sync(
         drop_backup(fail_line=f"⚠️  Backup restored, but failed to remove '{backup_db}'")
         return True
 
-    def drop_backup(*, fail_line: str) -> None:
+    def drop_backup(*, fail_line: str, ok_line: str = "✅ Backup removed") -> None:
         drop_argv, drop_env = mongo_eval_argv(
             tools.client, target_uri, backup_db, MONGO_DROP_SCRIPT
         )
         dropped = runtime.run_command(drop_argv, env=drop_env)
         if dropped.returncode == 0:
-            stdout.write("✅ Backup removed\n")
+            stdout.write(f"{ok_line}\n")
         else:
             stdout.write(
                 f"{fail_line}\n   You can remove it manually after verifying the sync\n"
             )
+
+    if exists:
+        backup_db = f"{database}_backup_{runtime.now().strftime('%Y%m%d_%H%M%S')}"
+        stdout.write(f"💾 Backing up target database '{database}' to '{backup_db}'...\n")
+
+        def interrupt_during_backup() -> int:
+            # The target itself is untouched (the pipe only reads it), so the
+            # half-written backup is the only thing to clean up.
+            stdout.write("\n⚠️  MongoDB sync interrupted during the backup\n")
+            drop_backup(
+                ok_line=f"✅ Partial backup '{backup_db}' removed",
+                fail_line=f"⚠️  Failed to remove the partial backup '{backup_db}'",
+            )
+            return 130
+
+        runtime.signals.bind(interrupt_during_backup)
+        bound = True
+        backed_up = runtime.run_pipe(
+            _dump_argv(tools, target_uri, database),
+            _restore_argv(tools, target_uri, drop=False, ns_from=database, ns_to=backup_db),
+            stream=verbose,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        if backed_up.returncode != 0:
+            stdout.write("❌ Failed to backup target database\n")
+            report_pipe_failure(backed_up)
+            drop_backup(
+                ok_line=f"✅ Partial backup '{backup_db}' removed",
+                fail_line=f"⚠️  Failed to remove the partial backup '{backup_db}'",
+            )
+            return 1
+        stdout.write(f"✅ Backup created: {backup_db}\n")
+
+        def interrupt() -> int:
+            stdout.write("\n⚠️  MongoDB sync interrupted\n")
+            restore_backup()
+            return 130
+
+        # The target content is now safely preserved; from here an interrupt restores it.
+        runtime.signals.bind(interrupt)
+    else:
+        stdout.write(
+            f"ℹ️  Target database '{database}' does not exist; skipping backup\n"
+        )
+
 
     if not verbose:
         # The shell port showed a dots spinner here ("sync_dots_start"); the

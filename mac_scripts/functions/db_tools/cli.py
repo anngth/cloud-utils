@@ -170,10 +170,6 @@ def _pick(title: str, items: Sequence[SelectorItem], app: _App) -> str | None:
     return result.selected[0] if result.kind == "submit" and result.selected else None
 
 
-def _confirm(question: str) -> bool:
-    return bool(click.confirm(question, default=False))
-
-
 def _edit(path: Path) -> None:
     click.edit(filename=str(path))
 
@@ -521,11 +517,10 @@ def sync_list_command(app: _App, status: bool) -> int:
 def _sync_options(
     source_attribute: str, target_attribute: str
 ) -> Callable[[Callable[..., int]], Callable[..., int]]:
-    """`--from`, `--to`, `-y`, `-n`, `-v`: the options both sync commands share."""
+    """`--from`, `--to`, `-n`, `-v`: the options both sync commands share."""
     options: list[Callable[[Callable[..., int]], Callable[..., int]]] = [
         _source_option(source_attribute),
         _target_option(target_attribute),
-        click.option("-y", "--yes", is_flag=True, help="Do not ask for confirmation."),
         click.option("-n", "--dry-run", is_flag=True, help="Show what would happen and stop."),
         click.option("-v", "--verbose", is_flag=True, help="Stream the client output."),
     ]
@@ -547,7 +542,6 @@ def sync_postgres_command(
     app: _App,
     source: str | None,
     target: str | None,
-    yes: bool,
     dry_run: bool,
     verbose: bool,
 ) -> int:
@@ -555,7 +549,8 @@ def sync_postgres_command(
 
     The target keeps its old database as `<name>_backup_YYYYMMDD_HHMMSS`
     until the sync succeeds (see `dbt clean`). Without --from/--to a
-    terminal gets a picker; a script must pass them.
+    terminal gets a picker; a script must pass them. `-n` prints the plan
+    and stops.
     """
     secrets = app.secrets
     chosen_target = _choose(
@@ -588,14 +583,6 @@ def sync_postgres_command(
     if dry_run:
         app.stdout.write("Dry run: nothing was changed\n")
         return 0
-    if not yes and app.interactive:
-        question = (
-            f"Overwrite database '{plan.target_database}' on '{chosen_target.name}'"
-            f" with '{chosen_source.database}' from '{chosen_source.name}'?"
-        )
-        if not _confirm(question):
-            app.stdout.write("Cancelled\n")
-            return 1
     return perform_postgres_sync(
         chosen_source,
         chosen_target,
@@ -615,7 +602,6 @@ def sync_mongodb_command(
     app: _App,
     source: str | None,
     target: str | None,
-    yes: bool,
     dry_run: bool,
     verbose: bool,
     database: str | None,
@@ -624,7 +610,8 @@ def sync_mongodb_command(
 
     The target keeps its old database as `<name>_backup_YYYYMMDD_HHMMSS`
     and is restored from it when the sync fails. Without --from/--to a
-    terminal gets a picker; a script must pass them.
+    terminal gets a picker; a script must pass them. `-n` prints the plan
+    and stops.
     """
     secrets = app.secrets
     chosen_target = _choose(
@@ -664,14 +651,6 @@ def sync_mongodb_command(
     if dry_run:
         app.stdout.write("Dry run: nothing was changed\n")
         return 0
-    if not yes and app.interactive:
-        question = (
-            f"Overwrite database '{chosen_database}' on '{chosen_target.name}'"
-            f" from '{chosen_source.name}'?"
-        )
-        if not _confirm(question):
-            app.stdout.write("Cancelled\n")
-            return 1
     return perform_mongo_sync(
         chosen_source.uri,
         chosen_database,

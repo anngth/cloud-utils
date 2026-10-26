@@ -1369,48 +1369,30 @@ def test_sync_without_target_outside_a_terminal_explains(tmp_path) -> None:
     assert "dbt sync list" in err
 
 
-def test_sync_in_a_terminal_picks_the_rows_and_asks_before_overwriting(
-    tmp_path, monkeypatch
-) -> None:
+def test_sync_in_a_terminal_picks_the_rows(tmp_path, monkeypatch) -> None:
     picked: list[str] = []
-    questions: list[str] = []
 
     def pick(title, items, _app):
         picked.append(title)
         return items[0].value
 
-    def confirm(question):
-        questions.append(question)
-        return True
-
     monkeypatch.setattr(cli._App, "interactive", property(lambda _self: True))
     monkeypatch.setattr(cli, "_pick", pick)
-    monkeypatch.setattr(cli, "_confirm", confirm)
     code, _out, err, fake = _drive(tmp_path, ["sync", "postgres"], now=NOW)
 
     assert (code, err) == (0, "")
     assert picked == ["Select the PostgreSQL target", "Select the PostgreSQL source"]
-    assert questions == ["Overwrite database 'app' on 'one' with 'app' from 'prod'?"]
     assert [call for call in fake.calls if call[0] == PG_DUMP]
 
 
-def test_sync_declined_confirmation_cancels(tmp_path, monkeypatch) -> None:
+def test_sync_cancelled_picker_exits_one(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cli._App, "interactive", property(lambda _self: True))
-    monkeypatch.setattr(cli, "_confirm", lambda _question: False)
-    code, out, _err, fake = _drive(tmp_path, SYNC_ARGV, now=NOW)
+    monkeypatch.setattr(cli, "_pick", lambda _title, _items, _app: None)
+    code, _out, err, fake = _drive(tmp_path, ["sync", "postgres"], now=NOW)
 
     assert code == 1
     assert fake.calls == []
-    assert out.endswith("Cancelled\n")
-
-
-def test_sync_yes_skips_the_confirmation(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(cli._App, "interactive", property(lambda _self: True))
-    monkeypatch.setattr(cli, "_confirm", lambda _q: (_ for _ in ()).throw(AssertionError("asked")))
-    code, _out, err, fake = _drive(tmp_path, [*SYNC_ARGV, "-y"], now=NOW)
-
-    assert (code, err) == (0, "")
-    assert [call for call in fake.calls if call[0] == PG_DUMP]
+    assert err == "Cancelled\n"
 
 
 @pytest.mark.parametrize(
