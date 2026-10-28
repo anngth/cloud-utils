@@ -7,10 +7,19 @@ import os
 from pathlib import Path
 import re
 import tempfile
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, InstanceOf, PrivateAttr, TypeAdapter, ValidationError
-from pydantic import field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    InstanceOf,
+    PrivateAttr,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from .last_backup import parse_js_timestamp
 
@@ -97,7 +106,7 @@ class BackupsDocumentV4(_VersionedDocument):
     version: Literal[4]
     repos: list[BackupRepoV4]
 
-BackupsDocument: TypeAlias = Annotated[
+type BackupsDocument = Annotated[
     BackupsDocumentV1 | BackupsDocumentV2 | BackupsDocumentV3 | BackupsDocumentV4,
     Field(discriminator="version"),
 ]

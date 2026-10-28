@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import os
-import shutil
-import signal
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+import os
 from pathlib import Path
+import shutil
+import signal
+import time
 
 from shared.process import CommandResult
 

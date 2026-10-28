@@ -1,7 +1,9 @@
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
-from typing import IO, Literal, Mapping, Sequence
+from typing import IO, Literal
+
 
 @dataclass(frozen=True, slots=True)
 class CommandResult:
@@ -25,7 +27,7 @@ def run_process(
     source: IO[bytes] | None = None
     if input_file is not None:
         # The child reads the file directly; the dump never enters memory.
-        source = open(input_file, "rb")
+        source = open(input_file, "rb")  # noqa: SIM115 - closed by the caller
         stdin_args["stdin"] = source
     elif input_text is not None:
         stdin_args["input"] = input_text

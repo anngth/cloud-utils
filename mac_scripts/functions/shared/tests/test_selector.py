@@ -14,7 +14,6 @@ from shared.selector import (
     run_selector,
 )
 
-
 ITEMS = (
     SelectorItem("git@github.com:org/a.git", "git@github.com:org/a.git"),
     SelectorItem("git@gitlab.com:acme/b.git", "git@gitlab.com:acme/b.git"),
@@ -192,9 +191,8 @@ def test_run_selector_does_not_paint_prompt_toolkit_to_redirected_output() -> No
     master_fd, slave_fd = pty.openpty()
     redirected = io.StringIO()
     sent_keys = False
-    tty_input = open(
+    tty_input = open(  # noqa: SIM115
         os.dup(slave_fd),
-        "r",
         encoding="utf-8",
         buffering=1,
         closefd=True,

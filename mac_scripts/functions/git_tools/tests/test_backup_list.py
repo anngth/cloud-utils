@@ -1,13 +1,12 @@
 """Managed backup-list mutation contracts."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import json
 from pathlib import Path
 import subprocess
 
 import pytest
 
-from git_tools.config import GtPaths, resolve_gt_paths
 from git_tools.backup_list import (
     add_backup_repo,
     add_backup_repos,
@@ -17,7 +16,7 @@ from git_tools.backup_list import (
     remove_backup_repo,
     set_selected_last,
 )
-
+from git_tools.config import GtPaths, resolve_gt_paths
 
 URL_A = "git@github.com:Org/Foo.git"
 URL_B = "git@gitlab.com:acme/bar.git"
@@ -227,8 +226,8 @@ def test_add_rejects_hyphen_boundary_project_collision(tmp_path: Path) -> None:
     assert [(entry.url, entry.error) for entry in result.failures] == [
         (
             incoming,
-            "Duplicate backup project foo-bar-baz (already listed): "
-            "git@github.com:foo-bar/baz.git",
+            ("Duplicate backup project foo-bar-baz (already listed): "
+            "git@github.com:foo-bar/baz.git"),
         )
     ]
     assert [entry["url"] for entry in read_repos(paths)] == [stored]
@@ -353,7 +352,7 @@ def test_remove_gives_missing_and_empty_hints(
 def test_timestamp_updates_use_one_utc_millisecond_value(tmp_path: Path) -> None:
     paths = paths_for(tmp_path)
     seed(paths, {"version": 1, "repos": [URL_A]})
-    now = datetime(2026, 8, 8, 9, 30, 0, 987654, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 8, 9, 30, 0, 987654, tzinfo=UTC)
 
     result = record_last_backup_at(paths, URL_A, now=now)
 
@@ -381,7 +380,7 @@ def test_checked_timestamp_updates_only_checked_value(tmp_path: Path) -> None:
     )
 
     result = record_last_checked_at(
-        paths, URL_A, now=datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
+        paths, URL_A, now=datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
     )
 
     assert result.ok is True
@@ -415,7 +414,7 @@ def test_metadata_update_preserves_nested_extensions_and_js_bytes(tmp_path: Path
     seed(paths, document)
 
     result = record_last_checked_at(
-        paths, URL_A, now=datetime(2026, 8, 8, 12, tzinfo=timezone.utc)
+        paths, URL_A, now=datetime(2026, 8, 8, 12, tzinfo=UTC)
     )
 
     assert result.ok is True

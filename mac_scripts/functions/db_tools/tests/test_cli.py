@@ -17,7 +17,7 @@ def run(argv: list[str]) -> tuple[int, str, str]:
     return code, out.getvalue(), err.getvalue()
 
 
-@pytest.mark.parametrize("argv", [[], ["help"], ["-h"], ["--help"]])
+@pytest.mark.parametrize("argv", [[], ["-h"], ["--help"]])
 def test_help_exits_zero(argv: list[str]) -> None:
     code, out, err = run(argv)
     assert code == 0
@@ -26,12 +26,13 @@ def test_help_exits_zero(argv: list[str]) -> None:
 
 
 def test_help_lists_every_command() -> None:
-    _code, out, _err = run(["help"])
+    _code, out, _err = run(["-h"])
     names = ("clean", "completion", "config", "connect", "disconnect", "list", "status", "sync")
-    nested = ("sync list", "sync postgres", "sync mongodb")  # the group's commands, one level in
+    nested = ("sync postgres", "sync mongodb")  # the group's commands, one level in
     for name in names + nested:
         assert f"\n  {name} " in out
-    assert "\n  test " not in out
+    for removed in ("help", "test", "sync list"):
+        assert f"\n  {removed} " not in out
 
 
 @pytest.mark.parametrize(
@@ -80,32 +81,16 @@ def _config(tmp_path, argv: list[str]) -> tuple[int, str, str]:
     return code, out.getvalue(), err.getvalue()
 
 
-def test_config_shows_every_section_with_credentials_masked(tmp_path) -> None:
+def test_config_prints_only_the_location(tmp_path) -> None:
     code, out, err = _config(tmp_path, [])
-
-    assert code == 0
-    assert err == ""
-    assert out.startswith(f"Secrets file: {tmp_path / 'secrets.toml'}\n")
-    assert "🔀 Tunnels (1):\n  1) a: postgres | :5432 -> db.internal:5432  me@10.0.0.1\n" in out
-    assert "🐘 PostgreSQL Sources (1):\n  1) prod → app | postgresql://***@h:5432/app\n" in out
-    assert (
-        "🎯 PostgreSQL Targets (1):\n  1) one | postgresql://***@t.example:5432/postgres\n" in out
-    )
-    assert "🍃 MongoDB Sources (1):\n  1) m → app,logs | mongodb://***@h:27017\n" in out
-    assert "🎯 MongoDB Targets (0):\n  (none)\n" in out
-    assert "s3cr3t" not in out
-    assert "pw@" not in out
-
-
-def test_config_path_prints_only_the_location(tmp_path) -> None:
-    code, out, err = _config(tmp_path, ["path"])
     assert (code, out, err) == (0, f"{tmp_path / 'secrets.toml'}\n", "")
 
 
-def test_config_rejects_other_arguments(tmp_path) -> None:
-    code, out, err = _config(tmp_path, ["frob"])
+@pytest.mark.parametrize("argument", ["path", "frob"])
+def test_config_rejects_other_arguments(tmp_path, argument: str) -> None:
+    code, out, err = _config(tmp_path, [argument])
     assert (code, out) == (1, "")
-    assert "'frob'" in err
+    assert f"'{argument}'" in err
     assert "Usage: dbt config" in err
 
 

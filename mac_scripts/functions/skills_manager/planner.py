@@ -4,7 +4,8 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from .config import Catalog
-from .source import js_string_key as _js_string_key, nfc_codepoint_key
+from .source import js_string_key as _js_string_key
+from .source import nfc_codepoint_key
 from .state import InstalledSkill, InstalledState
 
 

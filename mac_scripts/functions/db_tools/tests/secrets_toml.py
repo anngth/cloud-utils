@@ -6,8 +6,8 @@ the loader's own validation decides whether the file is usable.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable
+import json
 from pathlib import Path
 
 _FIELDS: dict[str, tuple[str, ...]] = {

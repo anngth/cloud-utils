@@ -14,7 +14,6 @@ import time
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
 PROMPT = b"Base32 secret: "
@@ -24,7 +23,7 @@ CTRL_C_GOLDEN = (
     "\x1b[32m◇\x1b[39m  Generate TOTP\r\n"
     "\x1b[36m◆\x1b[39m  Base32 secret: "
     "\x1b[36m└\x1b[39m\r\n"
-).encode("utf-8")
+).encode()
 
 
 def _make_controlling_tty() -> None:
@@ -318,11 +317,8 @@ def test_ctrl_c_restores_tty(tmp_path: Path) -> None:
         os.write(session.master, b"\x03")
         returncode, transcript = session.finish()
 
-        assert returncode == -signal.SIGINT
-        assert transcript.startswith(
-            CTRL_C_GOLDEN + b"Traceback (most recent call last):\r\n"
-        )
-        assert transcript.endswith(b"KeyboardInterrupt\r\n")
+        assert returncode == 130
+        assert transcript == CTRL_C_GOLDEN
         assert b"\xe2\x9d\x8c" not in transcript
         assert SECRET.encode() not in transcript
         _assert_restored(session, original)

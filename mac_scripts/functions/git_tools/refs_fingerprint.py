@@ -1,5 +1,6 @@
 import re
 
+
 def parse_ls_remote_fingerprint(stdout: str | None) -> tuple[str, ...]:
     stdout = "" if stdout is None else str(stdout)
     lines: list[str] = []

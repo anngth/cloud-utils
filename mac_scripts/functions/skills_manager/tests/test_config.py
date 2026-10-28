@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import copy
 import json
 import locale
-from collections.abc import Mapping
 from pathlib import Path
 
-import pytest
 from pydantic import ValidationError
+import pytest
 
 from skills_manager.config import (
     Catalog,
@@ -25,7 +25,6 @@ from skills_manager.config import (
     validate_catalog,
     write_catalog,
 )
-
 
 
 @pytest.mark.parametrize("version", [None, 0, 2, "1", True, 1.0])
@@ -138,7 +137,7 @@ def test_duplicate_source_slash_variants_never_expose_credentials(
         validate_catalog(raw)
 
     message = str(caught.value)
-    assert "Duplicate source: https://example.com/acme/repo.git" == message
+    assert message == "Duplicate source: https://example.com/acme/repo.git"
     assert "user" not in message
     assert "secret" not in message
 
@@ -201,7 +200,7 @@ def test_validate_catalog_returns_immutable_copy_without_reordering_input() -> N
     assert isinstance(catalog.sources[0].skills, tuple)
     assert [entry.source for entry in catalog.sources] == ["z/repo", "a/repo"]
     assert catalog.sources[0].skills == ("second", "first")
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         catalog.sources = ()
 
 
@@ -450,8 +449,8 @@ def test_upsert_and_remove_return_new_catalogs_and_preserve_order_and_extras() -
 
     assert original.sources[0].skills == ("old",)
     assert replaced.sources[0].skills == ("new", "later")
-    assert getattr(replaced, "catalogNote") == "keep"
-    assert getattr(replaced.sources[0], "entryNote") == "keep-too"
+    assert replaced.catalogNote == "keep"
+    assert replaced.sources[0].entryNote == "keep-too"
     assert [entry.source for entry in appended.sources] == ["z/repo", "a/repo"]
     assert [entry.source for entry in removed.sources] == ["a/repo"]
     with pytest.raises(CatalogError, match="out of range"):
@@ -639,8 +638,14 @@ def test_profiles_bootstrap_sorts_profile_names_by_literal_nfc_code_points(
             {"name": "a10", "sources": [{"source": "https://profiles.test/a10", "skills": []}]},
             {"name": ",", "sources": [{"source": "https://profiles.test/comma", "skills": []}]},
             {"name": ".", "sources": [{"source": "https://profiles.test/period", "skills": []}]},
-            {"name": "a\N{COMBINING ACUTE ACCENT}", "sources": [{"source": "https://profiles.test/a-acute-decomposed", "skills": []}]},
-            {"name": "a\N{COMBINING DIAERESIS}", "sources": [{"source": "https://profiles.test/a-umlaut-decomposed", "skills": []}]},
+            {
+                "name": "a\N{COMBINING ACUTE ACCENT}",
+                "sources": [{"source": "https://profiles.test/a-acute-decomposed", "skills": []}],
+            },
+            {
+                "name": "a\N{COMBINING DIAERESIS}",
+                "sources": [{"source": "https://profiles.test/a-umlaut-decomposed", "skills": []}],
+            },
             {"name": "Å", "sources": [{"source": "https://profiles.test/aring", "skills": []}]},
             {"name": "×", "sources": [{"source": "https://profiles.test/multiply", "skills": []}]},
             {"name": "÷", "sources": [{"source": "https://profiles.test/divide", "skills": []}]},

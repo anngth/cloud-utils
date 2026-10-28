@@ -1,15 +1,23 @@
 from __future__ import annotations
+
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
-import os, signal, sys, termios, threading
+import os
+import signal
+import sys
+import termios
+import threading
 from types import FrameType
-from typing import Callable, Iterable, Literal, TextIO
+from typing import Literal, TextIO
+
 from prompt_toolkit.application import Application
 from prompt_toolkit.input import Input, create_input
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.layout import Layout
-from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.output import DummyOutput, Output, create_output
+
 SelectorKind = Literal["continue", "submit", "cancel"]
 @dataclass(frozen=True, slots=True)
 class SelectorItem:

@@ -165,21 +165,20 @@ class LoadDesiredTests(unittest.TestCase):
 
     def test_json_null_array_and_zero_raise_and_preserve_file(self):
         for raw in ("null", "[]", "0"):
-            with self.subTest(raw=raw):
-                with tempfile.TemporaryDirectory() as root:
-                    path = os.path.join(root, "bud", "desired.json")
-                    os.makedirs(os.path.dirname(path))
-                    with open(path, "w", encoding="utf-8") as handle:
-                        handle.write(raw)
-                    with self.assertRaises(ValueError) as ctx:
-                        load_desired(
-                            {"CLOUD_UTILS_CONFIG_DIR": root, "HOME": "/x"}
-                        )
-                    self.assertEqual(
-                        str(ctx.exception), fmt("desired.invalid", file=path)
+            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as root:
+                path = os.path.join(root, "bud", "desired.json")
+                os.makedirs(os.path.dirname(path))
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(raw)
+                with self.assertRaises(ValueError) as ctx:
+                    load_desired(
+                        {"CLOUD_UTILS_CONFIG_DIR": root, "HOME": "/x"}
                     )
-                    with open(path, encoding="utf-8") as handle:
-                        self.assertEqual(handle.read(), raw)
+                self.assertEqual(
+                    str(ctx.exception), fmt("desired.invalid", file=path)
+                )
+                with open(path, encoding="utf-8") as handle:
+                    self.assertEqual(handle.read(), raw)
 
     def test_rejects_empty_string_items(self):
         with tempfile.TemporaryDirectory() as root:
@@ -249,9 +248,11 @@ class LoadDesiredTests(unittest.TestCase):
                 desired_file=desired,
                 example_file=missing_example,
             )
-            with patch("config.resolve_paths", return_value=paths):
-                with self.assertRaises(FileNotFoundError) as ctx:
-                    load_desired({"CLOUD_UTILS_CONFIG_DIR": root, "HOME": "/x"})
+            with (
+                patch("config.resolve_paths", return_value=paths),
+                self.assertRaises(FileNotFoundError) as ctx,
+            ):
+                load_desired({"CLOUD_UTILS_CONFIG_DIR": root, "HOME": "/x"})
             self.assertEqual(
                 str(ctx.exception),
                 fmt("desired.example.missing", file=missing_example),

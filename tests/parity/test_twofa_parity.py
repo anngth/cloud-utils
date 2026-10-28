@@ -1,15 +1,14 @@
 import base64
+from collections.abc import Callable
 import io
 import json
 from pathlib import Path
-from typing import Callable, NoReturn
+from typing import NoReturn
 
 import pytest
-
 from twofa.cli import TtyInputError, run_cli
 from twofa.clipboard import ClipboardError
 from twofa.ui import TwoFactorUi
-
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "twofa.jsonl"
 SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"

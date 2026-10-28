@@ -125,7 +125,7 @@ def test_install_keeps_distinct_lone_surrogate_sources(
         install_plan(
             install=tuple(
                 requirement(source, skill)
-                for source, skill in zip(sources, ("first", "second"))
+                for source, skill in zip(sources, ("first", "second"), strict=True)
             )
         ),
         project_root=tmp_path,

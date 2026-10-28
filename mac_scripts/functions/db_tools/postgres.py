@@ -7,12 +7,12 @@ and cleanup always connects to the `postgres` database.
 
 from __future__ import annotations
 
-import os
-import re
-import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import re
+import tempfile
 from typing import TextIO
 
 from shared.process import CommandResult
@@ -172,7 +172,6 @@ def plan_postgres_sync(source: PostgresSource, target: PostgresTarget) -> Postgr
 def clear_postgres_backups(
     targets: Sequence[PostgresTarget],
     *,
-    source_database: str | None,
     dry_run: bool,
     runtime: Runtime,
     stdout: TextIO,
@@ -190,28 +189,22 @@ def clear_postgres_backups(
     failed = False
     for target in targets:
         stdout.write(f"Target: {target.name}\n")
-        if not _clear_target(target, tools, source_database, dry_run, runtime, stdout, stderr):
+        if not _clear_target(target, tools, dry_run, runtime, stdout, stderr):
             failed = True
         stdout.write("\n")
     return 1 if failed else 0
 
 
-def _backup_query(source_database: str | None) -> str:
-    """One listing query, optionally scoped to `{source_database}_backup_`."""
-    query = (
-        "SELECT datname FROM pg_database WHERE datistemplate = false AND datname ~ "
-        + quote_literal(_BACKUP_SUFFIX)
-    )
-    if source_database:
-        prefix_literal = quote_literal(f"{source_database}_backup_")
-        query += f" AND left(datname, length({prefix_literal})) = {prefix_literal}"
-    return query + " ORDER BY datname;"
+_BACKUP_QUERY = (
+    "SELECT datname FROM pg_database WHERE datistemplate = false AND datname ~ "
+    + quote_literal(_BACKUP_SUFFIX)
+    + " ORDER BY datname;"
+)
 
 
 def _clear_target(
     target: PostgresTarget,
     tools: PostgresTools,
-    source_database: str | None,
     dry_run: bool,
     runtime: Runtime,
     stdout: TextIO,
@@ -220,7 +213,7 @@ def _clear_target(
     url = parse_postgres_url(target.url)
     env = _child_env(url)
     listed = runtime.run_command(
-        _psql_argv(tools, url, ["-At", "-c", _backup_query(source_database)]),
+        _psql_argv(tools, url, ["-At", "-c", _BACKUP_QUERY]),
         env=env,
     )
     if listed.returncode != 0:
@@ -382,7 +375,6 @@ class _PostgresSync:
         hint: Callable[[str, int], str] | None = None,
     ) -> None:
         self.source = source
-        self.target_name = target.name
         self.tools = tools
         self.verbose = verbose
         self.runtime = runtime
@@ -748,7 +740,7 @@ class _PostgresSync:
             if self.backup_db:
                 self.stdout.write(f"\n💾 Backup database '{self.backup_db}' kept for safety\n")
                 self.stdout.write(
-                    f"   Remove it later with: dbt clean postgres --to {self.target_name}\n"
+                    "   Remove it later with: dbt clean postgres\n"
                 )
             if self.backup_file:
                 self.stdout.write(f"\n💾 Backup file kept for safety: {self.backup_file}\n")

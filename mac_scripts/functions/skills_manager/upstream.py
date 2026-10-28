@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
-import os
-import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+import json
+import os
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING, Literal
 
 from shared.process import CommandResult, run_process

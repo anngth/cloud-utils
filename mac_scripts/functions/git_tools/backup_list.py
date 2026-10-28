@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import re
 
-from .config import BackupsDocumentV4, BackupRepoV4, GtPaths
-from .config import migrate_backups_document, read_backups_document, write_backups_document
+from .config import (
+    BackupRepoV4,
+    BackupsDocumentV4,
+    GtPaths,
+    migrate_backups_document,
+    read_backups_document,
+    write_backups_document,
+)
 from .ssh_url import ParsedSshUrl, canonicalize_ssh_git_url
 
 ADD_HINT = "Use `gt backup add <ssh-url>` to add a repo first."
@@ -129,7 +135,7 @@ def _earliest_project_url(document: BackupsDocumentV4, project: str) -> str | No
     return None
 
 def _format_timestamp(now: datetime) -> str:
-    return now.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return now.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 def _parse_index(token: str, maximum: int) -> int | None:
     significant = token.lstrip("0") or "0"
@@ -269,7 +275,7 @@ def _update_timestamp(
             ok=False, error=f"Repo not found in backups list: {ssh_url}"
         )
 
-    timestamp = _format_timestamp(now or datetime.now(timezone.utc))
+    timestamp = _format_timestamp(now or datetime.now(UTC))
     repo = document.repos[index]
     document.repos[index] = repo.model_copy(
         update={

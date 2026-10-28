@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import io
 from dataclasses import dataclass
+import io
 
 import pytest
-
 from shared.selector import SelectorItem, SelectorState
+
 from skills_manager.config import Catalog, CatalogSource
 from skills_manager.planner import (
     DesiredConflict,
@@ -21,8 +21,8 @@ from skills_manager.state import InstalledSkill
 from skills_manager.ui import (
     SELECTOR_DESCRIPTION_COLOR,
     SkmUi,
-    group_requirements_by_catalog_source,
     catalog_window,
+    group_requirements_by_catalog_source,
     selector_item_limit,
     selector_name_color,
     shell_arg,
@@ -867,7 +867,7 @@ def test_selector_name_color_uses_cursor_selected_unselected_ladder(
     assert selector_name_color(
         is_cursor=is_cursor, is_selected=is_selected
     ) == expected
-    assert SELECTOR_DESCRIPTION_COLOR == f"{DIM}{GRAY}"
+    assert f"{DIM}{GRAY}" == SELECTOR_DESCRIPTION_COLOR
 
 
 def test_generic_multi_selector_renders_exact_colors_spacing_and_hints() -> None:

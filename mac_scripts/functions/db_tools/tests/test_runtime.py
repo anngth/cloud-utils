@@ -6,11 +6,11 @@ signal handlers are never touched.
 
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
 import signal
 import subprocess
 import sys
-from datetime import datetime
-from pathlib import Path
 
 import pytest
 from shared.process import CommandResult

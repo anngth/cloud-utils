@@ -2,8 +2,8 @@ import json
 import os
 from pathlib import Path
 
-import pytest
 from pydantic import ValidationError
+import pytest
 
 from git_tools.config import (
     EMPTY_BACKUPS,
@@ -23,7 +23,6 @@ from git_tools.config import (
     resolve_gt_paths,
     write_backups_document,
 )
-
 
 V4_BYTES = (
     b'{\n  "version": 4,\n  "repos": [\n'
@@ -69,8 +68,8 @@ def test_resolve_gt_paths_ignores_empty_environment_override() -> None:
             ),
             Path("/Users/me"),
             Path("/tmp"),
-            "~/Library/Mobile Documents/com~apple~CloudDocs/Backups/"
-            "cloud-utils/gt/backups.json",
+            ("~/Library/Mobile Documents/com~apple~CloudDocs/Backups/"
+            "cloud-utils/gt/backups.json"),
         ),
         (
             Path("/var/folders/xx/T/gt-backup-abc/mirror.git"),
@@ -188,7 +187,7 @@ def test_versioned_models_do_not_coerce_repo_fields(model: type, value: dict) ->
 
 
 def test_empty_backups_is_a_v4_document() -> None:
-    assert EMPTY_BACKUPS == BackupsDocumentV4(version=4, repos=[])
+    assert BackupsDocumentV4(version=4, repos=[]) == EMPTY_BACKUPS
 
 
 @pytest.mark.parametrize(
@@ -622,8 +621,8 @@ def test_migrate_backups_document_reports_exact_timestamp_error() -> None:
                 "flag": False,
                 "text": "é",
             },
-            '{"fixed":100000000000000000000,"exponent":1e-7,'
-            '"nil":null,"flag":false,"text":"é"}',
+            ('{"fixed":100000000000000000000,"exponent":1e-7,'
+            '"nil":null,"flag":false,"text":"é"}'),
         ),
         (float("inf"), "null"),
     ],

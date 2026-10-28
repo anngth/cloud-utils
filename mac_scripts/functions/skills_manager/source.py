@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-import os, re, unicodedata
 from collections.abc import Callable
 from errno import ELOOP, ENOENT, ENOTDIR, errorcode
+import os
 from pathlib import Path
+import re
+import unicodedata
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 
@@ -131,7 +133,7 @@ def _realpath_error_site(value: str, expected: OSError) -> tuple[str, str]:
         except OSError as error:
             if error.errno == expected.errno:
                 return operation, candidate
-            raise expected
+            raise expected from error
     raise expected
 
 

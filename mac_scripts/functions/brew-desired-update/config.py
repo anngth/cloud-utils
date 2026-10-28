@@ -1,7 +1,7 @@
+from dataclasses import dataclass
 import json
 import os
 import tempfile
-from dataclasses import dataclass
 
 from messages import fmt
 

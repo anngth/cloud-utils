@@ -67,3 +67,6 @@ StirlingPDF/
 dbt_secrets
 # Git worktrees
 .worktrees/
+# Project-local agent skills (installed by skm / npx skills)
+.agents/
+skills-lock.json

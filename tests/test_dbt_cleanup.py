@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import io
 from dataclasses import dataclass, field
 from datetime import datetime
+import io
 from pathlib import Path
 
 from db_tools.cli import run_cli
@@ -130,7 +130,7 @@ def test_mongo_keeps_database_name_out_of_the_javascript() -> None:
 
 
 def test_invalid_postgres_index_returns_one_without_psql(tmp_path: Path) -> None:
-    code, _out, err, fake = _drive(tmp_path, ["sync", "postgres", "-s", "2", "-d", "1"])
+    code, _out, err, fake = _drive(tmp_path, ["sync", "postgres", "--from", "2", "--to", "1"])
 
     assert code == 1
     assert fake.calls == []

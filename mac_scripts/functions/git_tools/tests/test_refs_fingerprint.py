@@ -1,6 +1,5 @@
 from git_tools.refs_fingerprint import fingerprints_equal, parse_ls_remote_fingerprint
 
-
 LS_REMOTE_SAMPLE = "\n".join(
     [
         "aaa\tHEAD",

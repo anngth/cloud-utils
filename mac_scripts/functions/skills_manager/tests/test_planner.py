@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import subprocess
-import sys
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
+import subprocess
+import sys
 from typing import get_type_hints
 
 import pytest
 
-import skills_manager.planner as planner
 from skills_manager.config import Catalog, CatalogSource
+import skills_manager.planner as planner
 from skills_manager.planner import (
     DesiredConflict,
     InstallPlan,

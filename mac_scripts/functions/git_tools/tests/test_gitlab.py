@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-
 from shared.process import CommandResult
 
 from git_tools.gitlab import (
@@ -24,7 +23,6 @@ from git_tools.gitlab import (
     run_glab,
     set_default_branch,
 )
-
 
 GROUP = "anngth-dev/backups"
 

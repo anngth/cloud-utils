@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import io
-import signal
 from dataclasses import dataclass, field
 from datetime import datetime
+import io
+import signal
 
 import pytest
 from shared.process import CommandResult

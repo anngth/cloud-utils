@@ -4,7 +4,7 @@ Python 3 CLI for Homebrew desired lists. Config: `$CLOUD_UTILS_CONFIG_DIR/bud/de
 
 Requires Homebrew. The `bud` wrapper uses the same locked repository
 `.venv/bin/python` environment as `2fa` and `gt`; create it explicitly with
-`uv sync --locked`. Spec: [bud CLI (Python)](superpowers/specs/2026-08-25-bud-budz-cli-parity-design.md).
+`uv sync --locked`.
 
 `bud` prints each `brew` command. Probe commands (`list`, `info`, …) show the command only and capture output internally. `update` / `upgrade` / `cleanup` inherit the terminal so Homebrew progress (`%`, download bars) shows live.
 

@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+from contextlib import redirect_stderr
 import io
 import os
 from pathlib import Path
-from contextlib import redirect_stderr
 import sys
 
-import pytest
-
-from shared.selector import SelectorResult, create_selector_state
 from prompt_toolkit.input.vt100 import Vt100Input
+import pytest
+from shared.selector import SelectorResult, create_selector_state
+
 from skills_manager.cli import Services, run_cli
 from skills_manager.config import Catalog, CatalogSource, ConfigPaths
 from skills_manager.state import InstalledSkill

@@ -4,8 +4,8 @@ import io
 from pathlib import Path
 
 import pytest
-
 from shared.selector import SelectorResult, create_selector_state
+
 from skills_manager.cli import CommandContext, Services
 from skills_manager.config import Catalog, CatalogSource, ConfigPaths
 from skills_manager.ui import SkmUi

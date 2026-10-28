@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import io
 from dataclasses import dataclass, field
 from datetime import datetime
+import io
 from pathlib import Path
 
 import pytest
@@ -202,7 +202,7 @@ def test_mongo_host_strips_both_scheme_variants() -> None:
 
 def test_mongo_host_without_credentials_keeps_the_host_part() -> None:
     # The zsh `cut -d@ -f2` yields "" for credential-less URIs; dbt keeps
-    # the host segment instead so `sync list` never prints a missing host.
+    # the host segment instead so `dbt list` never prints a missing host.
     assert mongo_host("mongodb+srv://cluster.example/app") == "cluster.example"
 
 
@@ -520,12 +520,12 @@ def test_no_mongo_targets_returns_zero() -> None:
     assert err.getvalue() == ""
 
 
-# --- sync list / ls through run_cli ---------------------------------------------
+# --- list / ls through run_cli ---------------------------------------------
 
 
 @pytest.mark.parametrize("alias", ["list", "ls"])
-def test_sync_list_prints_mongo_sections_with_1_based_indexes(tmp_path, alias: str) -> None:
-    code, out, err, fake = _drive(tmp_path, ["sync", alias])
+def test_list_prints_mongo_sections_with_1_based_indexes(tmp_path, alias: str) -> None:
+    code, out, err, fake = _drive(tmp_path, [alias])
 
     assert code == 0
     assert err == ""
@@ -538,8 +538,8 @@ def test_sync_list_prints_mongo_sections_with_1_based_indexes(tmp_path, alias: s
     assert "🎯 MongoDB Targets (0)" not in out
 
 
-def test_sync_list_persists_postgres_sections_and_no_client_calls(tmp_path) -> None:
-    code, out, _err, fake = _drive(tmp_path, ["sync", "list"])
+def test_list_persists_postgres_sections_and_no_client_calls(tmp_path) -> None:
+    code, out, _err, fake = _drive(tmp_path, ["list"])
 
     assert code == 0
     assert fake.calls == []
@@ -547,8 +547,8 @@ def test_sync_list_persists_postgres_sections_and_no_client_calls(tmp_path) -> N
     assert "🐘 PostgreSQL Sources (0):\n  (none)\n" in out
 
 
-def test_sync_list_status_pings_each_source_and_target(tmp_path) -> None:
-    code, out, err, fake = _drive(tmp_path, ["sync", "list", "--status"])
+def test_list_status_pings_each_source_and_target(tmp_path) -> None:
+    code, out, err, fake = _drive(tmp_path, ["status"])
 
     assert code == 0
     assert err == ""
@@ -568,8 +568,8 @@ def test_sync_list_status_pings_each_source_and_target(tmp_path) -> None:
     assert "Summary: 🟢 3 connected  |  🔴 0 disconnected" in out
 
 
-def test_sync_list_status_failed_ping_is_marked_disconnected(tmp_path) -> None:
-    code, out, _err, _fake = _drive(tmp_path, ["sync", "list", "--status"], ping_code=1)
+def test_list_status_failed_ping_is_marked_disconnected(tmp_path) -> None:
+    code, out, _err, _fake = _drive(tmp_path, ["status"], ping_code=1)
 
     assert code == 0
     assert "🔴 1) prod → app,logs | cluster.example" in out
@@ -577,9 +577,9 @@ def test_sync_list_status_failed_ping_is_marked_disconnected(tmp_path) -> None:
     assert "Summary: 🟢 0 connected  |  🔴 3 disconnected" in out
 
 
-def test_sync_list_status_with_no_mongo_client_reports_unknown(tmp_path) -> None:
+def test_list_status_with_no_mongo_client_reports_unknown(tmp_path) -> None:
     code, out, err, fake = _drive(
-        tmp_path, ["sync", "list", "--status"], which={"mongodump": MONGODUMP}
+        tmp_path, ["status"], which={"mongodump": MONGODUMP}
     )
 
     assert code == 0
@@ -589,8 +589,8 @@ def test_sync_list_status_with_no_mongo_client_reports_unknown(tmp_path) -> None
     assert "⚪ 3 unknown (client not installed)" in out
 
 
-def test_sync_list_rejects_the_file_when_a_mongo_entry_is_invalid(tmp_path) -> None:
-    code, out, err, _fake = _drive(tmp_path, ["sync", "list"], sources=("bad",))
+def test_list_rejects_the_file_when_a_mongo_entry_is_invalid(tmp_path) -> None:
+    code, out, err, _fake = _drive(tmp_path, ["list"], sources=("bad",))
 
     assert code == 1
     assert "mongo.sources[1] (bad): missing field 'uri'" in err
@@ -989,7 +989,7 @@ def test_interrupt_without_backup_signals_nothing_to_restore() -> None:
 def test_sync_mongodb_syncs_the_selected_database(tmp_path) -> None:
     code, _out, err, fake = _drive(
         tmp_path,
-        ["sync", "mongodb", "-s", "1", "-d", "1", "--db", "logs"],
+        ["sync", "mongodb", "--from", "1", "--to", "1", "--db", "logs"],
         now=BACKUP_CLOCK,
     )
 
@@ -1009,7 +1009,7 @@ def test_sync_mongodb_syncs_the_selected_database(tmp_path) -> None:
 @pytest.mark.parametrize("alias", ["mongodb", "mongo"])
 def test_sync_mongodb_defaults_to_the_first_database(tmp_path, alias: str) -> None:
     code, _out, err, fake = _drive(
-        tmp_path, ["sync", alias, "-s", "1", "-d", "1"], now=BACKUP_CLOCK
+        tmp_path, ["sync", alias, "--from", "1", "--to", "1"], now=BACKUP_CLOCK
     )
 
     assert code == 0
@@ -1020,21 +1020,21 @@ def test_sync_mongodb_defaults_to_the_first_database(tmp_path, alias: str) -> No
 
 def test_sync_mongodb_database_index_out_of_range_exits_one_without_ping(tmp_path) -> None:
     code, _out, err, fake = _drive(
-        tmp_path, ["sync", "mongodb", "-s", "1", "-d", "1", "--db", "3"]
+        tmp_path, ["sync", "mongodb", "--from", "1", "--to", "1", "--db", "3"]
     )
 
     assert code == 1
     assert fake.calls == []  # no ping, no probe
     assert "Unknown MongoDB database: 3" in err
-    assert "Available databases: app, logs" in err
+    assert "Available databases: 1) app, 2) logs" in err
 
 
 @pytest.mark.parametrize(
     "argv",
     [
         ["sync", "mongodb"],
-        ["sync", "mongodb", "-s", "1"],
-        ["sync", "mongodb", "-d", "1"],
+        ["sync", "mongodb", "--from", "1"],
+        ["sync", "mongodb", "--to", "1"],
     ],
 )
 def test_sync_mongodb_requires_source_and_destination(tmp_path, argv: list[str]) -> None:
@@ -1056,7 +1056,7 @@ def test_sync_mongodb_rejects_the_clear_flag(tmp_path) -> None:
 def test_sync_mongodb_without_mongodump_returns_one(tmp_path) -> None:
     which = {"mongosh": MONGOSH, "mongorestore": MONGORESTORE}
     code, _out, err, fake = _drive(
-        tmp_path, ["sync", "mongodb", "-s", "1", "-d", "1"], now=BACKUP_CLOCK, which=which
+        tmp_path, ["sync", "mongodb", "--from", "1", "--to", "1"], now=BACKUP_CLOCK, which=which
     )
 
     assert code == 1
@@ -1064,7 +1064,7 @@ def test_sync_mongodb_without_mongodump_returns_one(tmp_path) -> None:
     assert "MongoDB" in err
 
 
-# --- sync -c / --clear-backups · combined cleanup ----------------------------------
+# --- dbt clean · combined cleanup ------------------------------------------------
 
 PG_TARGETS = ("pg1|postgresql://u:p@pgt.example:5432/db",)
 
@@ -1334,7 +1334,7 @@ def test_target_ping_failure_explains_the_down_tunnel(tmp_path) -> None:
     runtime.run_command = run_command
     out, err = io.StringIO(), io.StringIO()
     code = run_cli(
-        ["sync", "mongodb", "-s", "1", "-d", "1"],
+        ["sync", "mongodb", "--from", "1", "--to", "1"],
         env={"DBT_SECRETS_FILE": str(path)},
         stdout=out,
         stderr=err,

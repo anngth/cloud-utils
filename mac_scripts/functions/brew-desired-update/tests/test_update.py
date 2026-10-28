@@ -187,7 +187,7 @@ class RunUpdatePipelineTests(unittest.TestCase):
 
     def test_load_brew_state_logs_through_passed_ui(self):
         mapping = _state_map()
-        code, runner, plain, _ = _run([], _doc(), mapping)
+        code, _runner, plain, _ = _run([], _doc(), mapping)
         self.assertEqual(code, 0)
         self.assertIn("$ brew list --formula", plain)
         self.assertIn("$ brew list --cask --full-name", plain)

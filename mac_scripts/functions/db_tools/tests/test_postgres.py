@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import io
-import os
 from dataclasses import dataclass, field
 from datetime import datetime
+import io
+import os
 from pathlib import Path
 
 import pytest
@@ -38,11 +38,6 @@ LIST_QUERY = (
     "SELECT datname FROM pg_database WHERE datistemplate = false"
     " AND datname ~ '_backup_[0-9]{8}_[0-9]{6}$' ORDER BY datname;"
 )
-SCOPED_QUERY = (
-    "SELECT datname FROM pg_database WHERE datistemplate = false"
-    " AND datname ~ '_backup_[0-9]{8}_[0-9]{6}$'"
-    " AND left(datname, length('app_backup_')) = 'app_backup_' ORDER BY datname;"
-)
 TERMINATE_SQL = (
     "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
     " WHERE datname = 'weird\"name_backup_20260101_120000'"
@@ -54,7 +49,7 @@ DROP_SQL = 'DROP DATABASE IF EXISTS "weird""name_backup_20260101_120000";'
 
 NOW = datetime(2026, 10, 22, 15, 4, 5)
 SYNC_BACKUP = "app_backup_20261022_150405"
-SYNC_ARGV = ["sync", "postgres", "-s", "1", "-d", "1"]
+SYNC_ARGV = ["sync", "postgres", "--from", "1", "--to", "1"]
 SYNC_EXISTS_SQL = "SELECT 1 FROM pg_database WHERE datname='app';"
 SYNC_TERMINATE_SQL = (
     "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
@@ -331,7 +326,6 @@ def test_cleanup_without_tools_mentions_brew_and_exits_one() -> None:
     err = io.StringIO()
     code = clear_postgres_backups(
         [PostgresTarget("one", TARGETS[0].split("|", 1)[1])],
-        source_database=None,
         dry_run=False,
         runtime=_runtime(fake),
         stdout=out,
@@ -390,7 +384,7 @@ def test_postgres_status_failed_probe_is_false() -> None:
 # --- cleanup through run_cli ---------------------------------------------------
 
 
-@pytest.mark.parametrize("alias", ["postgres", "postgresql", "pg"])
+@pytest.mark.parametrize("alias", ["postgres", "pg"])
 def test_dry_run_does_not_drop(tmp_path, alias: str) -> None:
     code, out, err, fake = _drive(tmp_path, ["clean", alias, "-n"])
 
@@ -411,7 +405,7 @@ def test_dry_run_does_not_drop(tmp_path, alias: str) -> None:
 
 
 def test_drop_terminates_then_drops_the_quoted_backup(tmp_path) -> None:
-    code, out, err, fake = _drive(tmp_path, ["clean", "postgres", "-d", "1"])
+    code, out, err, fake = _drive(tmp_path, ["clean", "postgres"], targets=TARGETS[:1])
 
     assert code == 0
     assert err == ""
@@ -424,23 +418,6 @@ def test_drop_terminates_then_drops_the_quoted_backup(tmp_path) -> None:
     assert drop[:-1] == _DROP_ARGS
     assert drop[-1] == DROP_SQL
     assert "Summary: dropped 1, failed 0" in out
-
-
-def test_source_database_scopes_the_listing(tmp_path) -> None:
-    code, _out, err, fake = _drive(tmp_path, ["clean", "postgres", "-n", "-s", "1"])
-
-    assert code == 0
-    assert err == ""
-    listings = fake.listings()
-    assert [call[-1] for call in listings] == [SCOPED_QUERY, SCOPED_QUERY]
-
-
-def test_destination_limits_cleanup_to_that_target(tmp_path) -> None:
-    code, _out, err, fake = _drive(tmp_path, ["clean", "postgres", "-n", "-d", "2"])
-
-    assert code == 0
-    assert err == ""
-    assert fake.hosts(fake.listings()) == ["t2.example"]
 
 
 def test_cleanup_without_destination_visits_every_target(tmp_path) -> None:
@@ -481,39 +458,20 @@ def test_cleanup_never_unlinks_files(tmp_path, monkeypatch) -> None:
     keeper = tmp_path / "pg_dump.bin"
     keeper.write_text("x", encoding="utf-8")
 
-    code, _out, err, _fake = _drive(tmp_path, ["clean", "postgres", "-d", "1"])
+    code, _out, err, _fake = _drive(tmp_path, ["clean", "postgres"], targets=TARGETS[:1])
 
     assert code == 0
     assert err == ""
     assert keeper.exists()
 
 
-def test_source_index_out_of_range_exits_one_without_psql(tmp_path) -> None:
-    code, _out, err, fake = _drive(tmp_path, ["clean", "postgres", "-s", "2"])
+@pytest.mark.parametrize("option", ["--from", "--to", "-s", "-d"])
+def test_clean_has_no_row_filter(tmp_path, option: str) -> None:
+    code, _out, err, fake = _drive(tmp_path, ["clean", "postgres", option, "one"])
 
     assert code == 1
     assert fake.calls == []
-    assert "Unknown PostgreSQL source: 2" in err
-    assert "Available sources: 1) prod" in err
-
-
-def test_clean_scopes_by_source_and_target_name(tmp_path) -> None:
-    code, _out, err, fake = _drive(
-        tmp_path, ["clean", "postgres", "-n", "--from", "prod", "--to", "two"]
-    )
-
-    assert code == 0
-    assert err == ""
-    assert fake.hosts(fake.listings()) == ["t2.example"]
-    assert [call[-1] for call in fake.listings()] == [SCOPED_QUERY]
-
-
-def test_clean_rejects_from_and_to_for_mongodb(tmp_path) -> None:
-    code, _out, err, fake = _drive(tmp_path, ["clean", "mongodb", "--to", "one"])
-
-    assert code == 1
-    assert fake.calls == []
-    assert "--from/--to only apply to PostgreSQL" in err
+    assert f"No such option '{option}'" in err
 
 
 @pytest.mark.parametrize(
@@ -522,7 +480,7 @@ def test_clean_rejects_from_and_to_for_mongodb(tmp_path) -> None:
         ["sync", "postgres", "-c", "-x"],
         ["sync", "postgres"],
         ["sync", "list", "--full"],
-        ["sync", "postgres", "-c", "-s"],  # missing -s value
+        ["sync", "postgres", "--from"],  # missing --from value
     ],
 )
 def test_bad_flag_or_usage_exits_one_without_calls(tmp_path, argv: list[str]) -> None:
@@ -533,12 +491,12 @@ def test_bad_flag_or_usage_exits_one_without_calls(tmp_path, argv: list[str]) ->
     assert fake.calls == []
 
 
-# --- sync list / ls ------------------------------------------------------------
+# --- list / ls ------------------------------------------------------------
 
 
 @pytest.mark.parametrize("alias", ["list", "ls"])
-def test_sync_list_prints_sections_with_1_based_indexes(tmp_path, alias: str) -> None:
-    code, out, err, fake = _drive(tmp_path, ["sync", alias])
+def test_list_prints_sections_with_1_based_indexes(tmp_path, alias: str) -> None:
+    code, out, err, fake = _drive(tmp_path, [alias])
 
     assert code == 0
     assert err == ""
@@ -550,8 +508,8 @@ def test_sync_list_prints_sections_with_1_based_indexes(tmp_path, alias: str) ->
     assert "  2) two | t2.example [SSL: disable]" in out
 
 
-def test_sync_list_status_with_no_client_reports_unknown(tmp_path) -> None:
-    code, out, err, fake = _drive(tmp_path, ["sync", "list", "--status"], which={})
+def test_list_status_with_no_client_reports_unknown(tmp_path) -> None:
+    code, out, err, fake = _drive(tmp_path, ["status"], which={})
 
     assert code == 0
     assert err == ""
@@ -561,8 +519,8 @@ def test_sync_list_status_with_no_client_reports_unknown(tmp_path) -> None:
     assert "⚪ 3 unknown (client not installed)" in out
 
 
-def test_sync_list_status_reports_failed_connection(tmp_path) -> None:
-    code, out, _err, _fake = _drive(tmp_path, ["sync", "list", "--status"], probe_code=1)
+def test_list_status_reports_failed_connection(tmp_path) -> None:
+    code, out, _err, _fake = _drive(tmp_path, ["status"], probe_code=1)
 
     assert code == 0
     assert "🔴 1) prod → app | src.example" in out
@@ -570,8 +528,8 @@ def test_sync_list_status_reports_failed_connection(tmp_path) -> None:
     assert "Summary: 🟢 0 connected  |  🔴 3 disconnected" in out
 
 
-def test_sync_list_rejects_the_file_when_an_entry_is_invalid(tmp_path) -> None:
-    code, out, err, _fake = _drive(tmp_path, ["sync", "list"], sources=("bad",))
+def test_list_rejects_the_file_when_an_entry_is_invalid(tmp_path) -> None:
+    code, out, err, _fake = _drive(tmp_path, ["list"], sources=("bad",))
 
     assert code == 1
     assert "postgres.sources[1] (bad): missing field 'url'" in err
@@ -1300,7 +1258,7 @@ def test_password_is_only_in_pgpassword(tmp_path) -> None:
 
 @pytest.mark.parametrize(
     "argv",
-    [["sync", "postgres", "-s", "1"], ["sync", "postgres", "-d", "1"], ["sync", "postgres"]],
+    [["sync", "postgres", "--from", "1"], ["sync", "postgres", "--to", "1"], ["sync", "postgres"]],
 )
 def test_sync_requires_source_and_destination(tmp_path, argv: list[str]) -> None:
     code, _out, err, fake = _drive(tmp_path, argv)
@@ -1310,7 +1268,7 @@ def test_sync_requires_source_and_destination(tmp_path, argv: list[str]) -> None
     assert [call for call in fake.calls if call[0] == PG_DUMP] == []
 
 
-@pytest.mark.parametrize("argset", [("-s", "2"), ("-d", "3")])
+@pytest.mark.parametrize("argset", [("--from", "2"), ("--to", "3")])
 def test_sync_out_of_range_index_exits_one_without_psql(tmp_path, argset) -> None:
     code, _out, err, fake = _drive(tmp_path, ["sync", "postgres", *argset])
 
@@ -1366,7 +1324,7 @@ def test_sync_without_target_outside_a_terminal_explains(tmp_path) -> None:
     assert code == 1
     assert fake.calls == []
     assert "--to is required outside a terminal" in err
-    assert "dbt sync list" in err
+    assert "dbt list" in err
 
 
 def test_sync_in_a_terminal_picks_the_rows(tmp_path, monkeypatch) -> None:
@@ -1418,10 +1376,10 @@ def test_quiet_flag_is_rejected(tmp_path) -> None:
     assert [call for call in fake.calls if call[0] == PG_DUMP] == []
 
 
-@pytest.mark.parametrize("alias", ["postgres", "postgresql", "pg"])
+@pytest.mark.parametrize("alias", ["postgres", "pg"])
 def test_sync_aliases_all_reach_pg_dump(tmp_path, alias: str) -> None:
     code, _out, err, fake = _drive(
-        tmp_path, ["sync", alias, "-s", "1", "-d", "1"], now=NOW
+        tmp_path, ["sync", alias, "--from", "1", "--to", "1"], now=NOW
     )
 
     assert code == 0
@@ -1465,7 +1423,7 @@ def test_child_env_keeps_the_callers_connect_timeout(monkeypatch) -> None:
 
 
 def test_status_probes_sources_on_their_database_and_targets_on_postgres(tmp_path) -> None:
-    code, _out, _err, fake = _drive(tmp_path, ["sync", "list", "--status"])
+    code, _out, _err, fake = _drive(tmp_path, ["status"])
 
     assert code == 0
     probes = [call for call in fake.calls if call[-1] == "SELECT 1;"]
@@ -1574,7 +1532,7 @@ def test_interrupt_during_target_backup_dump_discards_the_file(tmp_path, monkeyp
 
 def test_invalid_entry_error_masks_the_password(tmp_path) -> None:
     code, _out, err, _fake = _drive(
-        tmp_path, ["sync", "list"], sources=("bad|http://svc:s3cr3t@h:5432/db",)
+        tmp_path, ["list"], sources=("bad|http://svc:s3cr3t@h:5432/db",)
     )
 
     assert code == 1
@@ -1604,7 +1562,7 @@ def test_status_probes_run_concurrently(tmp_path) -> None:
     runtime.run_command = run_command
     out = io.StringIO()
     code = run_cli(
-        ["sync", "list", "--status"],
+        ["status"],
         env={"DBT_SECRETS_FILE": str(path)},
         stdout=out,
         stderr=io.StringIO(),

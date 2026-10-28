@@ -1,6 +1,6 @@
 import pytest
-
 from shared.process import CommandResult
+
 from twofa.clipboard import ClipboardError, copy_to_clipboard
 
 

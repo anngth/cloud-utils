@@ -1,7 +1,8 @@
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Mapping, Sequence
 
 from shared.process import CommandResult, run_process
+
 
 def run_git(
     args: Sequence[str],

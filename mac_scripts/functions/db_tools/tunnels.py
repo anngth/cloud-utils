@@ -6,9 +6,9 @@ Port liveness is checked per port with `lsof` and `ps`, never by a callback.
 
 from __future__ import annotations
 
-import signal
 from collections.abc import Sequence
 from dataclasses import dataclass
+import signal
 from typing import Literal, TextIO
 
 from .models import VpsTunnel
@@ -348,6 +348,8 @@ def tunnel_states(
     the SSH preflight result for its host (once per user@host), so a tunnel
     that is merely closed can be told apart from a broken SSH login.
     """
+    if not configured:
+        return []
     listeners = _Listeners(runtime)
     preflights: dict[tuple[str, str], str] = {}
 

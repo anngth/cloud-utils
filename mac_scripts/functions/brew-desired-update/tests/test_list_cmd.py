@@ -163,7 +163,7 @@ class RunListTests(unittest.TestCase):
         grid_lines = [
             line
             for line in plain.splitlines()
-            if line.startswith("  x") or line.startswith("  y")
+            if line.startswith(("  x", "  y"))
         ]
         self.assertEqual(len(grid_lines), 2)
         self.assertIn("z", grid_lines[0])

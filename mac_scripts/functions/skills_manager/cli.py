@@ -1,25 +1,39 @@
 from __future__ import annotations
-import os, re, sys
+
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import redirect_stderr
 from dataclasses import dataclass
 from io import StringIO
+import os
 from pathlib import Path
+import re
+import sys
 from typing import NoReturn, TextIO
+
 import click
 from shared.selector import SelectorItem, SelectorResult, run_selector
 from shared.streams import is_tty
+
 from .catalog_commands import SkmUsageError, parse_source_command, run_source_command
 from .config import Catalog, ConfigPaths, initialize_config, read_config, write_catalog
 from .lifecycle import (
-    parse_lifecycle_command, run_add, run_interactive, run_remove, run_status,
+    parse_lifecycle_command,
+    run_add,
+    run_interactive,
+    run_remove,
+    run_status,
 )
 from .state import InstalledState, load_installed_state, resolve_project_root
 from .ui import SkmUi
 from .upstream import (
-    AvailableSkill, ExecutionResult, discover_available_skills,
-    execute_install_plan, execute_uninstall_plan, has_command,
+    AvailableSkill,
+    ExecutionResult,
+    discover_available_skills,
+    execute_install_plan,
+    execute_uninstall_plan,
+    has_command,
 )
+
 _SELECTOR_WARNING = re.compile(
     r"(?m)^Warning: Input is not a terminal \(fd=-?\d+\)\.\n"
 )

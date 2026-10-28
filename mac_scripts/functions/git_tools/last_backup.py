@@ -1,10 +1,10 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import re
 import time
 
 _MILLISECONDS_PER_SECOND, _MILLISECONDS_PER_MINUTE = 1000, 60_000
 _MILLISECONDS_PER_HOUR, _MILLISECONDS_PER_DAY = 3_600_000, 86_400_000
-_UTC = timezone.utc
+_UTC = UTC
 _MAX_DATE_MILLISECONDS = 8_640_000_000_000_000
 _JS_ISO_RE = re.compile(
     r"^(?P<year>\d{4}|[+-]\d{6})(?:-(?P<month>\d{2})(?:-(?P<day>\d{2})"

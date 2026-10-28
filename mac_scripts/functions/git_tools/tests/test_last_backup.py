@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import json
 import subprocess
 
@@ -11,8 +11,7 @@ from git_tools.last_backup import (
     parse_js_timestamp,
 )
 
-
-NOW = datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 8, 10, 0, tzinfo=UTC)
 
 
 @pytest.mark.parametrize(
@@ -58,7 +57,7 @@ def test_format_last_backup_label_uses_relative_and_local_datetime() -> None:
 
 
 def test_format_last_backup_label_uses_just_now_under_one_minute() -> None:
-    now = datetime(2026, 8, 8, 10, 0, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 8, 10, 0, 30, tzinfo=UTC)
     assert format_last_backup_label("2026-08-08T10:00:00.000Z", now).startswith(
         "Last backup: just now ("
     )
@@ -99,7 +98,7 @@ def test_format_timestamp_label_rejects_node_invalid_date_forms(iso_string: str)
 
 
 def test_format_timestamp_label_treats_none_as_epoch_like_node_date() -> None:
-    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
     label = format_timestamp_label(None, prefix="Last backup", now=epoch)
     assert label.startswith("Last backup: just now (")
     assert "1970-01-01" in label
@@ -112,7 +111,7 @@ def test_format_timestamp_label_clamps_future_timestamps_to_just_now() -> None:
 
 
 def test_format_timestamp_label_uses_node_normalized_overflow() -> None:
-    now = datetime(2026, 3, 5, tzinfo=timezone.utc)
+    now = datetime(2026, 3, 5, tzinfo=UTC)
 
     assert format_timestamp_label(
         "2026-02-31T24:00:00Z", prefix="Last backup", now=now

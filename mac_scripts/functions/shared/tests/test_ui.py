@@ -6,7 +6,6 @@ import time
 
 from mac_scripts.functions.shared.ui import FrameUi
 
-
 EXPECTED_FRAME_BYTES = (
     "\n"
     "   \x1b[42m\x1b[30m 2FA \x1b[39m\x1b[49m\n"

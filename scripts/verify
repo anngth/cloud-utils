@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 ROOT_DIR="${SCRIPT_DIR:h}"
 PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
-SOURCE_LIMIT=6105
+SOURCE_LIMIT=10500
 SKM_COVERAGE_MIN=95
 
 cd "$ROOT_DIR"
@@ -78,7 +78,8 @@ run_tracked_command() {
   fi
 }
 COVERAGE_FILE="$coverage_file" run_tracked_command "$PYTHON_BIN" -m pytest \
-  --cov=shared --cov=twofa --cov=git_tools --cov=skills_manager
+  --cov=shared --cov=twofa --cov=git_tools --cov=skills_manager --cov=db_tools \
+  --cov=mac_scripts/functions/brew-desired-update
 COVERAGE_FILE="$coverage_file" run_tracked_command \
   "$PYTHON_BIN" -m coverage report \
   '--include=*/skills_manager/*.py'
@@ -121,10 +122,17 @@ coverage_file=""
 coverage_json_file=""
 trap - EXIT HUP INT TERM
 
+print -r -- "==> Linting Python"
+"$PYTHON_BIN" -m ruff check
+
+print -r -- "==> Type checking"
+"$PYTHON_BIN" -m mypy
+
 print -r -- "==> Checking production Python source budget"
 python_lines="$(
   find mac_scripts/functions/shared mac_scripts/functions/twofa \
     mac_scripts/functions/git_tools mac_scripts/functions/skills_manager \
+    mac_scripts/functions/db_tools mac_scripts/functions/brew-desired-update \
     -type f -name '*.py' \
     ! -path '*/tests/*' -print0 \
     | xargs -0 wc -l \

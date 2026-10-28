@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "gt.jsonl"
 SOURCE_A = "git@github.com:org/a.git"

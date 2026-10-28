@@ -1,5 +1,6 @@
 from typing import Protocol
 
+
 class TextWriter(Protocol):
     def write(self, text: str) -> object: ...
     def flush(self) -> object: ...

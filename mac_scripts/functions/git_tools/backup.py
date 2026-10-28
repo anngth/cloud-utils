@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import os
 from pathlib import Path
 import shutil
@@ -12,17 +12,42 @@ from typing import Literal, TextIO
 
 import click
 
-from .backup_list import add_backup_repos, collision_errors, record_last_backup_at
-from .backup_list import record_last_checked_at, remove_backup_repo, set_selected_last
-from .config import BackupRepoV4, BackupsDocumentV4, GtPaths, format_display_path
-from .config import migrate_backups_document, read_backups_document, write_backups_document
+from .backup_list import (
+    add_backup_repos,
+    collision_errors,
+    record_last_backup_at,
+    record_last_checked_at,
+    remove_backup_repo,
+    set_selected_last,
+)
+from .config import (
+    BackupRepoV4,
+    BackupsDocumentV4,
+    GtPaths,
+    format_display_path,
+    migrate_backups_document,
+    read_backups_document,
+    write_backups_document,
+)
 from .git import run_git
-from .gitlab import BACKUP_GROUP, GITLAB_HOST, assert_glab_ready, create_private_project
-from .gitlab import ensure_backup_group, glab_auth_detail, glab_reauth_instructions
-from .gitlab import group_exists, pick_preferred_default_branch, project_exists
-from .gitlab import project_ssh_url, project_web_url, protect_branch, set_default_branch
+from .gitlab import (
+    BACKUP_GROUP,
+    GITLAB_HOST,
+    assert_glab_ready,
+    create_private_project,
+    ensure_backup_group,
+    glab_auth_detail,
+    glab_reauth_instructions,
+    group_exists,
+    pick_preferred_default_branch,
+    project_exists,
+    project_ssh_url,
+    project_web_url,
+    protect_branch,
+    set_default_branch,
+)
 from .refs_fingerprint import fingerprints_equal, parse_ls_remote_fingerprint
-from .selector import SelectorItem, SelectorResult, SelectorState, run_selector
+from .selector import SelectorItem, SelectorResult, run_selector
 from .ssh_url import parse_ssh_git_url
 from .ui import GitToolsUi
 
@@ -75,7 +100,7 @@ class BackupContext:
     migrate_backups_document: Callable[..., object] = migrate_backups_document
     write_backups_document: Callable[..., object] = write_backups_document
     run_selector: Callable[..., SelectorResult] = run_selector
-    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+    now: Callable[[], datetime] = lambda: datetime.now(UTC)
 
 @dataclass(frozen=True, slots=True)
 class BackupResult:
@@ -283,14 +308,14 @@ def run_backup_batch(
     force: bool = False, dry_run: bool = False,
 ) -> int:
     collisions = collision_errors(list(urls))
-    eligible = [url for url, error in zip(urls, collisions) if error is None]
+    eligible = [url for url, error in zip(urls, collisions, strict=True) if error is None]
     if eligible and not _require_glab_ready_for_backup(context):
         return 1
     if dry_run and eligible:
         context.ui.status("Dry run (no changes)")
 
     results: list[BackupResult] = []
-    for url, error in zip(urls, collisions):
+    for url, error in zip(urls, collisions, strict=True):
         if error is not None:
             results.append(BackupResult("fail", url, error=error))
             continue

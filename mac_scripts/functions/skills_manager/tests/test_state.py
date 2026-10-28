@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 import pytest
-
 from shared.process import CommandResult
+
 from skills_manager.source import canonicalize_source
 from skills_manager.state import (
     InstalledSkill,

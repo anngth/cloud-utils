@@ -4,8 +4,8 @@ import io
 from pathlib import Path
 
 import pytest
-
 from shared.selector import SelectorResult, create_selector_state
+
 from skills_manager.catalog_commands import (
     run_source_add,
     run_source_edit,

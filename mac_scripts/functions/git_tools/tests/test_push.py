@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import io
 import json
 from pathlib import Path
 
 import pytest
+from shared.process import CommandResult
 
 from git_tools.backup import (
     BackupContext,
@@ -22,8 +23,8 @@ from git_tools.config import (
     write_backups_document,
 )
 from git_tools.gitlab import (
-    ActionResult,
     BACKUP_GROUP,
+    ActionResult,
     EnsureGroupResult,
     ExistsResult,
     ProtectResult,
@@ -33,14 +34,12 @@ from git_tools.gitlab import (
 )
 from git_tools.selector import SelectorResult, SelectorState
 from git_tools.ui import GitToolsUi
-from shared.process import CommandResult
-
 
 SOURCE = "git@github.com:org/app.git"
 SOURCE_B = "git@github.com:org/other.git"
 BASE_NAME = "org-app"
 BASE_NAME_B = "org-other"
-FIXED_NOW = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
+FIXED_NOW = datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
 
 
 class InputStub:
@@ -162,27 +161,27 @@ def make_harness(tmp_path: Path, **overrides) -> Harness:
         counter += 1
         return Path("/tmp") / f"{prefix.rstrip('-')}-{counter}"
 
-    defaults = dict(
-        paths=paths,
-        ui=ui,
-        cwd=Path("/repo"),
-        env=env,
-        stdin=InputStub(True),
-        stdout=io.StringIO(),
-        has_command=lambda name: name in {"git", "glab"},
-        assert_glab_ready=lambda **_kwargs: ReadyResult(True),
-        ensure_backup_group=lambda _group: EnsureGroupResult(True),
-        group_exists=lambda _group: ExistsResult(True, exists=True),
-        project_exists=lambda _group, _name: ExistsResult(True),
-        create_private_project=create_project,
-        pick_preferred_default_branch=lambda _repo, **_kwargs: "main",
-        set_default_branch=lambda _group, _name, _branch: ActionResult(True),
-        protect_branch=lambda _group, _name, _branch: ProtectResult(True),
-        run_git=lambda _args, **_kwargs: CommandResult(0),
-        make_temp_dir=make_temp,
-        remove_tree=lambda path: removed.append(Path(path)),
-        now=lambda: FIXED_NOW,
-    )
+    defaults = {
+        "paths": paths,
+        "ui": ui,
+        "cwd": Path("/repo"),
+        "env": env,
+        "stdin": InputStub(True),
+        "stdout": io.StringIO(),
+        "has_command": lambda name: name in {"git", "glab"},
+        "assert_glab_ready": lambda **_kwargs: ReadyResult(True),
+        "ensure_backup_group": lambda _group: EnsureGroupResult(True),
+        "group_exists": lambda _group: ExistsResult(True, exists=True),
+        "project_exists": lambda _group, _name: ExistsResult(True),
+        "create_private_project": create_project,
+        "pick_preferred_default_branch": lambda _repo, **_kwargs: "main",
+        "set_default_branch": lambda _group, _name, _branch: ActionResult(True),
+        "protect_branch": lambda _group, _name, _branch: ProtectResult(True),
+        "run_git": lambda _args, **_kwargs: CommandResult(0),
+        "make_temp_dir": make_temp,
+        "remove_tree": lambda path: removed.append(Path(path)),
+        "now": lambda: FIXED_NOW,
+    }
     defaults.update(overrides)
     context = BackupContext(**defaults)
     return Harness(context, ui, paths, created, removed)

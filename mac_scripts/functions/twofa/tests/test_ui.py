@@ -2,7 +2,6 @@ import io
 
 from twofa.ui import TwoFactorUi
 
-
 HELP_GOLDEN = (
     "\n"
     "   \x1b[42m\x1b[30m 2FA \x1b[39m\x1b[49m\n"

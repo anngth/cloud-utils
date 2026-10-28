@@ -14,7 +14,6 @@ import time
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ALT_SCREEN_ENTER = b"\x1b[?1049h"
 ALT_SCREEN_EXIT = b"\x1b[?1049l"

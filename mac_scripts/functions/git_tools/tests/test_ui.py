@@ -1,11 +1,10 @@
+from datetime import UTC, datetime
 import io
 import re
-from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from git_tools.selector import SelectorItem, create_selector_state, reduce_selector
 from git_tools.ui import GitToolsUi
-
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
@@ -224,7 +223,7 @@ def test_render_backup_selector_shows_numbers_checkboxes_and_hint() -> None:
     assert "└" in rendered
 
 
-NOW = datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 8, 10, 0, tzinfo=UTC)
 
 
 def _item(url: str, backup: str | None = None, checked: str | None = None):

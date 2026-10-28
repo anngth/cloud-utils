@@ -1,11 +1,11 @@
 import builtins
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import io
 import os
 import signal
 import sys
 import threading
-from typing import Callable
 
 import pytest
 
@@ -282,7 +282,7 @@ class FakeTty:
         self.writes: list[str] = []
         self.closed = False
 
-    def __enter__(self) -> "FakeTty":
+    def __enter__(self) -> FakeTty:
         return self
 
     def __exit__(self, *_args: object) -> None:
@@ -536,7 +536,7 @@ def test_signal_arriving_during_handler_installation_runs_callable_with_echo_off
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tty = FakeTty(line="hidden\n")
-    original, changes = _fake_tty_setup(monkeypatch, tty)
+    _original, changes = _fake_tty_setup(monkeypatch, tty)
     real_signal = signal.signal
     previous = signal.getsignal(signal.SIGHUP)
     events: list[tuple[int, bool, bool, bool]] = []
@@ -699,7 +699,6 @@ def test_read_secret_reports_disable_failure_after_restoration_attempt(
 
 def test_read_secret_reports_restore_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     tty = FakeTty()
-    original = [1, 2, 3, 4 | cli.termios.ECHO, 5, 6, [7]]
     calls = 0
     _fake_tty_setup(monkeypatch, tty)
 

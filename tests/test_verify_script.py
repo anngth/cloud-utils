@@ -11,7 +11,6 @@ import time
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 VERIFY_SCRIPT = ROOT / "scripts" / "verify"
 
@@ -40,6 +39,8 @@ def _verification_repo(
         "twofa": 1,
         "git_tools": 1,
         "skills_manager": 1,
+        "db_tools": 1,
+        "brew-desired-update": 1,
     }
     for package, production_lines in counts.items():
         package_dir = functions / package
@@ -108,7 +109,7 @@ def _real_coverage_repo(
 ) -> tuple[Path, Path]:
     root, log = _verification_repo(tmp_path)
     functions = root / "mac_scripts" / "functions"
-    for package in ("shared", "twofa", "git_tools", "skills_manager"):
+    for package in ("shared", "twofa", "git_tools", "skills_manager", "db_tools"):
         (functions / package / "__init__.py").write_text("", encoding="utf-8")
 
     covered_assignments = total_statements - 2
@@ -124,6 +125,7 @@ def _real_coverage_repo(
     tests_dir = root / "tests"
     tests_dir.mkdir()
     (tests_dir / "test_coverage.py").write_text(
+        "import db_tools\n"
         "import git_tools\n"
         "import shared\n"
         "import skills_manager.module\n"
@@ -135,8 +137,13 @@ def _real_coverage_repo(
     )
 
     python = root / ".venv" / "bin" / "python"
+    # Lint and type checks run against the real repository, not this fixture.
     _write_executable(
         python,
+        'if [[ "$1" == "-m" && ( "$2" == "ruff" || "$2" == "mypy" ) ]]; then\n'
+        '  print -r -- "python $*" >> "$VERIFY_LOG"\n'
+        "  exit 0\n"
+        "fi\n"
         f'exec {shlex.quote(sys.executable)} "$@"',
     )
     return root, log
@@ -153,7 +160,8 @@ def test_verify_runs_every_gate_from_outside_the_repository(tmp_path: Path) -> N
     assert commands[1] == "git diff --exit-code -- uv.lock"
     assert commands[2].startswith(
         "python -m pytest --cov=shared --cov=twofa --cov=git_tools "
-        "--cov=skills_manager coverage="
+        "--cov=skills_manager --cov=db_tools "
+        "--cov=mac_scripts/functions/brew-desired-update coverage="
     )
     assert commands[3].startswith(
         "python -m coverage report "
@@ -163,7 +171,9 @@ def test_verify_runs_every_gate_from_outside_the_repository(tmp_path: Path) -> N
         "python -m coverage json --include=*/skills_manager/*.py -q -o "
     )
     assert commands[5].startswith("python - ")
-    assert commands[6] == "git diff --check"
+    assert commands[6].startswith("python -m ruff check coverage=")
+    assert commands[7].startswith("python -m mypy coverage=")
+    assert commands[8] == "git diff --check"
     coverage_file = Path(commands[2].split("coverage=", 1)[1])
     assert commands[3].endswith(f"coverage={coverage_file}")
     assert commands[4].endswith(f"coverage={coverage_file}")
@@ -423,19 +433,23 @@ def test_verify_forwards_signal_from_every_blocking_stage(
     [
         (
             {
-                "shared": 1527,
-                "twofa": 1526,
-                "git_tools": 1526,
-                "skills_manager": 1526,
+                "shared": 1750,
+                "twofa": 1750,
+                "git_tools": 1750,
+                "skills_manager": 1750,
+                "db_tools": 1750,
+                "brew-desired-update": 1750,
             },
             0,
         ),
         (
             {
-                "shared": 1527,
-                "twofa": 1527,
-                "git_tools": 1527,
-                "skills_manager": 1527,
+                "shared": 1751,
+                "twofa": 1750,
+                "git_tools": 1750,
+                "skills_manager": 1750,
+                "db_tools": 1750,
+                "brew-desired-update": 1750,
             },
             1,
         ),
@@ -452,7 +466,7 @@ def test_verify_enforces_combined_source_ceiling(
 
     assert result.returncode == returncode
     expected_total = sum(line_counts.values())
-    message = f"Production Python source is {expected_total} lines; limit is 6105"
+    message = f"Production Python source is {expected_total} lines; limit is 10500"
     assert (message in result.stderr) is (returncode == 1)
     commands = log.read_text(encoding="utf-8").splitlines()
     assert any(command.startswith("python -m coverage report") for command in commands)
@@ -466,8 +480,8 @@ def test_verify_enforces_combined_source_ceiling(
         (
             19,
             1,
-            "skills_manager statement coverage is 18/19 "
-            "(94.7368%); minimum is 95%",
+            ("skills_manager statement coverage is 18/19 "
+            "(94.7368%); minimum is 95%"),
         ),
         (20, 0, ""),
     ],

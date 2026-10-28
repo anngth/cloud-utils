@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
-import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+import json
+import os
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from shared.process import CommandResult, run_process
 
@@ -26,7 +26,7 @@ class InstalledSkill:
     provenance: Literal["tracked", "untracked"]
 
 
-InstalledState: TypeAlias = dict[str, InstalledSkill]
+type InstalledState = dict[str, InstalledSkill]
 
 
 @dataclass(frozen=True, slots=True)

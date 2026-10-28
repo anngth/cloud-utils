@@ -15,8 +15,10 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+  "mypy",
   "pytest",
   "pytest-cov",
+  "ruff",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -33,12 +35,20 @@ addopts = "-ra"
 testpaths = ["tests", "mac_scripts/functions"]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PIE", "FURB", "ISC", "C4"]
-allowed-confusables = ["ℹ"]
+allowed-confusables = ["ℹ", "–", "×"]
+# Compact one-line statements and imports are the house style (see the source budget in scripts/verify).
+ignore = ["E401", "E701", "E702", "E731", "SIM105"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["RUF043"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
 
 [tool.mypy]
 python_version = "3.14"

@@ -8,9 +8,9 @@ environment variable, which the fixed scripts read via
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+import re
 from typing import TextIO
 
 from shared.process import CommandResult

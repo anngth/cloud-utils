@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 
 import pytest
-
 from shared.process import CommandResult
+
 from skills_manager.upstream import (
     AvailableSkill,
     DiscoveryParseError,
@@ -17,7 +17,6 @@ from skills_manager.upstream import (
     parse_available_skills,
     run_skills_mutation,
 )
-
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

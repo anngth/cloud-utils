@@ -8,7 +8,7 @@ from list_cmd import run_list
 from manage import run_add, run_remove
 from messages import fmt
 from parse import parse_argv
-from ui import FG_RESET, Ui, YELLOW
+from ui import FG_RESET, YELLOW, Ui
 from update import run_update
 
 

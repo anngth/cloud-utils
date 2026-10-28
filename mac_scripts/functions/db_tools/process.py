@@ -5,13 +5,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 import contextlib
 import os
+from pathlib import Path
 import subprocess
 import sys
 import threading
-from collections.abc import Mapping, Sequence
-from pathlib import Path
 from typing import IO, TextIO
 
 from shared.process import CommandResult, run_process

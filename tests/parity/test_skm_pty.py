@@ -15,7 +15,6 @@ import time
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 ALT_ENTER = b"\x1b[?1049h"
 ALT_EXIT = b"\x1b[?1049l"

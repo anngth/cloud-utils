@@ -1,5 +1,6 @@
 from shared.process import run_process
 
+
 class ClipboardError(RuntimeError):
     pass
 

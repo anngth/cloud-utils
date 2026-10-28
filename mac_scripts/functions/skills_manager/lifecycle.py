@@ -1,20 +1,27 @@
 from __future__ import annotations
+
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING
+
 from .catalog_commands import SkmUsageError, SourceSkillItem
 from .config import Catalog, resolve_source_token
 from .planner import (
-    catalog_requirements, classify_status, create_install_plan,
+    catalog_requirements,
+    classify_status,
+    create_install_plan,
     create_uninstall_plan,
 )
 from .selector import (
-    build_catalog_selector_items, catalog_slice_from_keys,
-    filter_skill_requirement_keys, inverse_catalog_slice,
+    build_catalog_selector_items,
+    catalog_slice_from_keys,
+    filter_skill_requirement_keys,
+    inverse_catalog_slice,
     reduce_catalog_selector,
 )
 from .source import redact_source
 from .upstream import ExecutionResult
+
 if TYPE_CHECKING:
     from .cli import CommandContext
 LifecycleRequest = tuple[tuple[str, ...], bool, bool, bool]

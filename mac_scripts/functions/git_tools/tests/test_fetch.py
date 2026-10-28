@@ -4,10 +4,10 @@ import io
 import re
 
 import pytest
+from shared.process import CommandResult
 
 from git_tools.fetch import _sync_local_branch_with_origin_ff, run_fetch_command
 from git_tools.ui import GitToolsUi
-from shared.process import CommandResult
 
 
 class FetchUi:

@@ -71,8 +71,10 @@ Run the complete local verification gate from any working directory:
 ~/Documents/cloud-utils/scripts/verify
 ```
 
-It synchronizes the locked Python environment, runs the Python and `skm` test
-suites, enforces the production Python source limit, and checks diff hygiene.
+It synchronizes the locked Python environment, runs every test suite with
+coverage (`skm` must stay at or above 95%), lints with `ruff`, type-checks
+`db_tools` with `mypy`, enforces the production Python source limit for all
+commands, and checks diff hygiene.
 
 For a manual command smoke check:
 

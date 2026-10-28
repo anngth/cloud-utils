@@ -6,12 +6,6 @@ import time
 import unittest
 from unittest.mock import patch
 
-ANSI_RE = re.compile(r"\033\[[0-9;]*m")
-
-
-def strip_ansi(text: str) -> str:
-    return ANSI_RE.sub("", text)
-
 from brew import (
     BrewRunner,
     ensure_tap,
@@ -21,6 +15,12 @@ from brew import (
     resolve_brew_binary,
 )
 from ui import Ui
+
+ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    return ANSI_RE.sub("", text)
 
 
 class ResolveBrewBinaryTests(unittest.TestCase):

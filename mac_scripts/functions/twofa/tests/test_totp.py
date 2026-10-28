@@ -2,7 +2,6 @@ import pytest
 
 from twofa.totp import Base32Error, generate_totp, normalize_base32
 
-
 # RFC 6238 Appendix B secret (ASCII) as Base32.
 RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
 LONG_SECRET = "AEAQCAIB" * 13

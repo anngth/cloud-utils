@@ -1,7 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
 
 OPT_BREW = "/opt/homebrew/bin/brew"
 INTEL_BREW = "/usr/local/bin/brew"
@@ -49,9 +49,7 @@ def is_probe(args: list[str]) -> bool:
         return True
     if cmd == "trust" and "--help" in rest:
         return True
-    if cmd == "--help":
-        return True
-    return False
+    return cmd == "--help"
 
 
 class _NoOpUi:

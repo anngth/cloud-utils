@@ -14,9 +14,9 @@ whole file: dbt never guesses what a half-valid entry meant.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 import re
 import tomllib
-from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import unquote
 

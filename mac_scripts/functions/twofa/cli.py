@@ -1,3 +1,4 @@
+from collections.abc import Callable, Sequence
 import os
 import select
 import signal
@@ -5,12 +6,14 @@ import sys
 import termios
 import threading
 from types import FrameType
-from typing import Callable, NoReturn, Sequence
+from typing import NoReturn
 
 import click
 
-from .clipboard import ClipboardError, copy_to_clipboard
-from .totp import Base32Error, generate_totp
+from .clipboard import ClipboardError as ClipboardError
+from .clipboard import copy_to_clipboard
+from .totp import Base32Error as Base32Error
+from .totp import generate_totp
 from .ui import TwoFactorUi
 
 _MANAGED_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
@@ -184,9 +187,8 @@ def _read_secret_once(
             raise TtyInputError("interactive terminal required") from None
 
         try:
-            tty = open(
+            tty = open(  # noqa: SIM115 - closed in the finally below
                 tty_fd,
-                "r",
                 encoding="utf-8",
                 buffering=1,
                 closefd=True,
@@ -317,7 +319,11 @@ def run_cli(
     return int(result)
 
 def main() -> NoReturn:
-    raise SystemExit(run_cli(sys.argv[1:]))
+    try:
+        status = run_cli(sys.argv[1:])
+    except KeyboardInterrupt:
+        status = 130
+    raise SystemExit(status)
 
 if __name__ == "__main__":
     main()

@@ -1,12 +1,16 @@
 from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
+
 from shared.selector import SelectorItem, SelectorResult, SelectorState, reduce_selector
+
 from .config import Catalog, CatalogSource
 from .planner import MergedRequirements, catalog_requirements, requirement_key
 from .source import js_string_key, redact_source
 from .state import InstalledState
+
 Keys = Sequence[str]; Selected = tuple[str, ...]
 @dataclass(frozen=True, slots=True)
 class CatalogSelectorItem(SelectorItem):

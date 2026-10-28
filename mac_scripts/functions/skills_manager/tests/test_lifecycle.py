@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
-
 from shared.selector import SelectorResult, create_selector_state
+
 from skills_manager.cli import CommandContext, Services
 from skills_manager.config import Catalog, CatalogSource
 import skills_manager.lifecycle as lifecycle
@@ -13,8 +13,8 @@ from skills_manager.lifecycle import run_status
 from skills_manager.planner import requirement_key
 from skills_manager.selector import reduce_catalog_selector
 from skills_manager.state import InstalledSkill, InstalledStateError
-from skills_manager.upstream import ExecutionResult, MutationRecord
 import skills_manager.upstream as upstream
+from skills_manager.upstream import ExecutionResult, MutationRecord
 
 
 @pytest.mark.parametrize("action", ["add", "remove"])

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 import io
 import os
 import re
-from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
 from shared.selector import SelectorState
@@ -413,8 +413,8 @@ class SkmUi:
             self.frame.active("Extra")
 
             def render_extra(extra: object) -> None:
-                name = getattr(extra, "name")
-                source = getattr(extra, "source")
+                name = extra.name
+                source = extra.source
                 suffix = f"— {redact_source(source)}" if source else ""
                 self._skill_item(
                     name,
@@ -430,12 +430,12 @@ class SkmUi:
             def render_conflict(conflict: object) -> None:
                 sources = " vs ".join(
                     redact_source(source)
-                    for source in getattr(conflict, "sources")
+                    for source in conflict.sources
                 )
                 profiles = tuple(getattr(conflict, "profiles", ()))
                 required = f" — required by {', '.join(profiles)}"
                 self._skill_item(
-                    getattr(conflict, "skill"),
+                    conflict.skill,
                     suffix=f"— {sources}{required}",
                     marker_color=RED,
                     suffix_color=RED,
@@ -464,10 +464,10 @@ class SkmUi:
             self.frame.active("Extra")
 
             def render_extra(extra: object) -> None:
-                source = getattr(extra, "source")
+                source = extra.source
                 suffix = f"— {redact_source(source)}" if source else ""
                 self._skill_item(
-                    getattr(extra, "name"),
+                    extra.name,
                     suffix=suffix,
                     marker_color=GRAY,
                     suffix_color=GRAY,
@@ -480,10 +480,10 @@ class SkmUi:
             def render_conflict(conflict: object) -> None:
                 sources = " vs ".join(
                     redact_source(source)
-                    for source in getattr(conflict, "sources")
+                    for source in conflict.sources
                 )
                 self._skill_item(
-                    getattr(conflict, "skill"),
+                    conflict.skill,
                     suffix=f"— {sources}",
                     marker_color=RED,
                     suffix_color=RED,
@@ -734,10 +734,7 @@ class SkmUi:
                     self._out("")
                 previous_source = source
                 kind = getattr(entry, "kind", None)
-                if kind == "source":
-                    selected = self._catalog_source_selected(state, entry)
-                else:
-                    selected = index in state.selected
+                selected = self._catalog_source_selected(state, entry) if kind == "source" else index in state.selected
                 box = "■" if selected else "□"
                 box_color = BRIGHT_GREEN if selected else GRAY
                 label_color = selector_name_color(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from shared.selector import create_selector_state
+
 from skills_manager.config import Catalog, CatalogSource
 from skills_manager.planner import requirement_key
 from skills_manager.selector import (

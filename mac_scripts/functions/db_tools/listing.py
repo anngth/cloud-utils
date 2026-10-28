@@ -1,8 +1,7 @@
-"""One rendering of the secrets file for `config`, `list`, `status` and `sync list`.
+"""One rendering of the secrets file for `list` and `status`.
 
-Every command shows the same five sections with the same 1-based indexes
-(the ones `--from`/`--to` accept); they differ only in the detail column
-(host, or the masked URL) and in whether rows carry a probe result.
+Both show the same five sections with the same 1-based indexes (the ones
+`--from`/`--to` accept); `status` adds the probe results.
 """
 
 from __future__ import annotations
@@ -11,16 +10,13 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
-from typing import Literal, TextIO
+from typing import TextIO
 
 from .models import Secrets
 from .mongo import mongo_host, mongo_status
 from .postgres import parse_postgres_url, postgres_status
 from .runtime import Runtime
-from .secrets import redact
 from .tunnels import TunnelState, tunnel_states
-
-Detail = Literal["host", "url"]
 
 ICON_UP = "🟢"
 ICON_DOWN = "🔴"
@@ -77,7 +73,7 @@ def _tunnel_status(state: TunnelState) -> str:
 
 
 def database_sections(
-    secrets: Secrets, *, detail: Detail, probes: Sequence[bool | None] | None = None
+    secrets: Secrets, *, probes: Sequence[bool | None] | None = None
 ) -> list[Section]:
     """The four database sections; `probes` (from `probe_databases`) adds icons."""
     results = iter(probes) if probes is not None else None
@@ -85,23 +81,23 @@ def database_sections(
     def icon() -> str | None:
         return _status_icon(next(results)) if results is not None else None
 
-    def row(label: str, host: str, url: str) -> Row:
-        return Row(label, host if detail == "host" else redact(url), icon())
+    def row(label: str, host: str) -> Row:
+        return Row(label, host, icon())
 
     sources = [
-        row(f"{s.name} → {s.database}", parse_postgres_url(s.url).host, s.url)
+        row(f"{s.name} → {s.database}", parse_postgres_url(s.url).host)
         for s in secrets.postgres_sources
     ]
     targets = []
     for t in secrets.postgres_targets:
         url = parse_postgres_url(t.url)
         ssl = "require" if url.sslmode_require else "disable"
-        targets.append(row(t.name, f"{url.host} [SSL: {ssl}]", t.url))
+        targets.append(row(t.name, f"{url.host} [SSL: {ssl}]"))
     mongo_sources = [
-        row(f"{s.name} → {','.join(s.databases)}", mongo_host(s.uri), s.uri)
+        row(f"{s.name} → {','.join(s.databases)}", mongo_host(s.uri))
         for s in secrets.mongo_sources
     ]
-    mongo_targets = [row(t.name, mongo_host(t.uri), t.uri) for t in secrets.mongo_targets]
+    mongo_targets = [row(t.name, mongo_host(t.uri)) for t in secrets.mongo_targets]
     return [
         Section("🐘 PostgreSQL Sources", tuple(sources)),
         Section("🎯 PostgreSQL Targets", tuple(targets)),
@@ -192,7 +188,6 @@ def render_listing(
     *,
     runtime: Runtime,
     stdout: TextIO,
-    detail: Detail,
     tunnel_status: bool,
     probe: bool,
     ssh_check: bool = False,
@@ -215,7 +210,7 @@ def render_listing(
         results = probe_databases(secrets, runtime=runtime)
     sections = [
         tunnel_section(secrets, states),
-        *database_sections(secrets, detail=detail, probes=results),
+        *database_sections(secrets, probes=results),
     ]
     render(sections, stdout)
     if results:
