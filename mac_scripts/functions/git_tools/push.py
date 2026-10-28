@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+import sys
 
 from shared.process import CommandResult
 
@@ -9,6 +10,10 @@ from .git import run_git
 from .ui import GitToolsUi
 
 RunGit = Callable[..., CommandResult]
+Confirm = Callable[[str], bool]
+
+PUSH_USAGE = "Usage: gt push [-y | --yes]"
+PROTECTED_BRANCHES = ("main", "develop")
 
 def _git_command(
     run_git_fn: RunGit,
@@ -19,16 +24,51 @@ def _git_command(
 ) -> CommandResult:
     return run_git_fn(list(args), cwd=cwd, env=env)
 
+def _ask(question: str) -> bool:
+    """Ask on the terminal; no TTY, EOF or Ctrl-C all count as "no"."""
+    if not sys.stdin.isatty():
+        return False
+    try:
+        return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+def _parse_args(args: Sequence[str], ui: GitToolsUi) -> tuple[bool, bool, bool]:
+    yes = False
+    for arg in args:
+        if arg in ("-y", "--yes"):
+            yes = True
+            continue
+        if arg in ("-h", "--help"):
+            ui.line(PUSH_USAGE)
+            ui.line(
+                "  -y, --yes  Force push main/develop without asking "
+                "(required when stdin is not a terminal)"
+            )
+            return False, True, False
+        ui.error(f"Unknown option for push: {arg}")
+        ui.usage_line(PUSH_USAGE)
+        return False, False, True
+    return yes, False, False
+
 def run_push_command(
-    _args: Sequence[str],
+    args: Sequence[str],
     *,
     cwd: str | Path,
     env: Mapping[str, str] | None,
     ui: GitToolsUi,
     run_git_fn: RunGit = run_git,
+    confirm: Confirm = _ask,
 ) -> int:
-    def git(args: Sequence[str]) -> CommandResult:
-        return _git_command(run_git_fn, args, cwd=cwd, env=env)
+    def git(git_args: Sequence[str]) -> CommandResult:
+        return _git_command(run_git_fn, git_args, cwd=cwd, env=env)
+
+    yes, help_requested, invalid = _parse_args(args, ui)
+    if help_requested:
+        return 0
+    if invalid:
+        return 1
 
     repo = git(["rev-parse", "--git-dir"])
     if repo.returncode != 0:
@@ -103,8 +143,28 @@ def run_push_command(
                 tone="warning",
             )
 
+    if (
+        current_branch in PROTECTED_BRANCHES
+        and not yes
+        and not confirm(f"Force push to {target_remote}/{current_branch}?")
+    ):
+        ui.status(
+            f"Force push to {current_branch} cancelled (pass -y to skip the question)",
+            tone="warning",
+        )
+        ui.end()
+        return 1
+
+    # --force-if-includes: a lease taken from a ref that `gt fetch` just updated
+    # would otherwise overwrite remote commits that were never integrated locally.
     push_result = git(
-        ["push", "--force-with-lease", target_remote, f"HEAD:{current_branch}"]
+        [
+            "push",
+            "--force-with-lease",
+            "--force-if-includes",
+            target_remote,
+            f"HEAD:{current_branch}",
+        ]
     )
     if push_result.returncode != 0:
         ui.error("Force push failed")

@@ -8,7 +8,9 @@ Config paths: [setup.md — Local config](setup.md#local-config).
 
 ```bash
 gt fetch
-gt push
+gt push                            # main/develop ask before force-pushing
+gt push -y                         # no question (needed when stdin is not a terminal)
+gt push --help
 gt backup add git@github.com:org/my-app.git
 gt backup add git@github.com:org/a.git git@github.com:org/b.git
 gt backup                          # interactive multi-select
@@ -23,6 +25,10 @@ gt backup remove 1
 gt backup remove git@github.com:org/my-app.git
 ```
 
+- **push** — force-pushes the current branch to its upstream remote (or `origin`) with `--force-with-lease --force-if-includes`, then fetches.
+  - `--force-if-includes` refuses the push when the remote has commits that were fetched but never integrated locally (e.g. a teammate's push picked up by `gt fetch`); rebase onto them, then push again.
+  - On `main` or `develop` it asks `Force push to <remote>/<branch>? [y/N]`; anything but `y`/`yes` cancels with exit 1. Without a terminal it cancels unless `-y` / `--yes` is passed.
+  - Unknown options are rejected before any `git` call; `-h` / `--help` prints the push usage.
 - **backup** — manages a list of source SSH URLs and mirrors selected repos to private `anngth-dev/backups/<owner>-<repo>` on GitLab.
   - `gt backup` — interactive multi-select (TTY required); space toggles, a selects all, c clears, enter starts, q cancels; pre-checks repos from the last successful submit.
   - `gt backup --dry-run` — same as interactive, but preview only: no clone/push/create, no timestamp or `selectedLast` writes; summary shows `→ would mirror` / `→ would skip (unchanged)`.

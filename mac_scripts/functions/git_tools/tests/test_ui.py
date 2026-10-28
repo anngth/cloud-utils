@@ -46,6 +46,10 @@ def test_usage_matches_skm_style_sections_and_signatures() -> None:
 
     for first, continuation in (
         (
+            "  gt push [-y | --yes]  Force push (--force-with-lease --force-if-includes)",
+            "      main/develop ask first; -y skips the question",
+        ),
+        (
             "  gt backup [(-f | --force) | --dry-run]",
             "      Interactive select; force and dry-run are mutually exclusive",
         ),
@@ -59,7 +63,6 @@ def test_usage_matches_skm_style_sections_and_signatures() -> None:
 
     for line in (
         "  gt (help | -h | --help)  Show this help",
-        "  gt push  Force push (safe --force-with-lease)",
         "  gt fetch [--sync-upstream]  Fetch with optional upstream sync",
         "  gt backup add <ssh-url> [<ssh-url> ...]  Add SSH URL(s) to managed list",
         "  gt backup remove <index|ssh-url>  Remove by 1-based index or URL",

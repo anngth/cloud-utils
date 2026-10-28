@@ -19,7 +19,8 @@ RESET = "\033[0m"
 
 _HELP_SECTIONS = (
     ("Core", (
-        ("gt push", "Force push (safe --force-with-lease)", ""),
+        ("gt push [-y | --yes]", "Force push (--force-with-lease --force-if-includes)",
+         "main/develop ask first; -y skips the question"),
         ("gt fetch [--sync-upstream]", "Fetch with optional upstream sync", ""),
     )),
     ("Backup", (
