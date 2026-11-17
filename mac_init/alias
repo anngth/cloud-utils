@@ -1,11 +1,9 @@
 # Aliases
-cd() {
-  if [[ "$1" == icloud* ]]; then
-    # Replace 'icloud' with the full iCloud path
-    local target="${1/#icloud/$HOME/Library/Mobile Documents/com~apple~CloudDocs}"
-    builtin cd "$target" || return
-  else
-    builtin cd "$@" && ls -a
-  fi
+cdl() {
+  builtin cd "$@" && ls -a
+}
+
+cdc() {
+  builtin cd "$HOME/Library/Mobile Documents/com~apple~CloudDocs/${1:-}" && ls -a
 }
 
